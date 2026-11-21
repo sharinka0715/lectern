@@ -30,7 +30,7 @@ test('reassigned, unbound, prefixed and ambiguous model keys have to be handled 
   assert.equal(defaultNativeKey('{"bindings":[{"context":"Global","bindings":{"esc":"another"}}]}', 'Escape', ['Select']), false);
 });
 
-test('one bounded read serves multiple menu keys and detects file creation, edits and links before dispatch', async () => {
+test('one bounded read serves multiple menu keys and detects file creation, edits and links before dispatch', { skip: process.platform === 'win32' ? 'POSIX shell target; Windows runs no local commands' : false }, async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'lectern-keybindings-'));
   const workspace = { id: 'keymap', name: 'fixture', cwd, kind: 'local' as const };
   const path = join(cwd, 'keybindings.json'), transport = new Transport();

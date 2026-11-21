@@ -47,7 +47,7 @@ test('only a successful TaskStop changes the exact monitor, reads stay bounded, 
   assert.equal(new Set([...store.targets(), ...store.targets()].map(t=>t.taskId)).size,13);
 });
 
-test('same-roundtrip observer reads only the named child, skips API records and unchanged bytes, and rejects a replaced symlink', async () => {
+test('same-roundtrip observer reads only the named child, skips API records and unchanged bytes, and rejects a replaced symlink', { skip: process.platform === 'win32' ? 'POSIX shell target; Windows runs no local commands' : false }, async () => {
   const root = await mkdtemp(path.join(tmpdir(),'lectern-activity-'));
   const project = path.join(root,'projects','-fixture-slug'), subs = path.join(project,sid,'subagents');
   try {

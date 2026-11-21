@@ -12,6 +12,8 @@ import type { Workspace } from '../src/shared/types';
 // The SSH channel protocol, exercised with the local /bin/sh: a channel request
 // must behave exactly like the one-off command it replaces.
 const workspace: Workspace = { id: 'channel', name: 'channel', kind: 'local', cwd: '/tmp' };
+// The channel runs `sh` on a local POSIX target; Windows Lectern runs commands only over SSH.
+const posix = { skip: process.platform === 'win32' ? 'POSIX shell target; Windows runs no local commands' : false };
 const viaChannel = () => new Transport(undefined, { channelKinds: ['local'] });
 const oneOff = () => new Transport(undefined, { channelKinds: [] });
 const settle = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -31,7 +33,7 @@ const outcome = (transport: Transport, script: string, input?: string | Buffer, 
     ({ stdout, stderr }) => ({ ok: true, stdout: stdout.toString('base64'), stderr }),
     (error: Error) => ({ ok: false, error: error.message }));
 
-test('channel results are byte-identical to one-off commands', async () => {
+test('channel results are byte-identical to one-off commands', posix, async () => {
   const channel = viaChannel(), plain = oneOff();
   try {
     await warm(channel);
@@ -60,7 +62,7 @@ test('channel results are byte-identical to one-off commands', async () => {
   } finally { await channel.dispose(); await plain.dispose(); }
 });
 
-test('an over-limit output is refused without breaking the channel', async () => {
+test('an over-limit output is refused without breaking the channel', posix, async () => {
   const transport = viaChannel();
   try {
     const loop = await warm(transport);
@@ -69,7 +71,7 @@ test('an over-limit output is refused without breaking the channel', async () =>
   } finally { await transport.dispose(); }
 });
 
-test('a timed-out command closes its channel and is never replayed', async () => {
+test('a timed-out command closes its channel and is never replayed', posix, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'lectern-channel-timeout-'));
   const transport = viaChannel();
   try {
@@ -86,7 +88,7 @@ test('a timed-out command closes its channel and is never replayed', async () =>
   } finally { await transport.dispose(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test('parallel commands use separate channels and never mix their output', async () => {
+test('parallel commands use separate channels and never mix their output', posix, async () => {
   const transport = viaChannel();
   try {
     await warm(transport);
@@ -100,7 +102,7 @@ test('parallel commands use separate channels and never mix their output', async
   } finally { await transport.dispose(); }
 });
 
-test('a background process outliving its command cannot corrupt the next frame', async () => {
+test('a background process outliving its command cannot corrupt the next frame', posix, async () => {
   const transport = viaChannel();
   try {
     await warm(transport);
@@ -110,7 +112,7 @@ test('a background process outliving its command cannot corrupt the next frame',
   } finally { await transport.dispose(); }
 });
 
-test('a channel lost mid-command rejects that command and later commands still run', async () => {
+test('a channel lost mid-command rejects that command and later commands still run', posix, async () => {
   const transport = viaChannel();
   try {
     await warm(transport);
@@ -120,7 +122,7 @@ test('a channel lost mid-command rejects that command and later commands still r
   } finally { await transport.dispose(); }
 });
 
-test('the ready line is found after login-script output, and only our nonce counts', async () => {
+test('the ready line is found after login-script output, and only our nonce counts', posix, async () => {
   const nonce = randomBytes(16).toString('hex');
   const child = spawn('/bin/sh', ['-c', `echo "Welcome to the target"; printf 'LECTERN_CHANNEL_READY 0000000000000000\\nno newline'\n${channelScript(nonce)}`], { stdio: ['pipe', 'pipe', 'pipe'] });
   const channel = await CommandChannel.open(child, nonce, 5000);
@@ -134,7 +136,7 @@ test('the ready line is found after login-script output, and only our nonce coun
   } finally { channel.close(); }
 });
 
-test('a target that cannot start the loop falls back to one-off commands and backs off', async () => {
+test('a target that cannot start the loop falls back to one-off commands and backs off', posix, async () => {
   const transport = viaChannel();
   let attempts = 0;
   (transport as any).stream = async () => { attempts++; return spawn('/bin/sh', ['-c', 'echo "sh: base64: not found" >&2; exit 1'], { stdio: ['pipe', 'pipe', 'pipe'] }); };
@@ -147,7 +149,7 @@ test('a target that cannot start the loop falls back to one-off commands and bac
   } finally { await transport.dispose(); }
 });
 
-test('disposing closes channels and removes their files on the target', async () => {
+test('disposing closes channels and removes their files on the target', posix, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'lectern-channel-files-'));
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = directory;
@@ -165,7 +167,7 @@ test('disposing closes channels and removes their files on the target', async ()
   }
 });
 
-test('idle channels are closed after the idle limit', async () => {
+test('idle channels are closed after the idle limit', posix, async () => {
   const transport = new Transport(undefined, { channelKinds: ['local'], channelIdleMs: 200 });
   try {
     const loop = await warm(transport);
@@ -177,7 +179,7 @@ test('idle channels are closed after the idle limit', async () => {
   } finally { await transport.dispose(); }
 });
 
-test('large outputs travel compressed and are limited by their decompressed size', async () => {
+test('large outputs travel compressed and are limited by their decompressed size', posix, async () => {
   const nonce = randomBytes(16).toString('hex');
   const child = spawn('/bin/sh', ['-c', channelScript(nonce)], { stdio: ['pipe', 'pipe', 'pipe'] });
   let wire = 0;

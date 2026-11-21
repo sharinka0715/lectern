@@ -42,7 +42,7 @@ test('uploaded names keep only a safe last path part', () => {
   assert.ok(long.endsWith('.markdown'));
 });
 
-test('a file is copied into a private directory under the target\'s TMPDIR', async () => {
+test('a file is copied into a private directory under the target\'s TMPDIR', { skip: process.platform === 'win32' ? 'POSIX shell target; Windows runs no local commands' : false }, async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-upload-')));
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = root + '/';

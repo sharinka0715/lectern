@@ -1,0 +1,10 @@
+# Text files keep LF on every platform: test fixtures are terminal screens and
+# transcripts captured byte for byte, and Windows checkouts (core.autocrlf=true
+# on GitHub's runners) would otherwise turn them into CRLF.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
+*.mp3 binary
+*.mp4 binary
+*.webm binary
