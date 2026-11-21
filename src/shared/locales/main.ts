@@ -35,6 +35,8 @@ export const main = {
   handoffPageExpired: ['交接前记录的页码已失效，请重新打开', 'This page of the pre-handoff history has expired. Open it again.'],
   handoffSwitched: ['交接前记录已切换', 'The pre-handoff history has switched.'],
   subagentSwitched: ['子代理对话已切换', 'The subagent conversation has switched.'],
+  taskOutputSwitched: ['后台任务已切换', 'The background task has switched.'],
+  taskNotFound: ['找不到这个后台任务，它可能不在已加载的记录里', 'This background task was not found; it may not be in the loaded history.'],
   handoffCursorStuck: ['交接前记录的游标未向前移动', 'The pre-handoff history cursor did not move back.'],
   unknownSplit: ['未知对话分屏', 'Unknown conversation pane.'],
   conversationLeftPane: ['该对话已离开当前分屏，请重新打开', 'This conversation has left the pane. Open it again.'],

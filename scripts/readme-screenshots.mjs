@@ -458,16 +458,16 @@ async function subagentShot(demo, s, locale, agents) {
   await page.waitForFunction(() => document.querySelectorAll('.activity-float-dots i[data-state]').length >= 2);
   await section.locator('.activity-float-toggle').click();
   await page.locator('article.activity-card[data-activity-id="t-agent-1"] .activity-open-conversation').click();
-  const column = page.locator('[data-subagent-column]');
+  const column = page.locator('[data-task-column]');
   await column.waitFor();
-  await column.locator(`.subagent-list button[data-agent-id="${agents.done}"]`).click();
+  await column.locator(`.task-column-list button[data-agent-id="${agents.done}"]`).click();
   const detail = column.locator(`[data-subagent-detail="${agents.done}"]`);
   await detail.locator('article.message-assistant').filter({ hasText: s.a11y.report.split('\n')[0] }).waitFor();
   await detail.locator('details.thought-row[data-thought]').waitFor({ state: 'attached' });
   await settle(page);
   await shoot(page, 'subagents', locale);
   await page.getByRole('button', { name: tr(locale, '收起会话活动', 'Hide conversation activity'), exact: true }).first().click();
-  await column.locator('.subagent-column-bar button').first().click();
+  await column.locator('.task-column-bar button').first().click();
   await column.waitFor({ state: 'detached' });
   await toggleSidebar(page, locale, true);
 }

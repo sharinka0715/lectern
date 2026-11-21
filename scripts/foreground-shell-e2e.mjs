@@ -68,7 +68,7 @@ try {
   const panel = page.locator('.activity-float');
   if (!await panel.count()) await page.getByRole('button', { name: '查看会话活动' }).click();
   await panel.waitFor();
-  assert.equal(await panel.getByRole('button', { name: /后台 Shell/ }).count(), 0, 'a foreground command is not a background task');
+  assert.equal(await panel.getByRole('button', { name: /^终端/ }).count(), 0, 'a foreground command is not a background task');
   await page.locator('.message-assistant').getByText('命令已完成。').waitFor().catch(async error => {
     console.error('MESSAGES', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.message')].map(m => m.innerText.slice(0, 200)))));
     const tmux = (...a) => execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root } }).toString();

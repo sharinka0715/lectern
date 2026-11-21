@@ -429,6 +429,8 @@ async function boot() {
     listSubagents: (id, sid) => controllers.forSession(id, sid).listSubagents(id, sid),
     readSubagent: (id, sid, agent, request, view) => controllers.forSession(id, sid).readSubagent(id, sid, agent, request, view),
     releaseSubagents: async (id, sid, view) => controllers.releaseSubagents(id, sid, view),
+    readTaskOutput: (id, sid, tool, request, view) => controllers.forSession(id, sid).readTaskOutput(id, sid, tool, request, view),
+    releaseTaskOutputs: async (id, sid, view) => controllers.releaseTaskOutputs(id, sid, view),
     unwatchSession: view => controllers.release(view),
     answerQuestion: (id, sid, pane, pid, token, action) => controllers.forSession(id, sid).answerQuestion(id, sid, pane, pid, token, action),
     answerPermission: (id, sid, pane, pid, token, action) => controllers.forSession(id, sid).answerPermission(id, sid, pane, pid, token, action),
@@ -449,7 +451,7 @@ async function boot() {
       if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Untrusted IPC sender');
       // Record method/context only. Argument bodies may contain prompts or credentials.
       if (name === 'reportRendererDiagnostic') return handler(...args);
-      const sessionMethods = new Set(['closeSession', 'resumeSession', 'forkSession', 'renameSession', 'bindSession', 'watchSession', 'loadEarlierMessages', 'readHandoffHistory', 'releaseHandoffHistory', 'listSubagents', 'readSubagent', 'releaseSubagents', 'answerQuestion', 'answerPermission', 'turnAction', 'sendMessage', 'sendKey', 'setTerminalControl', 'sendTerminalInput', 'getSessionSetting', 'setSessionSetting', 'getDirectoryTrust', 'respondDirectoryTrust', 'setUltracode']);
+      const sessionMethods = new Set(['closeSession', 'resumeSession', 'forkSession', 'renameSession', 'bindSession', 'watchSession', 'loadEarlierMessages', 'readHandoffHistory', 'releaseHandoffHistory', 'listSubagents', 'readSubagent', 'readTaskOutput', 'releaseTaskOutputs', 'releaseSubagents', 'answerQuestion', 'answerPermission', 'turnAction', 'sendMessage', 'sendKey', 'setTerminalControl', 'sendTerminalInput', 'getSessionSetting', 'setSessionSetting', 'getDirectoryTrust', 'respondDirectoryTrust', 'setUltracode']);
       return diagnostic.operation(`ipc.${name}`, {
         workspaceId: typeof args[0] === 'string' && ['discover', 'createSession', 'removeWorkspace', ...sessionMethods].includes(name) ? args[0] : undefined,
         sessionId: sessionMethods.has(name) && typeof args[1] === 'string' ? args[1] : undefined,

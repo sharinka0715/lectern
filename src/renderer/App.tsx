@@ -39,10 +39,10 @@ import type {
   WorkspaceDiscovery,
 } from "../shared/types";
 import { ActivityFloat } from "./ActivityFloat";
-import { SubagentColumn } from "./SubagentColumn";
+import { TaskColumn } from "./TaskColumn";
 import { imeOwnsKey, isEnterKey } from "./enter-key";
 import { useComposerAttachments } from "./useComposerAttachments";
-import { liveShells as foregroundShells, panelActivities, shellScreenLines, type SessionActivity } from "../shared/activity";
+import { liveShells as foregroundShells, panelActivities, shellScreenLines, type ActivityKind, type SessionActivity } from "../shared/activity";
 import { LiveShells } from "./MessageDisplay";
 import { ArtifactDrawer, type ArtifactTarget } from "./ArtifactDrawer";
 import { SshLoginHost } from "./SshLoginDialog";
@@ -194,11 +194,16 @@ export default function App({view = "primary"}: {view?: ChatView}) {
   const activeCount = items.filter(item => item.status === "running").length;
   // The floating activity card opens by itself where it fits; the user's choice wins for this chat.
   const activityAsked = activityChoice?.scope === activityScope ? activityChoice.open : undefined;
-  // The subagent column of this chat: which subagent it shows, and a counter that focuses it.
-  const [subagentColumn, setSubagentColumn] = useState<{ scope: string; key?: string; focus: number }>();
-  const subagentShown = subagentColumn?.scope === activityScope && sessionId ? subagentColumn : undefined;
-  const openSubagent = (item?: SessionActivity) => setSubagentColumn(previous => ({ scope: activityScope, focus: (previous?.focus ?? 0) + 1,
-    key: item?.id ?? (previous?.scope === activityScope ? previous.key : undefined) }));
+  // The task column of this chat: which subagent, shell or monitor it shows, the kind the card
+  // asked for without naming one, and a counter that focuses it.
+  const [taskColumn, setTaskColumn] = useState<{ scope: string; key?: string; kind?: ActivityKind; focus: number }>();
+  const taskShown = taskColumn?.scope === activityScope && sessionId ? taskColumn : undefined;
+  const openTask = (item?: SessionActivity, kind?: ActivityKind) => setTaskColumn(previous => {
+    const same = previous?.scope === activityScope;
+    // A kind without an entry keeps the one shown when it is of that kind.
+    const keep = same && previous.key && (!kind || items.find(entry => entry.id === previous.key)?.kind === kind || kind === 'agent' && previous.key.startsWith('agent:'));
+    return { scope: activityScope, focus: (previous?.focus ?? 0) + 1, kind: item?.kind ?? kind, key: item?.id ?? (keep ? previous.key : undefined) };
+  });
   const [activityShown, setActivityShown] = useState(false);
   const activityAttachments = useMemo(() => {
     const seen = new Set<string>();
@@ -1338,7 +1343,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
       </ResizableSidebar>}
 
       <SplitWorkspace view={view} second={primary && prefs.split ? <App view="secondary"/> : null}>
-      <main className={`main-area${drawer || subagentShown ? " artifact-open" : ""}`} {...attachments.dropTarget}>
+      <main className={`main-area${drawer || taskShown ? " artifact-open" : ""}`} {...attachments.dropTarget}>
         <header className="topbar">
           <div className="topbar-left">
             <span className="topbar-title" title={session?.title || workspace?.name}>
@@ -1512,7 +1517,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             machine={{ name: machineName(workspace, info.platform, prefs.connections), remote: workspace.kind === "ssh" }}
             onChoice={open => setActivityChoice({ scope: activityScope, open })} onShownChange={setActivityShown}
             onOpenPath={path => openArtifact({ path })} onOpenAttachment={file => openArtifact(file.path ? { path: file.path } : { attachment: file })}
-            onOpenAgent={openSubagent} /> : undefined}>
+            onOpenTask={openTask} /> : undefined}>
             <div className="welcome">
               <LecternMark className="welcome-symbol" />
               <h1>{workspace ? t('app.startNewChat') : primary ? t('app.addProjectFolder') : t('app.chooseSplitChat')}</h1>
@@ -1789,9 +1794,9 @@ export default function App({view = "primary"}: {view?: ChatView}) {
         </div>
         </div>
       </main>
-      {subagentShown && workspace && <SubagentColumn key={activityScope} workspace={workspace} sessionId={sessionId} view={view} items={items}
-        selected={subagentShown.key} focusToken={subagentShown.focus} replyDetail={prefs.replyDetail} sizeMiB={prefs.historyPageMiB} openArtifact={openArtifact}
-        onSelect={key => setSubagentColumn(previous => previous && { ...previous, key })} onClose={() => setSubagentColumn(undefined)} />}
+      {taskShown && workspace && <TaskColumn key={activityScope} workspace={workspace} sessionId={sessionId} view={view} items={items}
+        selected={taskShown.key} kind={taskShown.kind} focusToken={taskShown.focus} replyDetail={prefs.replyDetail} sizeMiB={prefs.historyPageMiB} openArtifact={openArtifact}
+        onSelect={key => setTaskColumn(previous => previous && { ...previous, key })} onClose={() => setTaskColumn(undefined)} />}
       {/* Each split pane keeps its own file panel beside its chat (the activity card floats inside it). */}
       {drawer && workspace && <ArtifactDrawer key={JSON.stringify([workspace.id, sessionId, drawer.trail.length, drawer.trail.at(-1)])}
         workspace={workspace} sessionId={sessionId} target={drawer.trail.at(-1)!} canGoBack={drawer.trail.length > 1}

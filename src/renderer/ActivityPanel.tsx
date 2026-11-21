@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, Radio, Square, Terminal, TextSelect } from 'lucide-react';
+import { Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, PanelRight, Radio, Square, Terminal, TextSelect } from 'lucide-react';
 import { copyWithToast, showContextMenu } from './ContextMenu';
 import { selectionWithin } from './message-menus';
 import { runningMs, type SessionActivity } from '../shared/activity';
@@ -18,7 +18,7 @@ function elapsed(ms: number) {
   return seconds >= 60 ? t('activity.minutesSeconds', { m: Math.floor(seconds / 60), s: seconds % 60 }) : t('activity.seconds', { s: seconds });
 }
 /** One subagent, shell or monitor; the floating activity card lists them per kind.
- * A subagent's `onOpen` shows its conversation in the pane's subagent column. */
+ * `onOpen` shows it in the pane's task column: a subagent's conversation, a shell's or monitor's output. */
 export function ActivityCard({ item, now, expand = item.status === 'running', onOpen }: { item: SessionActivity; now: number; expand?: boolean; onOpen?: () => void }) {
   const [expanded, setExpanded] = useState(expand);
   const Icon = icons[item.kind];
@@ -33,7 +33,7 @@ export function ActivityCard({ item, now, expand = item.status === 'running', on
       const selected = selectionWithin(event.currentTarget).trim();
       showContextMenu(event, [
         !!selected && { label: t('activity.copySelection'), icon: <TextSelect size={14} />, onSelect: () => copyWithToast(selected) },
-        !!onOpen && { label: t('activity.viewConversation'), icon: <MessagesSquare size={14} />, onSelect: onOpen },
+        !!onOpen && { label: t(item.kind === 'agent' ? 'activity.viewConversation' : 'activity.viewDetails'), icon: item.kind === 'agent' ? <MessagesSquare size={14} /> : <PanelRight size={14} />, onSelect: onOpen },
         { label: t(expanded ? 'activity.collapseDetails' : 'activity.expandDetails'), icon: <ChevronsDownUp size={14} />, onSelect: () => setExpanded(!expanded) },
         'separator',
         { label: t('activity.copyTitle'), icon: <Copy size={14} />, onSelect: () => copyWithToast(item.title) },
@@ -49,8 +49,10 @@ export function ActivityCard({ item, now, expand = item.status === 'running', on
       <ChevronDown size={14} className={'activity-chevron' + (expanded ? ' open' : '')} />
     </button>
     <div className="activity-card-subhead"><span className="activity-state">{statusIcon}{t(states[item.status])}</span><span>{description}</span>
-      {onOpen && <button type="button" className="activity-open-conversation" title={t('activity.viewConversationTitle', { title: item.title })} onClick={onOpen}>
-        <MessagesSquare size={12} aria-hidden="true" />{t('activity.viewConversation')}</button>}</div>
+      {onOpen && <button type="button" className="activity-open-conversation" data-open-task={item.id}
+        title={t(item.kind === 'agent' ? 'activity.viewConversationTitle' : 'activity.viewDetailsTitle', { title: item.title })} onClick={onOpen}>
+        {item.kind === 'agent' ? <MessagesSquare size={12} aria-hidden="true" /> : <PanelRight size={12} aria-hidden="true" />}
+        {t(item.kind === 'agent' ? 'activity.viewConversation' : 'activity.viewDetails')}</button>}</div>
     {expanded && <div className="activity-detail">
       {item.command && <ShellCode className="activity-command" text={item.command} />}
       {item.prompt && <p className="activity-prompt">{item.prompt}</p>}

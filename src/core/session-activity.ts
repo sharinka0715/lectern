@@ -9,6 +9,7 @@ export interface ActivityReadTarget { kind: ActivityKind; taskId: string; stamp?
 export interface ActivitySample { taskId: string; stamp: string; tail: string; clipped: boolean }
 export const activityTaskId = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(v);
 const object = (v: unknown): JsonRecord => v && typeof v === 'object' && !Array.isArray(v) ? v as JsonRecord : {};
+const TRANSCRIPT_OUTPUT = 64 * 1024;
 const string = (v: unknown, max = 4096) => typeof v === 'string' && v ? v.slice(0, max) : undefined;
 const number = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 const blocks = (v: unknown) => Array.isArray(v) ? v.map(object) : [];
@@ -35,6 +36,9 @@ const parsed = (text: string): JsonRecord => {
 };
 
 interface Entry { item: SessionActivity; stamp?: string; settledRead?: boolean; attempts?: number;
+  /** Output the transcript itself carries (a monitor's events, bash_progress, a TaskOutput
+   * result): the task column's fallback when the task's output file cannot be read. */
+  transcript?: string;
   /** Fingerprints of enqueued notifications whose delivery has not been seen yet. */
   notices?: string[];
   /** Its latest run ended with an interim notification: a later one replaces it. */
@@ -148,7 +152,7 @@ export class SessionActivityStore {
         } else if (entry && data.type === 'bash_progress' && entry.item.kind === 'shell') {
           this.bind(entry, data.taskId);
           const full = typeof data.fullOutput === 'string' ? data.fullOutput : data.output;
-          if (typeof full === 'string' && full.length) entry.item.output = full.slice(-4096);
+          if (typeof full === 'string' && full.length) { entry.item.output = full.slice(-4096); this.record(entry, full, false); }
           entry.item.updatedAt = at ?? entry.item.updatedAt;
         }
       }
@@ -156,8 +160,9 @@ export class SessionActivityStore {
         if (b.type !== 'tool_use' || typeof b.id !== 'string') continue;
         const input = object(b.input), kind = kindFor(b.name);
         if (kind && !this.entries.has(b.id)) {
-          const command = string(input.command) || string(input.url);
+          const command = string(input.command, 32768) || string(input.url) || string(object(input.ws).url);
           const item: SessionActivity = { id: b.id, kind, command, status: 'running', startedAt: at, updatedAt: at, events: [],
+            ...(kind !== 'agent' && string(r.cwd) && { cwd: string(r.cwd) }),
             prompt: string(input.prompt), agentType: string(input.subagent_type, 160), model: string(input.model, 160),
             title: string(input.description, 240) || string(input.name, 240) || command?.split('\n')[0].slice(0, 200) || (kind === 'agent' ? t('core.subagent') : String(b.name)),
             background: kind === 'monitor' || input.run_in_background === true || undefined };
@@ -204,9 +209,19 @@ export class SessionActivityStore {
     }
   }
   private event(item: SessionActivity, text: string, key: string, at?: string) {
-    if (!text || item.events.some(e => e.key === key)) return;
+    if (!text || item.events.some(e => e.key === key)) return false;
     item.events = [...item.events.slice(-15), { key, text: text.slice(0, 1024), at }];
     if (at && (!item.updatedAt || at > item.updatedAt)) item.updatedAt = at;
+    return true;
+  }
+  /** Keeps the newest TRANSCRIPT_OUTPUT characters of what the transcript recorded. */
+  private record(entry: Entry, text: string, append: boolean) {
+    const all = (append ? (entry.transcript ?? '') : '') + text;
+    entry.transcript = all.length > TRANSCRIPT_OUTPUT ? all.slice(-TRANSCRIPT_OUTPUT) : all;
+  }
+  /** What the transcript recorded of a shell's or monitor's output (not the sampled tail of its file). */
+  transcriptOutput(id: string): string | undefined {
+    return this.entries.get(id)?.transcript || undefined;
   }
   private finish(entry: Entry, status: ActivityState, at?: string) {
     if (status === 'running' || entry.item.status !== 'running') return false;
@@ -262,6 +277,7 @@ export class SessionActivityStore {
       if (control.tool === 'TaskOutput') {
         const task = object(detail.task);
         const status = statusFor(task.status);
+        if (task.task_id === control.task && typeof task.output === 'string' && task.output) this.record(target, task.output, false);
         if (status && task.task_id === control.task) {
           // Running again after its last notification: resumed without a record of it here.
           if (status === 'running' && target.item.endedAt && at && at > target.item.endedAt) this.resume(target, at);
@@ -316,7 +332,7 @@ export class SessionActivityStore {
     this.bind(entry, task);
     const item = entry.item, event = xmlValue(raw, 'event'), summary = xmlValue(raw, 'summary'), result = xmlValue(raw, 'result');
     // Two identical native events at different times are still two events.
-    if (event) this.event(item, event, 'notice:' + at + ':' + event.slice(0, 1024), at);
+    if (event && this.event(item, event, 'notice:' + at + ':' + event.slice(0, 1024), at) && item.kind === 'monitor') this.record(entry, event + '\n', true);
     const status = statusFor(xmlValue(raw, 'status'));
     if (!status) return;
     const interim = item.kind === 'agent' && interimNotice(summary, xmlValue(raw, 'note'));

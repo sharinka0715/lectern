@@ -90,11 +90,11 @@ try {
   const liveCard = page.locator(`article.activity-card[data-activity-id="toolu_e2e_live"]`);
   assert.equal(await liveCard.getAttribute('data-activity-state'), 'running');
   await liveCard.locator('.activity-open-conversation').click();
-  const column = page.locator('[data-subagent-column]');
+  const column = page.locator('[data-task-column]');
   await column.waitFor();
-  assert.equal(await column.locator('.subagent-list button[aria-current="true"]').getAttribute('data-agent-id'), live);
+  assert.equal(await column.locator('.task-column-list button[aria-current="true"]').getAttribute('data-agent-id'), live);
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-agent-id')), live, 'the column takes the focus on its subagent');
-  assert.deepEqual(await column.locator('.subagent-list button').evaluateAll(rows => rows.map(row => [row.dataset.agentId, row.dataset.state])), [[live, 'running'], [done, 'completed']]);
+  assert.deepEqual(await column.locator('.task-column-list button[data-kind="agent"]').evaluateAll(rows => rows.map(row => [row.dataset.agentId, row.dataset.state])), [[live, 'running'], [done, 'completed']]);
   const detail = column.locator(`[data-subagent-detail="${live}"]`);
   await detail.locator('article.message-user', { hasText: '检查构建脚本是否可用。' }).waitFor();
   await detail.locator('article.message-assistant', { hasText: '先看看构建脚本。' }).waitFor();
@@ -113,7 +113,7 @@ try {
   await page.screenshot({ path: path.join(results, 'subagent-column-running.png') });
 
   // The finished one: folded thinking, the tool with its result and the report.
-  await column.locator(`.subagent-list button[data-agent-id="${done}"]`).click();
+  await column.locator(`.task-column-list button[data-agent-id="${done}"]`).click();
   const finished = column.locator(`[data-subagent-detail="${done}"]`);
   await finished.locator('article.message-assistant', { hasText: '测试清单：e2e.mjs 与 test-all.mjs。' }).waitFor();
   assert.equal(await finished.getAttribute('data-state'), 'completed');
@@ -136,7 +136,7 @@ try {
     doneRow('user', { role: 'user', content: 'The coordinator sent a message while you were working:\n再看看 scripts/cc-matrix。\n\nAddress this before completing your current task.' }, { isMeta: true, origin: { kind: 'coordinator' } }),
     doneRow('assistant', { id: 'd3', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'text', text: 'cc-matrix 里还有 run.mjs。' }] }),
   ]));
-  await page.waitForFunction(id => document.querySelector(`.subagent-list button[data-agent-id="${id}"]`)?.dataset.state === 'running', done);
+  await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'running', done);
   await finished.locator('article.message-user', { hasText: '再看看 scripts/cc-matrix。' }).waitFor();
   await finished.locator('article.message-assistant', { hasText: 'cc-matrix 里还有 run.mjs。' }).waitFor();
   assert.equal(await finished.getAttribute('data-state'), 'running');
@@ -151,16 +151,16 @@ try {
     { type: 'queue-operation', operation: 'enqueue', sessionId: sid, timestamp: at(71), content: waiting() },
     record('user', { origin: { kind: 'task-notification' }, promptSource: 'system', message: { role: 'user', content: waiting('toolu_e2e_send') } }, 72),
   ]));
-  await page.waitForFunction(id => document.querySelector(`.subagent-list button[data-agent-id="${id}"]`)?.dataset.state === 'completed', done);
+  await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'completed', done);
   assert.equal(await finished.getAttribute('data-state'), 'completed');
   const facts = await finished.locator('.subagent-detail-head small').innerText();
   assert.match(facts, /已续接 1 次/);
   await page.waitForTimeout(1500);
   assert.equal(await finished.locator('.subagent-detail-head small').innerText(), facts, 'an ended run no longer counts time');
-  assert.match(await column.locator('.subagent-column-bar small').innerText(), /1 运行中 · 1 完成/);
+  assert.match(await column.locator('.task-column-bar small').innerText(), /1 运行中 · 1 完成/);
 
   // Closing the column leaves the chat as it was.
-  await column.locator('.subagent-column-bar button').click();
+  await column.locator('.task-column-bar button').click();
   await column.waitFor({ state: 'detached' });
   assert.deepEqual(errors, []);
   console.log('PASS: the activity card opens the subagent column; it follows a running subagent live, shows a finished one with thinking, tools and report, a resumed one runs again with its new messages, and interim notifications end that run.');

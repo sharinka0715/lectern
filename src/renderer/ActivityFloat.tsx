@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bot, ChevronDown, FileDiff, FileImage, GitBranch, Laptop, Loader2, Minus, PanelRight, Paperclip, Radio, RefreshCw, Server, Terminal } from "lucide-react";
-import { activityTally, type SessionActivity } from "../shared/activity";
+import { activityTally, type ActivityKind, type SessionActivity } from "../shared/activity";
 import type { GitChange, GitChangesResult, MessageAttachment } from "../shared/types";
 import { ActivityCard } from "./ActivityPanel";
 import { AttachmentThumbnail } from "./AttachmentThumbnail";
@@ -85,8 +85,9 @@ interface Props {
   onShownChange(open: boolean): void;
   onOpenPath(path: string): void;
   onOpenAttachment(attachment: MessageAttachment): void;
-  /** Shows a subagent's conversation (or, without one, the list) in the pane's subagent column. */
-  onOpenAgent?(item?: SessionActivity): void;
+  /** Shows a subagent's conversation, or a shell's or monitor's command and output, in the pane's
+   * task column; without an item, the column on the first one of `kind`. */
+  onOpenTask?(item?: SessionActivity, kind?: ActivityKind): void;
 }
 
 /**
@@ -173,12 +174,12 @@ export function ActivityFloat(props: Props) {
       {git.error && !repo && <p className="activity-float-error">{t('activity.readFailed', { error: git.error })}</p>}
       {kinds.map(({ kind, list }) => {
         const Icon = kindIcons[kind];
-        const openAgent = kind === 'agent' ? props.onOpenAgent : undefined;
+        const open = props.onOpenTask;
         return <Section key={kind} icon={<Icon size={14} />} title={t(kindLabels[kind])} open={section === kind} onToggle={() => toggle(kind)}
           summary={<><Dots items={list} />{activityTally(list)}</>}
-          action={openAgent && <button type="button" className="icon-button activity-float-refresh" aria-label={t('activity.openSubagents')} title={t('activity.openSubagents')}
-            onClick={() => openAgent()}><PanelRight size={13} /></button>}>
-          {list.map(item => <ActivityCard key={item.id} item={item} now={now} expand={false} onOpen={openAgent && (() => openAgent(item))} />)}
+          action={open && <button type="button" className="icon-button activity-float-refresh" aria-label={t('activity.openSubagents')} title={t('activity.openSubagents')}
+            data-open-kind={kind} onClick={() => open(undefined, kind)}><PanelRight size={13} /></button>}>
+          {list.map(item => <ActivityCard key={item.id} item={item} now={now} expand={false} onOpen={open && (() => open(item))} />)}
         </Section>;
       })}
       {attachments.length > 0 && <Section icon={<Paperclip size={14} />} title={t('activity.attachments')} open={section === "attachments"} onToggle={() => toggle("attachments")}

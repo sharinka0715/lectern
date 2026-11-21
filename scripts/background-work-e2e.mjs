@@ -112,7 +112,7 @@ try {
   await page.locator('.session-row.active[data-background]').waitFor();
   report.row = { label: await row.locator('.session-state-label').innerText(), title: await row.getAttribute('title') };
   assert.equal(report.row.label, '后台运行中');
-  assert.match(report.row.title, /后台 Shell|子代理/);
+  assert.match(report.row.title, /后台终端|子代理/);
   assert.equal(await row.locator('.session-status-dot.state-background').count(), 1);
   report.topbar = await page.locator('.connection-status').innerText();
   // The app started this session in auto mode.
@@ -125,7 +125,7 @@ try {
   await closeButton.click();
   await confirmDialog.waitFor();
   report.closeDetail = await confirmDialog.locator('.confirm-action-detail').innerText();
-  assert.match(report.closeDetail, /以下仍在运行，将被停止：.*(后台 Shell|子代理)/);
+  assert.match(report.closeDetail, /以下仍在运行，将被停止：.*(后台终端|子代理)/);
   assert.equal(await page.evaluate(() => document.activeElement?.textContent), '取消');
   await page.keyboard.press('Escape');
   await confirmDialog.waitFor({ state: 'detached' });

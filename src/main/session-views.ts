@@ -52,6 +52,10 @@ export class SessionViews {
   releaseSubagents(workspace: string, session: string, view: ChatView = 'primary') {
     this.find(workspace, session)?.controller.releaseSubagents(this.view(view));
   }
+  /** The same for the task column's background shells and monitors. */
+  releaseTaskOutputs(workspace: string, session: string, view: ChatView = 'primary') {
+    this.find(workspace, session)?.controller.releaseTaskOutputs(this.view(view));
+  }
   /** The reader that already shows or caches this conversation keeps its
    * history; one immediate read binds it to the resumed pane. */
   async resumeSession(workspace: string, session: string) {
@@ -121,6 +125,7 @@ export class SessionViews {
       if (!reader.views.delete(view)) continue;
       reader.controller.releaseHandoffHistory(view);
       reader.controller.releaseSubagents(view);
+      reader.controller.releaseTaskOutputs(view);
       const snapshot = reader.controller.currentSnapshot;
       if (reader.terminals.delete(view) && snapshot)
         reader.controller.setTerminalVisible(snapshot.workspaceId, snapshot.sessionId, reader.terminals.size > 0);

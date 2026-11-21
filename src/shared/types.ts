@@ -248,6 +248,39 @@ export interface SubagentTranscript {
   missing?: boolean;
 }
 
+/** Where a background shell's or monitor's shown output comes from. */
+export interface TaskOutputSource {
+  /** 'task' (its own output file), 'file:<n>' (a file its command wrote to) or 'transcript'. */
+  key: string;
+  kind: 'task' | 'file' | 'transcript';
+  /** A redirect file as resolved: absolute, or under `~`. */
+  path?: string;
+  stream?: 'stdout' | 'stderr' | 'both';
+}
+/** A background shell's or monitor's output for the task column. */
+export interface TaskOutput {
+  toolId: string;
+  /** Grows whenever anything below changes; a caller already at it gets no text. */
+  revision: number;
+  sources: TaskOutputSource[];
+  /** The key of the source shown. */
+  source: string;
+  text?: string;
+  /** Bytes before the shown text that were not read (0: it starts at the beginning). */
+  omitted: number;
+  /** More can be read before the shown text. */
+  hasOlder: boolean;
+  /** missing: the file is not there (yet); privacy: a macOS privacy folder, read only on request. */
+  state: 'ok' | 'missing' | 'privacy' | 'error';
+  error?: string;
+  /** From the end of the task's own output file. */
+  exitCode?: number;
+  killed?: boolean;
+  /** The task's own output file exists and holds no output. */
+  ownEmpty?: boolean;
+}
+export interface TaskOutputRequest { revision?: number; source?: string; older?: boolean; explicit?: boolean }
+
 export interface SessionSnapshot {
   turnProgress?: TurnProgressObservation;
   lastCompact?: CompactReceipt;
@@ -500,6 +533,9 @@ export interface DesktopAPI {
   /** A subagent's conversation: new records since the last read, or an older page with `older`. */
   readSubagent(workspaceId: string, sessionId: string, agentId: string, request?: { revision?: number; older?: string; sizeMiB?: number; toolUseId?: string }, view?: ChatView): Promise<SubagentTranscript>;
   releaseSubagents(workspaceId: string, sessionId: string, view?: ChatView): Promise<void>;
+  /** A background shell's or monitor's output, named by its tool call (the main process finds its command and task). */
+  readTaskOutput(workspaceId: string, sessionId: string, toolId: string, request?: TaskOutputRequest, view?: ChatView): Promise<TaskOutput>;
+  releaseTaskOutputs(workspaceId: string, sessionId: string, view?: ChatView): Promise<void>;
   unwatchSession(view?: ChatView): Promise<void>;
   answerQuestion(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: import('./question-action').QuestionAction): Promise<void>;
   answerPermission(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: import('./native-permission').PermissionAction): Promise<void>;

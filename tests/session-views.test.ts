@@ -24,6 +24,7 @@ class Reader extends EventEmitter {
   async detach() { this.detached = true; this.currentSnapshot = undefined; }
   releaseHandoffHistory() {}
   releaseSubagents() {}
+  releaseTaskOutputs() {}
   setTerminalVisible(_workspace: string, _session: string, visible: boolean) { this.terminalVisible = visible; }
 }
 const opened = (primary: Reader) => primary.created.map(r => r.currentSnapshot?.sessionId ?? 'detached');

@@ -10,6 +10,8 @@ export interface SessionActivity {
   title: string;
   taskId?: string;
   command?: string;
+  /** Where a shell or monitor ran: Claude Code's working directory when it was called. */
+  cwd?: string;
   prompt?: string;
   agentType?: string;
   model?: string;
@@ -40,7 +42,7 @@ export interface BackgroundCounts {
   unknownShells?: boolean;
 }
 
-/** "1 个后台 Shell", "2 个子代理", …: the parts with a count, in a fixed order. */
+/** "1 个后台终端", "2 个子代理", …: the parts with a count, in a fixed order. */
 export function backgroundParts(counts: BackgroundCounts | undefined): string[] {
   if (!counts) return [];
   const parts = [counts.shells && t('core.backgroundShells', { count: counts.shells }), counts.agents && t('core.subagents', { count: counts.agents }),
@@ -61,7 +63,7 @@ export function runningMs(item: SessionActivity, now: number): number | undefine
 }
 
 /** A section header of the activity card: "2 运行中 · 3 完成" (a resumed subagent runs again). */
-export function activityTally(items: readonly SessionActivity[]): string {
+export function activityTally(items: readonly Pick<SessionActivity, 'status'>[]): string {
   const running = items.filter(item => item.status === 'running').length;
   const failed = items.filter(item => item.status === 'failed').length, ended = items.length - running;
   return [running && t('activity.running', { count: running }),

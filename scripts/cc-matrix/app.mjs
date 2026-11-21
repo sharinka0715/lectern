@@ -26,9 +26,12 @@ export const sel = {
   thought: 'details.thought-row[data-thought]',
   activityPill: '.activity-float-pill',
   openSubagent: '.activity-open-conversation',
-  subagentColumn: '[data-subagent-column]',
-  subagentRow: id => `[data-subagent-column] .subagent-list button[data-agent-id="${id}"]`,
-  subagentDetail: id => `[data-subagent-column] [data-subagent-detail="${id}"]`,
+  subagentColumn: '[data-task-column]',
+  subagentRow: id => `[data-task-column] .task-column-list button[data-agent-id="${id}"]`,
+  subagentDetail: id => `[data-task-column] [data-subagent-detail="${id}"]`,
+  taskColumn: '[data-task-column]',
+  taskRow: id => `[data-task-column] .task-column-list button[data-task-key="${id}"]`,
+  taskDetail: id => `[data-task-column] [data-task-detail="${id}"]`,
 };
 
 /** Workspaces the app starts with: one per folder, all on this machine, sharing

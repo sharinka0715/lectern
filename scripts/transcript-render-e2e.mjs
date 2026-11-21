@@ -82,7 +82,7 @@ try {
   const panel = page.locator('.activity-float');
   if (!await panel.count()) await page.getByRole('button', { name: '查看会话活动' }).click();
   await panel.waitFor();
-  await panel.getByRole('button', { name: /后台 Shell/ }).click();
+  await panel.getByRole('button', { name: /^终端/ }).click();
   assert.deepEqual(await panel.locator('[data-activity-id]').evaluateAll(cards => cards.map(card => card.getAttribute('data-activity-id'))), ['bg1'],
     'only the background shell is a task in the panel');
   console.log(JSON.stringify({ ok: true, progressNotes: true, foldedThought: true, sedDiff: true, panel: ['bg1'] }));

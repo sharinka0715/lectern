@@ -23,7 +23,7 @@ test('native identity requires the exact foreground process, start, PID domain, 
   // Background shells (native "shell") or, with the prompt back on screen, background
   // subagents and workflows (native "busy"): the reply is done, the work is not.
   const shell = paneNavigationStatus({ ...pane, native: match({ status: 'shell' }) });
-  assert.equal(shell.status, 'idle'); assert.match(shell.background!, /后台 Shell/);
+  assert.equal(shell.status, 'idle'); assert.match(shell.background!, /后台终端/);
   const idleScreen = '────────\n❯ \n────────\n  ? for shortcuts';
   const delegated = paneNavigationStatus({ ...pane, native: match({ status: 'busy' }) }, { screen: idleScreen });
   assert.equal(delegated.status, 'idle'); assert.match(delegated.background!, /子代理或工作流/);

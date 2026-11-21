@@ -14,6 +14,7 @@ import { ComposerCompletions } from './composer-completions';
 import { EndpointBillingCache } from './endpoint-billing';
 import type { EndpointBilling, GitChangesResult, SubagentFile } from '../shared/types';
 import { decodeSubagentList, subagentListScript, subagentPaths } from './subagent-files';
+import { decodeTaskOutput, taskOutputScript, type TaskOutputRead, type TaskOutputWindow } from './task-output-files';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, posix } from 'node:path';
 import type { SettingSwitchMode, DirectoryTrustDecision, DirectoryTrustResult, DirectoryTrustSnapshot, HistoryScan, HistoryTarget, ReplyBaselines, TranscriptPosition, NativeStatusLineObservation, PaneInfo, SessionInfo, SessionSettingKind, SessionSettingSnapshot, TerminalFrame, TerminalInput, TerminalKey, Workspace, WorkspaceDirectoryPage, WorkspaceDiscovery, WorkspaceEndpoint } from '../shared/types';
@@ -970,6 +971,12 @@ remaining=$(list_target)
     }
     return { jsonl, reset: window.reset, missing: window.inode === 'missing', hasMore: window.end < window.size, olderCursor: page?.olderCursor,
       skippedHistoryRecords: page?.skippedHistoryRecords, cursor: { offset: window.end, inode: window.inode, skipPartial, stamp: window.stamp, guard: window.guard } };
+  }
+  /** A window of a background shell's or monitor's native output file (task-output-files.ts). */
+  async readTaskOutput(workspace: Workspace, sessionId: string, taskId: string, window: TaskOutputWindow): Promise<TaskOutputRead> {
+    const script = taskOutputScript(await this.subagentDirs(workspace, sessionId), sessionId, taskId, window);
+    const { stdout } = await this.transport.run(workspace, script, { tag: 'session.task_output', maxBytes: window.limit + 1024 });
+    return decodeTaskOutput(stdout);
   }
   async readSubagentOlder(workspace: Workspace, sessionId: string, agentId: string, cursor: HistoryCursor, sizeMiB?: number): Promise<HistoryPage> {
     const files = subagentPaths(await this.subagentDirs(workspace, sessionId), sessionId, agentId);

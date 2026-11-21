@@ -46,6 +46,9 @@ export const FEATURES = [
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
   { id: 'subagent-column', title: "Subagent column: the subagent's own JSONL found, its turns shown live" },
   { id: 'subagent-resume', title: 'Subagent column: a SendMessage resume runs again with its new messages' },
+  { id: 'task-shell-output', title: "Task column: a background shell's command and its output file, appended while it runs" },
+  { id: 'task-redirect-output', title: 'Task column: a background shell that redirected into a file shows that file' },
+  { id: 'task-monitor-output', title: "Task column: a monitor's output file (where Monitor is offered)" },
   { id: 'history-paging', title: 'Reopen a closed session: first page, then older history' },
   { id: 'resume', title: 'Resume a closed session (--resume) and continue' },
   { id: 'auto-mode-resume', title: 'A resumed session starts in auto mode (status bar)' },
@@ -78,8 +81,11 @@ export async function prepareFolders(sandbox) {
   const main = sandbox.work;
   const perm = path.join(sandbox.root, 'perm-work');
   const fresh = path.join(sandbox.root, 'fresh-work');
+  // Background tasks run without permission questions: auto mode off, the tools allowed.
+  const tasks = path.join(sandbox.root, 'tasks-work');
   const onboard = path.join(sandbox.root, 'onboard-work'), onboardConfig = path.join(sandbox.root, 'onboard-config');
-  for (const dir of [perm, fresh, onboard, onboardConfig]) await mkdir(dir, { recursive: true });
+  for (const dir of [perm, fresh, onboard, onboardConfig, path.join(tasks, '.claude')]) await mkdir(dir, { recursive: true });
+  await writeFile(path.join(tasks, '.claude', 'settings.json'), JSON.stringify({ permissions: { disableAutoMode: 'disable', allow: ['Bash', 'Monitor', 'ToolSearch', 'TaskStop'] } }));
   // Onboarding itself (theme, connectivity check against api.anthropic.com) cannot run
   // offline; this configuration has finished it and nothing else: the API key is not
   // approved yet and no folder is trusted.
@@ -97,11 +103,13 @@ export async function prepareFolders(sandbox) {
   const configFile = path.join(sandbox.config, '.claude.json');
   const config = JSON.parse(await readFile(configFile, 'utf8'));
   config.projects[perm] = { ...config.projects[main] };
+  config.projects[tasks] = { ...config.projects[main] };
   await writeFile(configFile, JSON.stringify(config, null, 2));
   return {
     main: { id: 'ccm-main', name: 'ccm-main', cwd: main },
     perm: { id: 'ccm-perm', name: 'ccm-perm', cwd: perm },
     fresh: { id: 'ccm-fresh', name: 'ccm-fresh', cwd: fresh },
+    tasks: { id: 'ccm-tasks', name: 'ccm-tasks', cwd: tasks },
     onboard: { id: 'ccm-onboard', name: 'ccm-onboard', cwd: onboard, claudeDir: onboardConfig },
   };
 }
@@ -842,8 +850,77 @@ export const SCENARIOS = [
         await detail.locator(`${sel.assistant}:has-text("ccm-sa-child2-report")`).waitFor({ timeout: 40_000 });
         await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'completed', sel.subagentRow(agentId), { timeout: 60_000 });
         await page.screenshot({ path: path.join(ctx.dir, 'subagents.resumed.png') }).catch(() => {});
-        await page.locator(`${sel.subagentColumn} .subagent-column-bar button`).click();
+        await page.locator(`${sel.subagentColumn} .task-column-bar button`).click();
       });
+    },
+  },
+  {
+    id: 'task-column',
+    features: ['task-shell-output', 'task-redirect-output', 'task-monitor-output'],
+    timeoutMs: 200_000,
+    async run(ctx) {
+      const { ui, page, api, sandbox, folders, check, note } = ctx;
+      // The main loop starts a background shell that prints, one that redirects into a file
+      // and (where offered; a deferred tool from 2.1.310, not offered by 2.1.300) a monitor.
+      let monitor = false, searched = false, launched = false;
+      api.script('task-main', ({ body }) => {
+        const offered = (body.tools ?? []).map(tool => tool.name);
+        if (!launched && !searched && !offered.includes('Monitor') && offered.includes('ToolSearch')) {
+          searched = true;
+          return { blocks: [{ type: 'tool_use', name: 'ToolSearch', input: { query: 'select:Monitor', max_results: 1 } }] };
+        }
+        if (!launched) {
+          launched = true; monitor = offered.includes('Monitor');
+          return { blocks: [
+            { type: 'tool_use', name: 'Bash', input: { command: 'echo ccm-task-plain-1; sleep 4; echo ccm-task-plain-2', description: 'Matrix plain task', run_in_background: true } },
+            { type: 'tool_use', name: 'Bash', input: { command: 'sleep 1; echo ccm-task-redirected > ccm-task.log 2>&1', description: 'Matrix redirected task', run_in_background: true } },
+            ...(monitor ? [{ type: 'tool_use', name: 'Monitor', input: { command: 'echo ccm-monitor-1; sleep 1; echo ccm-monitor-2', description: 'Matrix monitor', timeout_ms: 60000 } }] : [])] };
+        }
+        return { text: 'Background tasks noted (ccm-task-started).' };
+      });
+      await startChat(ctx, folders.tasks, 'Start background tasks ccm:task-main');
+      await ui.waitReply('ccm-task-started', { timeout: 60_000 });
+      const id = await ui.activeSessionId();
+      const main = (await sandbox.projectFiles()).find(file => file.includes(id));
+      const calls = new Map();
+      for (const r of await readJsonl(main)) for (const block of Array.isArray(r.message?.content) ? r.message.content : [])
+        if (block.type === 'tool_use' && /^Matrix /.test(block.input?.description ?? '')) calls.set(block.input.description, block.id);
+      const plain = calls.get('Matrix plain task'), redirected = calls.get('Matrix redirected task'), watch = calls.get('Matrix monitor');
+      assert.ok(plain && redirected, `the tool calls are in the transcript: ${JSON.stringify([...calls])}`);
+      const results = (await readJsonl(main)).filter(r => r.toolUseResult && typeof r.toolUseResult === 'object');
+      note('results', results.filter(r => r.toolUseResult.backgroundTaskId || r.toolUseResult.taskId).map(r => Object.keys(r.toolUseResult).sort().join(',')));
+      if (!await page.locator('.activity-float').isVisible()) await page.locator(sel.activityPill).click();
+      const section = page.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: /^终端$/ }) });
+      await section.locator('.activity-float-toggle').click();
+      await page.locator(`article.activity-card[data-activity-id="${plain}"] ${sel.openSubagent}`).click();
+      await page.locator(sel.taskColumn).waitFor();
+      const detail = page.locator(sel.taskDetail(plain));
+      await check('task-shell-output', async () => {
+        await detail.locator('.task-output', { hasText: 'ccm-task-plain-1' }).waitFor({ timeout: 30_000 });
+        assert.match(await detail.locator('.task-command').innerText(), /echo ccm-task-plain-1; sleep 4/);
+        // Appended while it runs, then the exit code from the end of the native file.
+        await detail.locator('.task-output', { hasText: 'ccm-task-plain-2' }).waitFor({ timeout: 30_000 });
+        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'completed', sel.taskDetail(plain), { timeout: 60_000 });
+        await detail.locator('[data-exit-code="0"]').waitFor({ timeout: 20_000 });
+        assert.ok(!(await detail.locator('.task-output').innerText()).includes('[exited'), 'the native trailer is not shown as output');
+        await page.screenshot({ path: path.join(ctx.dir, 'task-column.shell.png') }).catch(() => {});
+      });
+      await check('task-redirect-output', async () => {
+        await page.locator(sel.taskRow(redirected)).click();
+        const file = page.locator(sel.taskDetail(redirected));
+        await file.locator('.task-output', { hasText: 'ccm-task-redirected' }).waitFor({ timeout: 40_000 });
+        assert.equal(await file.getAttribute('data-source'), 'file:0');
+        assert.equal(await file.locator('[data-redirect-path]').getAttribute('data-redirect-path'), path.join(folders.tasks.cwd, 'ccm-task.log'));
+        await page.screenshot({ path: path.join(ctx.dir, 'task-column.redirect.png') }).catch(() => {});
+      });
+      await check('task-monitor-output', async () => {
+        note('monitor', monitor ? 'offered' : 'not offered');
+        if (!monitor) return { skip: 'Claude Code does not offer the Monitor tool' };
+        assert.ok(watch, 'the Monitor call is in the transcript');
+        await page.locator(sel.taskRow(watch)).click();
+        await page.locator(sel.taskDetail(watch)).locator('.task-output', { hasText: 'ccm-monitor-2' }).waitFor({ timeout: 40_000 });
+      });
+      await page.locator(`${sel.taskColumn} .task-column-bar button`).click();
     },
   },
   // end of SCENARIOS

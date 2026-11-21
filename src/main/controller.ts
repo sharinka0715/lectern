@@ -11,6 +11,8 @@ import { runStart } from '../shared/activity';
 import { MessageDisplay } from '../core/message-display';
 import { HandoffReader } from './handoff-reader';
 import { SubagentReader, type SubagentRequest } from './subagent-reader';
+import { TaskOutputReader } from './task-output-reader';
+import type { TaskOutputRequest } from '../shared/types';
 import { activityTaskId } from '../core/session-activity';
 import type { ChatMessage, ChatView, SessionStatus } from '../shared/types';
 import { classifySessionScreen } from '../core/screen';
@@ -78,6 +80,7 @@ export class Controller extends EventEmitter {
   private watch?: Watch;
   private readonly handoffs = new Map<ChatView, HandoffReader>();
   private readonly subagents = new Map<ChatView, Map<string, SubagentReader>>();
+  private readonly taskOutputs = new Map<ChatView, Map<string, TaskOutputReader>>();
   private subagentClock = 0;
   private timer?: ReturnType<typeof setTimeout>;
   // A cached conversation outside both panes. It keeps its parsed history and
@@ -335,6 +338,33 @@ export class Controller extends EventEmitter {
       () => this.watch === watch && this.subagents.get(view)?.get(agentId) === current);
   }
   releaseSubagents(view: ChatView = 'primary') { this.subagents.delete(view); }
+  /** A pane's task column: the output of a background shell or monitor, named by its tool call. The
+   * command, working directory and task ID come from this conversation's activity, not the caller. */
+  readTaskOutput(workspaceId: string, sessionId: string, toolId: string, request: TaskOutputRequest = {}, view: ChatView = 'primary') {
+    const watch = this.shownWatch(workspaceId, sessionId, view);
+    if (!activityTaskId(toolId) || !request || typeof request !== 'object') throw new Error(t('main.taskOutputSwitched'));
+    const item = watch.snapshot.activity?.find(entry => entry.id === toolId && (entry.kind === 'shell' || entry.kind === 'monitor'));
+    if (!item) throw new Error(t('main.taskNotFound'));
+    const readers = this.taskOutputs.get(view) ?? new Map<string, TaskOutputReader>();
+    this.taskOutputs.set(view, readers);
+    let reader = readers.get(toolId);
+    if (!reader) {
+      reader = new TaskOutputReader(sessionId, toolId);
+      readers.set(toolId, reader);
+      const idle = [...readers.values()].sort((a, b) => a.usedAt - b.usedAt);
+      for (let excess = readers.size - 6; excess > 0; excess--) readers.delete(idle.shift()!.toolId);
+    }
+    reader.usedAt = ++this.subagentClock;
+    const current = reader;
+    const clean: TaskOutputRequest = {
+      revision: typeof request.revision === 'number' ? request.revision : undefined,
+      source: typeof request.source === 'string' ? request.source.slice(0, 32) : undefined,
+      older: request.older === true, explicit: request.explicit === true,
+    };
+    return current.read(this.backend, watch.workspace, item, watch.display.activity.transcriptOutput(toolId), clean,
+      () => this.watch === watch && this.taskOutputs.get(view)?.get(toolId) === current);
+  }
+  releaseTaskOutputs(view: ChatView = 'primary') { this.taskOutputs.delete(view); }
   messageAttachment(workspaceId: string, sessionId: string, id: string) {
     const watch = this.watch;
     if (!watch || watch.workspace.id !== workspaceId || watch.sessionId !== sessionId) throw new Error(t('controller.attachmentSwitched'));
@@ -427,6 +457,7 @@ export class Controller extends EventEmitter {
   unwatchSession(): void {
     this.handoffs.clear();
     this.subagents.clear();
+    this.taskOutputs.clear();
     clearTimeout(this.timer);
     this.timer = undefined;
     if (this.watch) {

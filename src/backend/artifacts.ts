@@ -49,9 +49,17 @@ interface Target {
   documents?: 'plans' | 'skills' | 'commands';
 }
 export type AuthorizeArtifact = (absolutePath: string) => Promise<void>;
-type Request = 'preview' | 'thumbnail' | 'list' | 'metadata' | 'download';
+type Request = 'preview' | 'thumbnail' | 'list' | 'metadata' | 'download' | 'range';
+/** A byte window of a file: the `limit` bytes before `before`, the new bytes from `from`
+ * (at most `appendLimit`, else the tail), or the tail. */
+export interface FileWindowRequest { known?: string; from?: number; before?: number; limit: number; appendLimit?: number }
+export type FileWindow = { path: string; stamp: string; identity: string; size: number } & (
+  { unchanged: true } | { unchanged?: false; start: number; mode: 'tail' | 'from' | 'before'; bytes: Buffer });
+/** A file in a macOS privacy folder, not read without the user's click (it raises a system prompt). */
+export class PrivacyFolderError extends Error {}
+const windowInt = (value: number | undefined) => value !== undefined && Number.isSafeInteger(value) && value >= 0 ? String(value) : '';
 
-function readScript(target: Target, request: Request, byteLimit: number, offset = 0, expectedStamp?: string, cachedStamp?: string) {
+function readScript(target: Target, request: Request, byteLimit: number, offset = 0, expectedStamp?: string, cachedStamp?: string, range?: FileWindowRequest) {
   const components = posix.relative(target.base, target.absolute).split('/').filter(Boolean);
   const directorySteps = components.slice(0, -1).map(part => 'enter ' + q(part)).join('\n');
   const leaf = components.at(-1) ?? '.';
@@ -61,11 +69,20 @@ function readScript(target: Target, request: Request, byteLimit: number, offset 
   // The caller already holds the thumbnail for this stamp: send the header alone and decode nothing.
   const changed = cachedStamp ? `[ "$fd_stamp" != ${q(cachedStamp)} ] && ` : '';
   const thumbnailBody = `if ${changed}[ "$size" -gt 0 ] && [ "$size" -le ${THUMB_INPUT_BYTES} ]; then ${thumbnailShell} <&3; fi`;
+  // A window of a file that may still be growing (a log a command writes to).
+  const rangeBody = `if [ "$fd_stamp" = ${q(cachedStamp ?? '')} ]; then printf 'same\\0'; else
+  lectern_from=${q(windowInt(range?.from))}; lectern_before=${q(windowInt(range?.before))}; lectern_limit=${byteLimit}; lectern_append=${windowInt(range?.appendLimit) || byteLimit}
+  if [ -n "$lectern_before" ]; then mode=before; end=$lectern_before; [ "$end" -le "$size" ] || end=$size; start=$((end > lectern_limit ? end - lectern_limit : 0))
+  elif [ -n "$lectern_from" ] && [ "$lectern_from" -le "$size" ] && [ $((size - lectern_from)) -le "$lectern_append" ]; then mode=from; start=$lectern_from; end=$size
+  else mode=tail; end=$size; start=$((size > lectern_limit ? size - lectern_limit : 0)); fi
+  printf '%s\\0%s\\0' "$start" "$mode"
+  if [ "$end" -gt "$start" ]; then tail -c +$((start + 1)) <&3 | head -c $((end - start)); fi
+fi`;
   const transfer = request === 'download' ? 'head -c "$size" <&3'
-    : `printf 'file\\0%s\\0' "$fd_stamp"\n${request === 'preview' ? previewBody : request === 'thumbnail' ? thumbnailBody : ''}`;
+    : `printf 'file\\0%s\\0' "$fd_stamp"\n${request === 'preview' ? previewBody : request === 'thumbnail' ? thumbnailBody : request === 'range' ? rangeBody : ''}`;
   // cd pins each directory. Validate its physical location after descent and
   // compare lstat(path) with fstat(fd) before and after consuming the descriptor.
-  const directoryBody = request === 'thumbnail' ? `die ${q(t('artifacts.notImage'))}`
+  const directoryBody = request === 'thumbnail' ? `die ${q(t('artifacts.notImage'))}` : request === 'range' ? `die ${q(t('artifacts.fileUnreadable'))}`
     : request === 'download' || request === 'metadata' ? `die ${q(t('artifacts.chooseFileToDownload'))}` : `
 [ -r . ] && [ -x . ] || die ${q(t('artifacts.noFolderPermission'))}
 printf 'directory\\0'
@@ -100,6 +117,11 @@ fi
 check_file() {
   [ "$(pwd -P)" = "$expected_dir" ] && [ ! -L "$item" ] && [ -f "$item" ] && [ "$(path_stamp)" = "$fd_stamp" ] && [ "$(file_stamp)" = "$fd_stamp" ] || die ${q(t('artifacts.fileChangedRetry'))}
 }
+${request === 'range' ? `# A growing file changes size and time while read: only its identity (device, inode) must hold.
+identity() { cut -d: -f2,3; }
+check_file() {
+  [ "$(pwd -P)" = "$expected_dir" ] && [ ! -L "$item" ] && [ -f "$item" ] && [ "$(path_stamp | identity)" = "$(printf '%s' "$fd_stamp" | identity)" ] && [ "$(file_stamp | identity)" = "$(printf '%s' "$fd_stamp" | identity)" ] || die ${q(t('artifacts.fileChangedRetry'))}
+}` : ''}
 check_file
 ${expectedStamp ? `[ "$fd_stamp" = ${q(expectedStamp)} ] || die ${q(t('artifacts.fileChangedReopen'))}` : ''}
 size=\${fd_stamp%%:*}
@@ -405,16 +427,39 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
   /** An attachment's path is the user's own choice, not a name from model output, so a thumbnail may read it
    * outside the folder without a grant. Protected paths and links are still refused, and so are macOS privacy
    * folders (Desktop, Downloads, …) that do not contain the folder: reading one raises a system prompt. */
-  private async attachedTarget(workspace: Workspace, reference: string): Promise<Target> {
+  private async attachedTarget(workspace: Workspace, reference: string, allowPrivacy = false): Promise<Target> {
     assertReference(reference);
     const locate = await this.locator(workspace, [reference]), target = locate(reference);
     let root: string | undefined;
     try { root = locate('.').absolute.toLowerCase(); } catch { /* A protected folder contains no privacy folder. */ }
     const inside = (path: string, folder: string) => within(path, folder.toLowerCase());
-    if (target.privacyRoots.some(folder => inside(target.absolute.toLowerCase(), folder) && !(root && inside(root, folder)))) {
-      throw new Error(t('artifacts.privacyFolderNotRead'));
+    if (!allowPrivacy && target.privacyRoots.some(folder => inside(target.absolute.toLowerCase(), folder) && !(root && inside(root, folder)))) {
+      throw new PrivacyFolderError(t('artifacts.privacyFolderNotRead'));
     }
     return target;
+  }
+
+  /**
+   * A byte window of a file a background command wrote its output to. The path comes from the
+   * command in the transcript (parsed in the main process, never sent by the renderer), so it is
+   * read like an attachment: outside the folder too, without grants; protected paths and links are
+   * refused, and a macOS privacy folder only with `explicit` (the user asked to read it). The
+   * window follows a growing file: `known` sends nothing when unchanged, `from` only new bytes.
+   */
+  async readWindow(workspace: Workspace, reference: string, window: FileWindowRequest, explicit = false): Promise<FileWindow> {
+    const target = await this.attachedTarget(workspace, reference, explicit);
+    const limit = Math.max(1, Math.min(8 * 1024 * 1024, Math.floor(window.limit)));
+    const known = typeof window.known === 'string' && window.known.length < MAX_WIRE_HEADER ? window.known : undefined;
+    const result = await this.transport.run(workspace, readScript(target, 'range', limit, 0, undefined, known, window), {
+      tag: 'artifact.range', maxBytes: limit + 2 * MAX_WIRE_HEADER, timeoutMs: 20_000,
+    });
+    const { stamp, size, content } = decodeFile(result.stdout);
+    const identity = stamp.split(':').slice(1, 3).join(':'), base = { path: target.absolute, stamp, identity, size };
+    if (content.toString('ascii', 0, 5) === 'same\0') return { ...base, unchanged: true };
+    const startEnd = content.indexOf(0), modeEnd = startEnd < 0 ? -1 : content.indexOf(0, startEnd + 1);
+    const start = Number(content.toString('ascii', 0, startEnd)), mode = content.toString('ascii', startEnd + 1, modeEnd);
+    if (modeEnd < 0 || !Number.isSafeInteger(start) || (mode !== 'tail' && mode !== 'from' && mode !== 'before')) throw new Error(t('artifacts.fileResponseIncomplete'));
+    return { ...base, start, mode, bytes: content.subarray(modeEnd + 1) };
   }
 
   async prepareDownload(workspace: Workspace, reference: string, authorize?: AuthorizeArtifact) {
