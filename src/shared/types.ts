@@ -562,4 +562,13 @@ export interface DesktopAPI {
   revealDownloadedUpdate(): Promise<void>;
   openUpdatePage(): Promise<void>;
   onUpdateState(callback: (state: UpdateState) => void): () => void;
+  /** The quit dialog while one is up (src/shared/quit.ts), else null. */
+  quitPrompt(): Promise<import('./quit').QuitPrompt | null>;
+  onQuitPrompt(callback: (prompt: import('./quit').QuitPrompt | null) => void): () => void;
+  /** The dialog is on screen; otherwise the main process falls back to a native one. */
+  quitPromptShown(id: number): Promise<void>;
+  /** `remember` applies to "leave" only. */
+  answerQuit(id: number, answer: import('./quit').QuitAnswer, remember?: boolean): Promise<void>;
+  quitPreferences(): Promise<import('./quit').QuitPreferences>;
+  setQuitPreferences(preferences: import('./quit').QuitPreferences): Promise<import('./quit').QuitPreferences>;
 }

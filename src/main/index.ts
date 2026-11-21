@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, powerMonitor, session, shell, type MessageBoxOptions } from 'electron';
 import { editMenuItems } from './edit-menu';
 import { artifactMediaType } from '../backend/artifact-media';
 import path from 'node:path';
@@ -22,6 +22,9 @@ import { setupDemo } from './demo';
 import { readSshConfigHosts } from './ssh-config-hosts';
 import { createUpdates } from './updates';
 import { routeExternalLinks } from './external-links';
+import { knownUnreachable, QuitFlow, summarizeRunning, quitPromptEnabled, withDeadline, type FolderCheck, type QuitReason } from './quit-guard';
+import { QuitSettings } from './quit-settings';
+import { quitActivityText, quitAnswers, quitGroups, quitTitle, type QuitAnswer, type QuitPrompt } from '../shared/quit';
 import type { MenuAction, RendererDiagnostic, SessionSnapshot, Workspace } from '../shared/types';
 import { maxAttachmentBytes } from '../shared/attachments';
 import { sshOnly, sshOnlyMessage } from '../shared/supported-targets';
@@ -51,7 +54,18 @@ let artifactAccess: ArtifactAccess;
 let window: BrowserWindow | undefined;
 let cleanup: (() => Promise<void>) | undefined;
 let stopUpdates: (() => Promise<void>) | undefined;
-let quitting = false;
+// Quitting: the dialog flow (quit-guard.ts), then cleanup. "done" lets the final app.quit() through.
+let quitFlow: QuitFlow | undefined;
+let quitSettings: QuitSettings | undefined;
+let shutdownState: 'running' | 'cleaning' | 'done' = 'running';
+// Logging out or shutting down: never ask, never hold a window open.
+let systemEnding = false;
+let installerOpenedAt = 0;
+let quitAcked = 0, quitShownId = 0;
+const quitTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const quitCheckMs = 3000;
+// Playwright drives the app: quitting asks only when the test sets LECTERN_QUIT_PROMPT=1.
+const automatedRun = app.commandLine.hasSwitch('remote-debugging-port') || process.env.LECTERN_SILENT_WINDOWS === '1';
 const devUrl = !app.isPackaged ? process.env.LECTERN_DEV_URL : undefined;
 let rendererReports = 0;
 let rendererReportWindow = 0;
@@ -155,17 +169,116 @@ function createWindow() {
     const items = editMenuItems(params);
     if (items.length) Menu.buildFromTemplate(items).popup({ window: window ?? undefined });
   });
-  window.webContents.on('render-process-gone', (_event, details) => diagnostic.event('renderer.process_gone', { ...details }, 'error'));
+  window.webContents.on('render-process-gone', (_event, details) => {
+    diagnostic.event('renderer.process_gone', { ...details }, 'error');
+    // The quit dialog lived in that page: ask natively instead.
+    const pending = quitFlow?.current;
+    if (pending && pending.phase !== 'closing') void nativeQuitPrompt(pending);
+  });
   window.webContents.on('did-fail-load', (_event, code, description) => diagnostic.event('renderer.load_failed', { code, description }, 'error'));
   window.webContents.on('did-finish-load', () => diagnostic.event('renderer.loaded', {}, 'info'));
   window.on('unresponsive', () => diagnostic.event('renderer.unresponsive', {}, 'warn'));
   window.on('responsive', () => diagnostic.event('renderer.responsive', {}, 'info'));
   if (silentWindows) { window.show(); window.focus(); }
-  window.on('closed', () => { diagnostic.event('window.closed', {}, 'info'); window = undefined; artifactAccess.reset(); controller.backend.completions.reset(); controllers.close(); });
+  // macOS keeps running without windows. Elsewhere closing the last window quits Lectern,
+  // so it asks first, in this window, like the app menu's Quit.
+  window.on('close', event => {
+    if (process.platform === 'darwin' || shutdownState !== 'running' || systemEnding || !quitFlow) return;
+    event.preventDefault();
+    quitFlow.request(installerRecent() ? 'installer' : 'window');
+  });
+  // Windows logging off or shutting down: let it end the session without asking.
+  window.on('query-session-end', () => { systemEnding = true; });
+  window.on('session-end', () => { systemEnding = true; quitFlow?.request('system'); });
+  window.on('closed', () => {
+    diagnostic.event('window.closed', {}, 'info'); window = undefined; artifactAccess.reset(); controller.backend.completions.reset(); controllers.close();
+    // macOS: closing the window while the dialog waits answers it with Cancel.
+    const pending = quitFlow?.current;
+    if (pending && pending.phase !== 'closing') quitFlow!.answer(pending.id, 'cancel');
+  });
   if (devUrl) void window.loadURL(devUrl);
   else void window.loadFile(path.join(__dirname, '../renderer/index.html'));
   return window;
 }
+
+/** The update installer was opened from Lectern a moment ago: it will close the app itself. */
+function installerRecent() { return Date.now() - installerOpenedAt < 10 * 60_000; }
+
+function bringForward(win: BrowserWindow) {
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+  if (process.platform === 'darwin' && !silentWindows) app.focus({ steal: true });
+}
+
+/** The quit dialog is drawn by the renderer, which lists every conversation. Without a window
+ * (macOS) one opens for it. A renderer that does not confirm showing it in time (hung,
+ * crashed, still loading) is replaced by the native dialog with the same choices. */
+function presentQuit(prompt: QuitPrompt | undefined) {
+  if (!prompt) { window?.webContents.send('lectern:quit-prompt', null); return; }
+  const fresh = !window, win = window ?? createWindow();
+  // Progress updates keep the phase's id: only a new phase brings the window forward.
+  if (fresh || prompt.id !== quitShownId) bringForward(win);
+  quitShownId = prompt.id;
+  win.webContents.send('lectern:quit-prompt', prompt);
+  if (prompt.phase === 'closing' || prompt.id <= quitAcked || quitTimers.has(prompt.id)) return;
+  quitTimers.set(prompt.id, setTimeout(() => {
+    quitTimers.delete(prompt.id);
+    if (quitAcked < prompt.id && quitFlow?.current?.id === prompt.id) void nativeQuitPrompt(prompt);
+  }, fresh || win.webContents.isLoading() ? 20_000 : 5000));
+}
+
+async function nativeQuitPrompt(prompt: QuitPrompt) {
+  diagnostic.event('app.quit_native_prompt', { id: prompt.id, phase: prompt.phase }, 'warn');
+  const confirm = prompt.phase === 'confirm';
+  const lines = quitGroups(prompt).flatMap(group => [
+    ...group.sessions.map(session => t('quit.nativeLine', { machine: group.name, folder: session.folder, title: quitTitle(session), state: session.error ?? quitActivityText(session) })),
+    ...group.unchecked.map(folder => t('quit.nativeUnchecked', { machine: group.name, error: folder.error })),
+  ]);
+  const count = confirm ? prompt.sessions.length : prompt.sessions.filter(session => session.close === 'failed').length;
+  const options: MessageBoxOptions = {
+    type: confirm ? 'question' : 'warning', noLink: true, defaultId: 0, cancelId: 0, title: 'Lectern',
+    message: t(confirm ? 'quit.title' : 'quit.failedTitle', { count }),
+    detail: [t(confirm ? 'quit.message' : 'quit.failedMessage'), '', ...lines.slice(0, 40), ...(lines.length > 40 ? ['…'] : [])].join('\n'),
+    buttons: confirm ? [t('misc.cancel'), t('quit.leave'), t('quit.closeAll')] : [t('misc.cancel'), t('quit.quitAnyway')],
+    ...(confirm && { checkboxLabel: t('quit.remember') }),
+  };
+  const parent = window && !window.isDestroyed() ? window : undefined;
+  const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  const answers: QuitAnswer[] = confirm ? ['cancel', 'leave', 'close'] : ['cancel', 'quit-anyway'];
+  quitFlow?.answer(prompt.id, answers[result.response] ?? 'cancel', result.checkboxChecked);
+}
+
+/** Running conversations for the quit dialog: what Lectern knows, checked again per folder
+ * within quitCheckMs. Folders whose last discovery failed are not asked again. */
+async function runningConversations() {
+  const workspaces = controller.store.list(), backend = controller.backend;
+  const known = new Map(workspaces.map(workspace => [workspace.id, backend.knownRunning(workspace.id)]));
+  const checks = new Map<string, FolderCheck>();
+  await Promise.all(workspaces.filter(workspace => !knownUnreachable(known.get(workspace.id))).map(async workspace => {
+    try {
+      const sessions = await withDeadline(backend.runningSessions(workspace), quitCheckMs, () => t('quit.checkTimeout', { seconds: quitCheckMs / 1000 }));
+      checks.set(workspace.id, { sessions });
+    } catch (error) {
+      checks.set(workspace.id, { error: (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 300) });
+    }
+  }));
+  return summarizeRunning({ workspaces, known, checks, snapshots: controllers?.liveSnapshots() ?? [] });
+}
+
+/** Stop updates, readers, demo fixtures and diagnostics, then quit for real. */
+function shutDown() {
+  if (shutdownState !== 'running') return;
+  shutdownState = 'cleaning';
+  for (const timer of quitTimers.values()) clearTimeout(timer);
+  void (async () => {
+    diagnostic.event('app.stopping', {}, 'info');
+    await stopUpdates?.(); await controllers?.dispose(); await cleanup?.(); await settingsWrite; await quitSettings?.flush();
+    diagnostic.event('app.stopped', {}, 'info');
+    await closeDiagnostics();
+  })().catch(error => { diagnostic.event('app.shutdown_failed', { error: errorDetails(error) }, 'error'); return flushDiagnostics(); })
+    .finally(() => { shutdownState = 'done'; app.quit(); });
+}
+
 async function boot() {
   await initializeDiagnostics();
   if (process.platform !== 'darwin') {
@@ -233,6 +346,23 @@ async function boot() {
   const sshLogins = new Map<string, { abort: AbortController; prompts: Map<string, (answer: string | null) => void> }>();
   const updates = createUpdates({ window: () => window, automated: silentWindows, demo });
   stopUpdates = updates.stop;
+  quitSettings = new QuitSettings(path.join(app.getPath('userData'), 'quit-settings.json'));
+  const settings = quitSettings;
+  quitFlow = new QuitFlow({
+    collect: runningConversations,
+    promptEnabled: () => quitPromptEnabled(process.env, automatedRun),
+    preference: async () => (await settings.get()).whenRunning,
+    remember: async () => { await settings.set({ whenRunning: 'leave' }); },
+    present: presentQuit,
+    close: session => controller.backend.closeListed(controller.store.get(session.workspaceId), session.sessionId, session.paneId, session.panePid),
+    quit: shutDown,
+    focus: () => { if (window) bringForward(window); },
+    event: (name, data) => diagnostic.event(name, data ?? {}, 'info'),
+  });
+  // A signal (kill, Ctrl+C in a terminal, the session ending on Linux) and system shutdown
+  // quit without asking; the conversations keep running. A second signal kills at once.
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.once(signal, () => quitFlow?.request('signal'));
+  if (process.platform !== 'win32') powerMonitor.on('shutdown', () => { systemEnding = true; quitFlow?.request('system'); });
   // The backend starts with dynamic workflows on; the renderer sends the preference at startup.
   let launchWorkflows = true;
   const methods: Record<string, (...args: any[]) => unknown> = {
@@ -445,6 +575,16 @@ async function boot() {
     setUltracode: (id, sid, on) => controllers.forSession(id, sid).setUltracode(id, sid, on === true),
     setSessionSetting: (id, sid, token, option, mode) => controllers.forSession(id, sid).setSessionSetting(id, sid, token, option, mode === 'menu' ? 'menu' : 'inline'),
     ...updates.methods,
+    // Opening the installer: it closes Lectern itself, which then quits without asking.
+    openDownloadedUpdate: async () => { await updates.methods.openDownloadedUpdate(); installerOpenedAt = Date.now(); },
+    quitPrompt: () => quitFlow?.current ?? null,
+    quitPromptShown: id => { if (Number.isSafeInteger(id)) quitAcked = Math.max(quitAcked, id); },
+    answerQuit: (id, answer, remember) => {
+      if (!Number.isSafeInteger(id) || !quitAnswers.includes(answer)) throw new Error('Invalid quit answer');
+      quitFlow?.answer(id, answer, remember === true);
+    },
+    quitPreferences: () => quitSettings!.get(),
+    setQuitPreferences: preferences => quitSettings!.set(preferences),
   };
   for (const [name, handler] of Object.entries(methods)) {
     ipcMain.handle(`lectern:${name}`, (event, ...args) => {
@@ -491,17 +631,15 @@ else app.whenReady().then(boot).catch(error => {
 app.on('second-instance', () => { window?.show(); window?.focus(); });
 app.on('activate', () => { if (!window && controller) createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+// Every quit (app menu, ⌘Q / Ctrl+Q, Dock, the last window on Windows and Linux) asks first
+// while Lectern conversations run (quit-guard.ts); cleanup follows in shutDown().
 app.on('before-quit', event => {
-  if (quitting) return;
+  if (shutdownState === 'done') return;
   event.preventDefault();
-  quitting = true;
-  void (async () => {
-    diagnostic.event('app.stopping', {}, 'info');
-    await stopUpdates?.(); await controllers?.dispose(); await cleanup?.(); await settingsWrite;
-    diagnostic.event('app.stopped', {}, 'info');
-    await closeDiagnostics();
-  })().catch(error => { diagnostic.event('app.shutdown_failed', { error: errorDetails(error) }, 'error'); return flushDiagnostics(); })
-    .finally(() => app.quit());
+  if (shutdownState === 'cleaning') return;
+  if (!quitFlow) return shutDown();
+  const reason: QuitReason = systemEnding ? 'system' : installerRecent() ? 'installer' : 'user';
+  quitFlow.request(reason);
 });
 process.on('uncaughtException', error => {
   diagnostic.event('process.uncaught_exception', { error: errorDetails(error) }, 'error');

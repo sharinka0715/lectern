@@ -59,6 +59,7 @@
     "test:background-work": "node scripts/background-work-e2e.mjs",
     "test:subagents": "node scripts/subagent-column-e2e.mjs",
     "test:task-column": "node scripts/task-column-e2e.mjs",
+    "test:quit": "node scripts/quit-dialog-e2e.mjs",
     "test:permission": "node scripts/permission-ui-e2e.mjs",
     "test:transcript:render": "node scripts/transcript-render-e2e.mjs",
     "test:workbench": "node scripts/workbench-ui-e2e.mjs",

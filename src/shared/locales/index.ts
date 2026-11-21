@@ -17,6 +17,7 @@ import { menu } from './menu';
 import { misc } from './misc';
 import { native } from './native';
 import { prefs } from './prefs';
+import { quit } from './quit';
 import { settings } from './settings';
 import { shared } from './shared';
 import { sidebar } from './sidebar';
@@ -43,6 +44,7 @@ export const dictionaries = {
   misc,
   native,
   prefs,
+  quit,
   settings,
   shared,
   sidebar,

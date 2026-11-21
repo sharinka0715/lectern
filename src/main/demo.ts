@@ -28,7 +28,15 @@ export async function setupDemo(root: string, fixturePath = 'scripts/mock-claude
     { type: 'assistant', uuid: randomUUID(), sessionId: id, cwd, timestamp: date, message: { id: randomUUID(), role: 'assistant', content: [{ type: 'text', text: t('demo.answer') }], stop_reason: 'end_turn' } },
   ];
   await writeFile(path.join(project, `${id}.jsonl`), records.map(r => JSON.stringify(r)).join('\n') + '\n');
+  // Test hook: a folder on an SSH machine that cannot be reached (a documentation address),
+  // with an empty ssh_config so the user's own configuration plays no part.
+  const sshHost = process.env.LECTERN_DEMO_SSH_HOST, sshConfig = path.join(directory, 'ssh_config');
+  if (sshHost) {
+    await writeFile(sshConfig, '');
+    await store.save({ id: 'demo-ssh', name: t('demo.sshFolder'), kind: 'ssh', host: sshHost, cwd: '~/project', historyScan: false });
+  }
   const backend = new Backend({
+    ...(sshHost && { sshConfigPath: sshConfig }),
     tmuxSocket: socket,
     claudeCommand: process.env.LECTERN_NODE_BINARY || 'node',
     claudeArgs: [path.join(root, fixturePath), '--fixture-config', config],
@@ -42,6 +50,9 @@ export async function setupDemo(root: string, fixturePath = 'scripts/mock-claude
     store, backend,
     cleanup: async () => {
       backend.dispose();
+      // Test hook (read when quitting): conversations left running stay in the private tmux
+      // server, which the test inspects and then kills, together with this directory.
+      if (process.env.LECTERN_DEMO_KEEP_TMUX === '1') return;
       await promisify(execFile)('tmux', ['-L', socket, 'kill-server']).catch(() => {});
       await rm(directory, { recursive: true, force: true });
     },

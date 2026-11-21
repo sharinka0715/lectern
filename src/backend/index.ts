@@ -185,6 +185,9 @@ export class Backend {
   private readonly loggedRuntimes = new Set<string>();
   // One host check per machine (kind, host, port); a definite answer stays until a recheck.
   private readonly hostChecks = new Map<string, Promise<HostCheck>>();
+  // When each folder's discovery last succeeded or failed: quitting trusts a failure
+  // instead of waiting on the machine again (knownRunning).
+  private readonly discoveries = new Map<string, { okAt?: number; failedAt?: number; error?: string }>();
   constructor(private readonly options: BackendOptions = {}) {
     this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal });
     if (!options.claudeCommand) this.endpointBilling = new EndpointBillingCache(this.transport);
@@ -458,6 +461,12 @@ exit 0`;
     return diagnostic.operation('backend.history_projects', { targetKind: target?.kind }, () => scanHistoryProjects(target, this.transport));
   }
   async discover(workspace: Workspace, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery> {
+    const outcome = (patch: { okAt?: number; failedAt?: number; error?: string }) =>
+      this.discoveries.set(workspace.id, { ...this.discoveries.get(workspace.id), ...patch });
+    return this.discoverNow(workspace, baselines).then(result => { outcome({ okAt: Date.now() }); return result; },
+      error => { outcome({ failedAt: Date.now(), error: String(error instanceof Error ? error.message : error).split('\n')[0].slice(0, 300) }); throw error; });
+  }
+  private async discoverNow(workspace: Workspace, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery> {
     return diagnostic.operation('backend.discover', { workspaceId: workspace.id }, async () => {
     const locating = this.locate(workspace);
     const revision = this.revision(workspace.id);
@@ -820,7 +829,47 @@ exit 0`;
       });
     });
   }
-  async closeSession(workspace: Workspace, sessionId: string, expectedPane: string, expectedPid: number): Promise<SessionInfo | null> {
+  /** What Lectern last saw running in a folder (discovery, launches, reads) and when its
+   * discovery last succeeded or failed. No I/O: for quitting. */
+  knownRunning(workspaceId: string): { sessions: SessionInfo[]; okAt?: number; failedAt?: number; error?: string } {
+    const sessions = [...this.sessions.entries()].filter(([key, info]) => key.startsWith(workspaceId + ':') && !!info.paneId).map(([, info]) => ({ ...info }));
+    return { sessions, ...this.discoveries.get(workspaceId) };
+  }
+  /** The conversations running in a folder now, with their pane PIDs: one tmux probe and one
+   * screen read, no history scan, nothing remembered. For quitting. */
+  async runningSessions(workspace: Workspace): Promise<(SessionInfo & { paneId: string; panePid: number })[]> {
+    return diagnostic.operation('backend.running_sessions', { workspaceId: workspace.id }, async () => {
+      const location = await this.locate(workspace), probed = await this.probe(workspace);
+      const panes = probed.filter(pane => this.paneBelongs(pane, location, !!pane.sessionId && !!this.sessions.get(this.key(workspace, pane.sessionId))?.path));
+      const mapped = new Map<string, InternalPane[]>();
+      for (const pane of panes) if (pane.active && pane.sessionId) mapped.set(pane.sessionId, [...(mapped.get(pane.sessionId) ?? []), pane]);
+      const sessions: (SessionInfo & { paneId: string; panePid: number })[] = [];
+      // As in discovery: a conversation claimed by two live panes has no pane of its own.
+      for (const [id, [pane, ...others]] of mapped) {
+        if (others.length) continue;
+        const known = this.sessions.get(this.key(workspace, id));
+        sessions.push({ ...(known ?? { id, title: t('backend.newConversation') }), id, paneId: pane.id, panePid: pane.pid, mapping: pane.managed ? 'exact' : 'manual' });
+      }
+      await this.applyNavigationStatuses(workspace, sessions, panes);
+      return sessions;
+    });
+  }
+  /** Quitting: close a listed conversation after checking it again. A conversation whose
+   * Claude Code is already gone counts as closed; one that moved or changed fails. */
+  async closeListed(workspace: Workspace, sessionId: string, paneId: string, panePid?: number): Promise<void> {
+    assertSessionId(sessionId); assertPaneId(paneId);
+    const location = await this.locate(workspace), panes = await this.probe(workspace);
+    const pane = panes.find(item => item.id === paneId);
+    const elsewhere = panes.some(item => item.id !== paneId && item.active && item.sessionId === sessionId && this.paneBelongs(item, location, true));
+    if (!pane || pane.dead || (!pane.claudePid && !pane.identityError)) {
+      if (elsewhere) throw new SessionMappingError(t('backend.closeBindingChanged'));
+      return;
+    }
+    if (pane.identityError) throw new SessionMappingError(pane.identityError);
+    if (pane.sessionId !== sessionId || (panePid !== undefined && pane.pid !== panePid)) throw new SessionMappingError(t('backend.closeBindingChanged'));
+    await this.closeSession(workspace, sessionId, paneId, pane.pid, false);
+  }
+  async closeSession(workspace: Workspace, sessionId: string, expectedPane: string, expectedPid: number, rediscover = true): Promise<SessionInfo | null> {
     assertPaneId(expectedPane);
     if (!Number.isSafeInteger(expectedPid) || expectedPid < 1) throw new Error(t('backend.invalidPid'));
     return diagnostic.operation('backend.close', { workspaceId: workspace.id, sessionId, expectedPane, expectedPid }, () =>
@@ -879,6 +928,8 @@ remaining=$(list_target)
         // The read cursor stays: the open chat keeps its transcript and its next
         // read only adds what Claude flushed on exit (a fresh watch resets it anyway).
         this.sessions.delete(this.key(workspace, sessionId));
+        // Quitting closes many in a row and reads nothing afterwards.
+        if (!rediscover) return null;
         const discovery = await this.discover(workspace);
         return discovery.sessions.find(item => item.id === sessionId) ?? null;
       }));

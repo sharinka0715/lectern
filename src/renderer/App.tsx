@@ -48,6 +48,7 @@ import { ArtifactDrawer, type ArtifactTarget } from "./ArtifactDrawer";
 import { SshLoginHost } from "./SshLoginDialog";
 import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import { checkForUpdatesFromMenu, UpdatePrompt } from "./UpdatePrompt";
+import { QuitPromptHost } from "./QuitDialog";
 import { needsSshLogin, openSshLogin } from "./ssh-login";
 import { checkSshMachines, markNavigated, setMachineConnection, sshConnectionError, sshMachineKey, sshMachines, useMachineConnections, useNavigated } from "./ssh-machines";
 import { commandPolicy } from "../shared/native-commands";
@@ -1869,6 +1870,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
 />
       {content}
       <ContextMenuHost />
+      <QuitPromptHost platform={info.platform} />
     </div>
   );
 }

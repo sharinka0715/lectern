@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DesktopAPI, LocaleState, MenuAction, SessionSnapshot, SshLoginPrompt, TerminalFrameEvent } from '../shared/types';
 import type { UpdateState } from '../shared/update-check';
+import type { QuitPrompt } from '../shared/quit';
 // macOS can reopen a closed window from its menu before React mounts.
 const menuListeners = new Set<(action: MenuAction) => void>();
 let pendingMenuAction: MenuAction | undefined;
@@ -137,5 +138,15 @@ const api: DesktopAPI = {
     ipcRenderer.on('lectern:update-state', listener);
     return () => { ipcRenderer.removeListener('lectern:update-state', listener); };
   },
+  quitPrompt: () => ipcRenderer.invoke('lectern:quitPrompt'),
+  onQuitPrompt: callback => {
+    const listener = (_: Electron.IpcRendererEvent, prompt: QuitPrompt | null) => callback(prompt);
+    ipcRenderer.on('lectern:quit-prompt', listener);
+    return () => { ipcRenderer.removeListener('lectern:quit-prompt', listener); };
+  },
+  quitPromptShown: id => ipcRenderer.invoke('lectern:quitPromptShown', id),
+  answerQuit: (id, answer, remember) => ipcRenderer.invoke('lectern:answerQuit', id, answer, remember === true),
+  quitPreferences: () => ipcRenderer.invoke('lectern:quitPreferences'),
+  setQuitPreferences: preferences => ipcRenderer.invoke('lectern:setQuitPreferences', preferences),
 };
 contextBridge.exposeInMainWorld('desktop', Object.freeze(api));

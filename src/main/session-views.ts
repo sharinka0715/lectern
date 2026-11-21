@@ -147,6 +147,10 @@ export class SessionViews {
       .sort((a, b) => Number(!!a.controller.currentSnapshot?.paneId) - Number(!!b.controller.currentSnapshot?.paneId) || a.shownAt - b.shownAt);
     for (let excess = this.readers.size - cachedLimit; excess > 0 && idle.length; excess--) this.forget(idle.shift()!);
   }
+  /** Snapshots of the conversations read now that run in a pane: what quitting would stop. */
+  liveSnapshots(): SessionSnapshot[] {
+    return [...this.readers.values()].map(reader => reader.controller.currentSnapshot).filter((snapshot): snapshot is SessionSnapshot => !!snapshot?.paneId);
+  }
   /** Language switched: shown conversations republish their texts. */
   relocalize() {
     for (const reader of this.readers.values()) if (reader.views.size) reader.controller.relocalize();

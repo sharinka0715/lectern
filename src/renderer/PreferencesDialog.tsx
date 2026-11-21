@@ -27,6 +27,8 @@ import { openSshLogin } from "./ssh-login";
 import { setMachineConnection, sshMachines, useMachineConnections } from "./ssh-machines";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
 import { UpdateSettings } from "./UpdatePrompt";
+import { QuitPreferenceSetting } from "./QuitDialog";
+import { defaultQuitPreferences } from "../shared/quit";
 import { updateText } from "../shared/update-strings";
 import { timeZoneChoices, zoneOffset } from "./quota-time";
 import {
@@ -79,6 +81,7 @@ export function PreferencesDialog({
   const [editing, setEditing] = useState<ConnectionProfile | undefined>(newMachine ? { id: "", name: "", host: "" } : undefined);
   const [connectionError, setConnectionError] = useState("");
   const [importingSsh, setImportingSsh] = useState(false);
+  const [quitReset, setQuitReset] = useState(0);
   // The language lives in the main process, which also rebuilds the menu.
   const [language, setLanguage] = useState<LocaleState>();
   useEffect(() => {
@@ -384,7 +387,11 @@ export function PreferencesDialog({
                 <input type="checkbox" checked={settings.enableWorkflows} onChange={e => setDesktop({ enableWorkflows: e.currentTarget.checked })} />
               </label>
               <p>{t('prefs.workflowsHelp')}</p>
-              <button className="pref-action" onClick={() => setDesktop(defaultSessionOptions)}>{t('prefs.resetDefault')}</button>
+              <QuitPreferenceSetting resetKey={quitReset} />
+              <button className="pref-action" onClick={() => {
+                setDesktop(defaultSessionOptions);
+                void window.desktop.setQuitPreferences(defaultQuitPreferences).catch(() => {}).finally(() => setQuitReset(n => n + 1));
+              }}>{t('prefs.resetDefault')}</button>
             </>
           )}
           {tab === "trash" && <ArchivedSessions workspaces={workspaces} />}

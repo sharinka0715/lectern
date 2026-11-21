@@ -63,6 +63,12 @@ export const releaseNotes: ReleaseNote[] = [
         "From 2.1.321 a gateway brings up \"Auto mode can't check actions\" instead, also as a card."],
       ['想继续用本地检查，可以自己在 shell 或设置里设 CLAUDE_CODE_AUTO_MODE_SERVER=0。',
         'To keep the local check, set CLAUDE_CODE_AUTO_MODE_SERVER=0 in your shell or settings yourself.'],
+      ['退出时如果还有对话在运行，先按机器列出每个对话和它正在做什么，再问怎么处理。',
+        'Quitting while conversations still run first lists each one by machine with what it is doing, then asks what to do.'],
+      ['可以关闭所有对话后退出，或只退出 Lectern、让对话在各自机器上继续运行；没能关闭的对话会列出来，由你决定是否仍然退出。',
+        'Close them all and quit, or quit Lectern only and leave them running on their machines; any that could not be closed are listed before you decide.'],
+      ['「只退出 Lectern」可以记住，不再询问；在「设置 → 会话」里可以改回。',
+        '"Quit Lectern Only" can be remembered so quitting no longer asks; change it back in Settings → Session.'],
     ],
     fixes: [
       ['粘贴的图片在消息里既是长路径、又在底部重复显示「查看 文件名」，现在只显示一次。',
