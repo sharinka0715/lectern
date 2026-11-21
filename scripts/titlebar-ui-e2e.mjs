@@ -273,7 +273,8 @@ try {
   await button(page, '关闭文件预览').click();
   await chooseProject(empty);
   await switcher().getByText(empty.name, { exact: true }).waitFor();
-  await pane('primary').locator('.welcome-workspace').getByText(empty.name, { exact: true }).waitFor();
+  // The card's title, not the same name among the folder switcher's options (shown once the draft settles).
+  await pane('primary').locator('.welcome-workspace').getByText(empty.name, { exact: true }).and(page.locator('strong')).waitFor();
   await back.click();
   await activeProject('primary', development);
   assert.deepEqual(errors, []);
