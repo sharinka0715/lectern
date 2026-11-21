@@ -8,7 +8,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { sel } from './app.mjs';
-import { readJsonl } from './sandbox.mjs';
+import { API_KEY, descendants, readJsonl, reap } from './sandbox.mjs';
 import { textOf } from './fake-api.mjs';
 import { compareVersions } from './versions.mjs';
 
@@ -95,6 +95,31 @@ async function nativeStatus(sandbox, sessionId) {
       if (record?.sessionId === sessionId) return record.status ?? null;
     } catch {}
   }
+}
+/** `read()` again every `every` ms until `done(value)` or `ms` pass; the last value read. For files
+ * Claude Code writes on its own schedule: a request reaching the fake API does not mean the
+ * transcript (or a subagent's file) on disk has caught up with it. */
+async function poll(read, done, ms = 20_000, every = 200) {
+  for (const end = Date.now() + ms; ; await delay(every)) {
+    const value = await read();
+    if (done(value) || Date.now() >= end) return value;
+  }
+}
+/** Close a tmux session the harness opened and wait until every process it ran has exited (exact
+ * PIDs, as sandbox.close does); the ones that had to be stopped are returned. */
+async function closeOwnSession(sandbox, name) {
+  const root = Number(sandbox.tmux('display-message', '-p', '-t', `=${name}:`, '#{pane_pid}').trim());
+  const tracked = root > 1 ? descendants(root) : [];
+  sandbox.tmux('kill-session', '-t', `=${name}`);
+  return reap(tracked);
+}
+/** Whether the global config is whole JSON that still approves the sandbox's API key. */
+async function apiKeyApproval(sandbox) {
+  const text = await readFile(path.join(sandbox.config, '.claude.json'), 'utf8').catch(error => `unreadable: ${error.code}`);
+  try {
+    const approved = JSON.parse(text).customApiKeyResponses?.approved ?? [];
+    return { ok: approved.includes(API_KEY.slice(-20)), approved };
+  } catch (error) { return { ok: false, error: `not JSON (${error.message})`, bytes: text.length }; }
 }
 
 /** A new chat in `folder` whose first message is `prompt`; resolves once Claude
@@ -1030,10 +1055,11 @@ export const SCENARIOS = [
         const launched = (await readJsonl(main)).find(r => r.toolUseResult?.agentId);
         agentId = launched?.toolUseResult?.agentId;
         assert.ok(agentId, 'the Agent result names the subagent');
-        const file = await transcriptFile(id);
+        // Only the model has its request so far: its files may not be on disk yet.
+        const file = await poll(() => transcriptFile(id), Boolean);
         assert.ok(file, `its transcript is at <project>/${id}/subagents/agent-${agentId}.jsonl`);
-        const meta = file.replace(/\.jsonl$/, '.meta.json');
-        note('layout', { transcript: `<project>/<session>/subagents/agent-<agentId>.jsonl`, meta: existsSync(meta) ? Object.keys(JSON.parse(await readFile(meta, 'utf8'))).sort() : null,
+        const meta = await poll(() => readFile(file.replace(/\.jsonl$/, '.meta.json'), 'utf8').then(JSON.parse).catch(() => null), Boolean, 5_000);
+        note('layout', { transcript: `<project>/<session>/subagents/agent-<agentId>.jsonl`, meta: meta && Object.keys(meta).sort(),
           launch: { status: launched.toolUseResult.status, async: launched.toolUseResult.isAsync } });
         // The activity card opens the column on it.
         if (!await page.locator('.activity-float').isVisible()) await page.locator(sel.activityPill).click();
@@ -1160,26 +1186,51 @@ export const SCENARIOS = [
       api.script('sa-out-child', () => ({ gate: 'sa-out-child', gateTimeoutMs: 200_000, text: 'Outside report (ccm-sa-out-report).' }));
       await check('subagent-elsewhere', async () => {
         if (older) return { skip: older };
-        const id = await ui.activeSessionId(), own = 'ccm-own-terminal';
-        sandbox.tmux('new-session', '-d', '-s', own, '-x', '120', '-y', '40', '-c', folders.main.cwd,
-          'env', '-i', ...Object.entries(sandbox.env).map(([key, value]) => `${key}=${value}`), 'claude', '--resume', id);
-        for (let i = 0; i < 100 && !/^\s*❯/m.test(sandbox.capture(own)); i++) await delay(300);
-        sandbox.tmux('send-keys', '-t', own, '-l', 'Launch one more helper ccm:sa-out');
-        await delay(500);
-        sandbox.tmux('send-keys', '-t', own, 'Enter');
-        for (let i = 0; i < 100 && !api.waiting('sa-out-child'); i++) await delay(300);
-        assert.ok(api.waiting('sa-out-child') >= 1, `the outside helper asked the model: ${sandbox.capture(own).slice(-600)}`);
-        const records = await readJsonl((await sandbox.projectFiles()).find(file => file.includes(id)));
-        const out = records.filter(r => r.toolUseResult?.agentId).at(-1)?.toolUseResult.agentId;
-        assert.ok(out && !Object.values(more).includes(out) && out !== agentId, 'its launch is in the same transcript');
-        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'running', sel.subagentRow(out), { timeout: 40_000 });
-        assert.equal(await page.locator(sel.activeRow).getAttribute('data-session-live'), 'false', 'no Lectern pane runs it');
-        await page.screenshot({ path: path.join(ctx.dir, 'subagents.elsewhere.png') }).catch(() => {});
-        sandbox.tmux('kill-session', '-t', own);
-        await page.waitForFunction(selector => { const state = document.querySelector(selector)?.dataset.state; return !!state && state !== 'running'; }, sel.subagentRow(out), { timeout: 40_000 });
-        note('elsewhere', { state: await page.locator(sel.subagentRow(out)).getAttribute('data-state'), held: await page.locator(sel.subagentRow(more.held)).getAttribute('data-state') });
+        const id = await ui.activeSessionId(), own = 'ccm-own-terminal', known = new Set([agentId, ...Object.values(more)]);
+        const before = await sandbox.projectFiles();
+        // Its terminal is closed once (in the check, or else in `finally`), its processes awaited by PID.
+        let closing, passed = false;
+        const closeOwn = () => closing ??= closeOwnSession(sandbox, own);
+        try {
+          sandbox.tmux('new-session', '-d', '-s', own, '-x', '120', '-y', '40', '-c', folders.main.cwd,
+            'env', '-i', ...Object.entries(sandbox.env).map(([key, value]) => `${key}=${value}`), 'claude', '--resume', id);
+          for (let i = 0; i < 100 && !/^\s*❯/m.test(sandbox.capture(own)); i++) await delay(300);
+          sandbox.tmux('send-keys', '-t', own, '-l', 'Launch one more helper ccm:sa-out');
+          await delay(500);
+          sandbox.tmux('send-keys', '-t', own, 'Enter');
+          for (let i = 0; i < 100 && !api.waiting('sa-out-child'); i++) await delay(300);
+          assert.ok(api.waiting('sa-out-child') >= 1, `the outside helper asked the model: ${sandbox.capture(own).slice(-600)}`);
+          // The launch's result reaches the transcript when Claude Code writes it, which can be after
+          // the subagent's own request: read until a launch not seen before is there. Read too: any
+          // transcript made since (a resume that copied the session to a new UUID), for the message.
+          const launches = async () => Promise.all((await sandbox.projectFiles()).filter(file => file.includes(id) || !before.includes(file)).map(async file =>
+            ({ file: path.basename(file), agents: (await readJsonl(file).catch(() => [])).flatMap(r => r.toolUseResult?.agentId ? [r.toolUseResult.agentId] : []) })));
+          const fresh = files => files.find(entry => entry.file === `${id}.jsonl`)?.agents.filter(agent => !known.has(agent)) ?? [];
+          const t0 = Date.now(), read = await poll(launches, files => fresh(files).length > 0, 30_000);
+          const out = fresh(read).at(-1), launchSeenMs = Date.now() - t0;
+          assert.ok(out, `its launch is in the same transcript: agent IDs by file ${JSON.stringify(read)}, known ${JSON.stringify([...known])}`);
+          await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'running', sel.subagentRow(out), { timeout: 40_000 });
+          assert.equal(await page.locator(sel.activeRow).getAttribute('data-session-live'), 'false', 'no Lectern pane runs it');
+          await page.screenshot({ path: path.join(ctx.dir, 'subagents.elsewhere.png') }).catch(() => {});
+          await closeOwn();
+          await page.waitForFunction(selector => { const state = document.querySelector(selector)?.dataset.state; return !!state && state !== 'running'; }, sel.subagentRow(out), { timeout: 40_000 });
+          note('elsewhere', { state: await page.locator(sel.subagentRow(out)).getAttribute('data-state'), held: await page.locator(sel.subagentRow(more.held)).getAttribute('data-state'), launchSeenMs });
+          passed = true;
+        } finally {
+          // Pass or fail, the outside Claude Code is gone before its subagent's gate opens: nothing
+          // outside the app goes on with that turn (or writes the configuration) while the next
+          // scenario runs, and the tmux server its session started (sandbox.mjs) exits with it.
+          const stopped = await closeOwn();
+          api.release('sa-out-child');
+          const config = await apiKeyApproval(sandbox);
+          note('elsewhere-cleanup', { stopped, config });
+          // Not to hide the first failure: checked only when the rest passed (the note has them anyway).
+          if (passed) {
+            assert.deepEqual(stopped, [], 'the outside Claude Code exited once its terminal was closed');
+            assert.ok(config.ok, `once it exited, the configuration is still JSON approving the API key: ${JSON.stringify(config)}`);
+          }
+        }
       });
-      api.release('sa-out-child');
     },
   },
   {

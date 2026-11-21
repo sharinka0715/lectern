@@ -61,8 +61,14 @@ export async function createSandbox({ version, binary, api, label = version }) {
 
   await seedConfig(dirs, version);
   const tmuxBin = path.join(dirs.bin, 'tmux');
+  // The harness's tmux client gets the whole sandbox environment (TMUX_TMPDIR included, TMUX
+  // unset): whoever starts the private server hands its environment to every pane made in it
+  // later, the app's too (the app's new-session passes none of its own). subagent-elsewhere starts
+  // the server when the app has no pane left; with only PATH, HOME and LANG, a chat the app
+  // opened while that server lived ran Claude Code without the API key, base URL and proxy
+  // ("Not logged in", no request reached the fake API).
   const tmux = (...args) => {
-    try { return execFileSync(tmuxBin, args, { env: { PATH: env.PATH, HOME: env.HOME, TMUX_TMPDIR: dirs.tmux, LANG: env.LANG }, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
+    try { return execFileSync(tmuxBin, args, { env, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
     catch { return ''; }
   };
   return {
