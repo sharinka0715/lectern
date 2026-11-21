@@ -203,6 +203,19 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     assert.equal(listed.agentId, 'a123');
     assert.equal(listed.description, 'Loopback child');
     assert.equal(listed.toolUseId, 'toolu_loop');
+    // Claude Code 2.1.310+: the poll lists the folder with the meta files in the same SSH command.
+    await writeFile(join(childDir, 'agent-a123.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Loopback child', toolUseId: 'toolu_loop', isBuiltIn: true, finished: true }));
+    commands.length = 0;
+    const polled = t.mock.method(Transport.prototype,'run',function(this: Transport, target: Workspace, command: string, options: CommandOptions = {}) {
+      commands.push({tag:options.tag,command});
+      return run.call(this,target,command,options);
+    });
+    const folder = await backend.readSession(workspace, session.id, false, [], false, false, true, true);
+    const unchanged = await backend.readSession(workspace, session.id, false, [], false, false, true, true);
+    polled.mock.restore();
+    assert.deepEqual(commands.map(c => c.tag).filter(tag => tag !== 'tmux.session_capture'), ['session.poll', 'session.poll'], 'listed within the poll');
+    assert.deepEqual(folder.subagents?.files.map(f => [f.agentId, f.description, f.finished]), [['a123', 'Loopback child', true]]);
+    assert.equal(unchanged.subagents?.revision, folder.subagents?.revision);
     const child = await backend.readSubagent(workspace, session.id, 'a123');
     assert.equal(child.reset, true);
     assert.match(child.jsonl.toString(), /Loopback child progress/);

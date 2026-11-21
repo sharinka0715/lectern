@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, CircleAlert, Loader2, Square } from 'lucide-react';
+import { Check, CircleAlert, Loader2, Square, Unplug } from 'lucide-react';
 import { runningMs, type ActivityState } from '../shared/activity';
 import type { ChatView, SubagentFile, SubagentTranscript, Workspace } from '../shared/types';
 import type { ArtifactTarget } from './ArtifactDrawer';
@@ -9,12 +9,14 @@ import { reportActionError } from './diagnostics';
 import type { SubagentEntry } from './subagent-entries';
 import { t } from '../shared/i18n';
 
-export const states = { running: 'activity.stateRunning', completed: 'activity.stateCompleted', failed: 'activity.stateFailed', stopped: 'activity.stateStopped', unobserved: 'activity.stateUnobserved' } as const;
+export const states = { running: 'activity.stateRunning', completed: 'activity.stateCompleted', failed: 'activity.stateFailed', stopped: 'activity.stateStopped', interrupted: 'activity.stateInterrupted', unobserved: 'activity.stateUnobserved' } as const;
 export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
 const ignoreFollow = () => {};
+const NO_FILES: SubagentFile[] = [];
 
 export function StateIcon({ status }: { status: ActivityState }) {
-  return status === 'completed' ? <Check size={12} /> : status === 'failed' ? <CircleAlert size={12} /> : status === 'stopped' ? <Square size={10} /> : <i />;
+  return status === 'completed' ? <Check size={12} /> : status === 'failed' ? <CircleAlert size={12} /> : status === 'stopped' ? <Square size={10} />
+    : status === 'interrupted' ? <Unplug size={11} /> : <i />;
 }
 export function elapsed(ms?: number) {
   if (ms === undefined) return '';
@@ -23,17 +25,19 @@ export function elapsed(ms?: number) {
 }
 
 /** The subagent transcript files, read when the column opens and whenever a subagent starts, ends or
- * resumes; every few seconds while a running one has no reported ID (its meta file names its launch). */
-export function useSubagentFiles(workspaceId: string, sessionId: string, agentsKey: string, unidentified: boolean) {
+ * resumes; every few seconds while a running one has no reported ID (its meta file names its launch).
+ * Not read (`enabled` false) when the activity already lists every subagent (Claude Code 2.1.310+). */
+export function useSubagentFiles(workspaceId: string, sessionId: string, agentsKey: string, unidentified: boolean, enabled = true) {
   const [files, setFiles] = useState<SubagentFile[]>([]);
   useEffect(() => {
+    if (!enabled) return;
     let current = true, timer = 0;
     const list = () => window.desktop.listSubagents(workspaceId, sessionId).then(found => { if (current) setFiles(found); },
       error => reportActionError(error, '读取子代理列表失败')).finally(() => { if (current && unidentified) timer = window.setTimeout(list, 3000); });
     timer = window.setTimeout(list, 300);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [workspaceId, sessionId, agentsKey, unidentified]);
-  return files;
+  }, [workspaceId, sessionId, agentsKey, unidentified, enabled]);
+  return enabled ? files : NO_FILES;
 }
 
 interface Reading { agentId: string; data?: SubagentTranscript; error?: string }

@@ -8,7 +8,9 @@
 // shows that file; a monitor shows its events; Chinese and English labels; light and dark.
 // The activity card opens by itself only where it fits beside the conversation column, and
 // every tally in its section headers and in the column shows whole, in one pane and in
-// splits (screenshots: test-results/activity-card-*.png).
+// splits (screenshots: test-results/activity-card-*.png). The records carry Claude Code 2.1.330:
+// the session's subagent folder lists three subagents launched before this transcript, which the
+// card and the column show with the states of their meta files (running, done, stopped).
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -93,7 +95,7 @@ try {
 
   // The main transcript: one turn starts two background shells and a monitor.
   let parent = [...(await readFile(main, 'utf8')).trim().split('\n')].map(line => JSON.parse(line)).filter(r => r.uuid).at(-1)?.uuid ?? null;
-  const record = (type, fields, offset) => { const uuid = randomUUID(); const r = { type, uuid, parentUuid: parent, sessionId: sid, cwd: workspace.cwd, timestamp: at(offset), ...fields }; parent = uuid; return r; };
+  const record = (type, fields, offset) => { const uuid = randomUUID(); const r = { type, uuid, parentUuid: parent, sessionId: sid, cwd: workspace.cwd, version: '2.1.330', timestamp: at(offset), ...fields }; parent = uuid; return r; };
   const lines = rows => rows.map(r => JSON.stringify(r)).join('\n') + '\n';
   const tool = (id, name, input) => ({ type: 'tool_use', id, name, input });
   const result = (id, toolUseResult, text) => record('user', { toolUseResult, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] } }, 3);
@@ -118,6 +120,16 @@ try {
     result('toolu_long', { stdout: '', stderr: '', backgroundTaskId: ids.long }, `Command running in background with ID: ${ids.long}.`),
     record('assistant', { message: { id: 'msg_tasks_started', role: 'assistant', model: 'fixture', stop_reason: 'end_turn', content: [{ type: 'text', text: '三个任务已在后台运行。' }] } }, 4),
   ]));
+
+  // Subagents whose launch is not in the transcript: their folder (Claude Code 2.1.310+) lists them.
+  const subagents = path.join(workspace.claudeDir, 'projects', slug, sid, 'subagents');
+  await mkdir(subagents, { recursive: true });
+  const agents = { review: ['aereview000000001', '审查改动', {}], docs: ['aedocs0000000002', '整理文档', { finished: true }], lint: ['aelint0000000003', '检查格式', { finished: true, stoppedByUser: true }] };
+  for (const [name, [agent, description, state]] of Object.entries(agents)) {
+    await writeFile(path.join(subagents, `agent-${agent}.jsonl`), JSON.stringify({ parentUuid: null, isSidechain: true, sessionId: sid, agentId: agent, type: 'user', uuid: `${agent}-1`,
+      timestamp: at({ review: -30, docs: -20, lint: -10 }[name]), message: { role: 'user', content: description } }) + '\n');
+    await writeFile(path.join(subagents, `agent-${agent}.meta.json`), JSON.stringify({ agentType: 'general-purpose', isBuiltIn: true, description, toolUseId: `toolu_${name}`, ...state }));
+  }
 
   // Without a choice the card opens by itself only where it fits beside the conversation
   // column (its width and inset come from the CSS): with the sidebar hidden, a window 40 px
@@ -159,6 +171,7 @@ try {
   const section = name => page.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: new RegExp(`^${name}$`) }) });
   await section('终端').waitFor();
   await section('监控').waitFor();
+  await section('子代理').waitFor();
   await section('终端').locator('.activity-float-toggle').click();
   const buildCard = page.locator('article.activity-card[data-activity-id="toolu_build"]');
   assert.equal(await buildCard.locator('.activity-title small').innerText(), '终端');
@@ -167,11 +180,13 @@ try {
   await column.waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-task-key')), 'toolu_build', 'the column takes the focus on its entry');
   assert.deepEqual(await column.locator('.task-group').evaluateAll(groups => groups.map(group => [group.dataset.kind, group.querySelector('h3')?.firstChild?.nextSibling?.textContent])),
-    [['shell', '终端'], ['monitor', '监控']]);
+    [['agent', '子代理'], ['shell', '终端'], ['monitor', '监控']]);
   // Rows of a group as [key, state], top to bottom. All launched by one message (one start
   // time) and all running: card order, the last launched first.
   const rows = kind => column.locator(`.task-column-list button[data-kind="${kind}"]`).evaluateAll(buttons => buttons.map(row => [row.dataset.taskKey, row.dataset.state]));
   assert.deepEqual(await rows('shell'), [['toolu_long', 'running'], ['toolu_train', 'running'], ['toolu_build', 'running']]);
+  // All three subagents, without loading older history, with their meta files' states.
+  assert.deepEqual(await rows('agent'), [['toolu_review', 'running'], ['toolu_lint', 'stopped'], ['toolu_docs', 'completed']]);
   const detail = column.locator('[data-task-detail="toolu_build"]');
   await detail.locator('.task-output', { hasText: 'step 2: bundle' }).waitFor();
   assert.equal(await detail.locator('.task-command').innerText(), buildCommand, 'the whole command, line breaks kept');
@@ -250,12 +265,12 @@ try {
   await column.locator('.task-column-list button[data-task-key="toolu_build"]').click();
   await detail.locator('.task-output', { hasText: /done\s*$/ }).waitFor();
   const tallies = {
-    zh: { '终端': ['1 运行中', '2 结束（1 失败）'], '监控': ['1 运行中'] },
-    en: { 'Background shells': ['1 running', '2 ended (1 failed)'], Monitors: ['1 running'] },
+    zh: { '子代理': ['1 运行中', '2 完成'], '终端': ['1 运行中', '2 结束（1 失败）'], '监控': ['1 运行中'] },
+    en: { Subagents: ['1 running', '2 done'], 'Background shells': ['1 running', '2 ended (1 failed)'], Monitors: ['1 running'] },
   };
   await card.waitFor();
   console.log(`tallies, zh, column open: card ${await checkTallies(card, tallies.zh, 'card, zh')}; column ${
-    await checkTallies(column, { '后台任务': ['2 运行中', '2 结束（1 失败）'], ...tallies.zh }, 'column, zh')}`);
+    await checkTallies(column, { '后台任务': ['3 运行中', '4 结束（1 失败）'], ...tallies.zh }, 'column, zh')}`);
   await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(results, 'task-column-light.png') });
@@ -270,7 +285,7 @@ try {
   // English: shell and monitor keep their names (the language switches in place).
   await page.evaluate(() => window.desktop.setLocalePreference('en'));
   await column.locator('.task-column-bar span', { hasText: 'Background tasks' }).waitFor();
-  assert.deepEqual(await column.locator('.task-group h3').evaluateAll(heads => heads.map(head => head.firstChild?.nextSibling?.textContent)), ['Background shells', 'Monitors']);
+  assert.deepEqual(await column.locator('.task-group h3').evaluateAll(heads => heads.map(head => head.firstChild?.nextSibling?.textContent)), ['Subagents', 'Background shells', 'Monitors']);
   await train.locator('.task-detail-label span', { hasText: 'Command' }).waitFor();
   assert.match(await train.locator('.task-source-note').first().innerText(), /The task printed nothing itself\. Output from/);
   if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
@@ -278,7 +293,7 @@ try {
   await section('Monitors').waitFor();
   assert.equal(await page.locator('article.activity-card[data-activity-id="toolu_build"] .activity-title small').innerText(), 'Shell');
   console.log(`tallies, en, column open: card ${await checkTallies(card, tallies.en, 'card, en')}; column ${
-    await checkTallies(column, { 'Background tasks': ['2 running', '2 ended (1 failed)'], ...tallies.en }, 'column, en')}`);
+    await checkTallies(column, { 'Background tasks': ['3 running', '4 ended (1 failed)'], ...tallies.en }, 'column, en')}`);
   await page.screenshot({ path: path.join(results, 'task-column-en.png') });
   await page.evaluate(() => window.desktop.setLocalePreference('zh-CN'));
   await column.locator('.task-column-bar span', { hasText: '后台任务' }).waitFor();

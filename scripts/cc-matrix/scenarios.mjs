@@ -51,6 +51,9 @@ export const FEATURES = [
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
   { id: 'subagent-column', title: "Subagent column: the subagent's own JSONL found, its turns shown live" },
   { id: 'subagent-resume', title: 'Subagent column: a SendMessage resume runs again with its new messages' },
+  { id: 'subagent-listed', title: 'Subagents listed from their meta files on opening, their launches on a page not loaded (2.1.310+)' },
+  { id: 'subagent-process-gone', title: 'A running subagent is no longer shown running once its conversation\'s process is gone (2.1.310+)' },
+  { id: 'subagent-elsewhere', title: 'A subagent of the session resumed outside Lectern\'s panes shows running while that process lives (2.1.310+)' },
   { id: 'task-shell-output', title: "Task column: a background shell's command and its output file, appended while it runs" },
   { id: 'task-redirect-output', title: 'Task column: a background shell that redirected into a file shows that file' },
   { id: 'task-monitor-output', title: "Task column: a monitor's output file (where Monitor is offered)" },
@@ -945,8 +948,8 @@ export const SCENARIOS = [
   },
   {
     id: 'subagents',
-    features: ['subagent-column', 'subagent-resume'],
-    timeoutMs: 240_000,
+    features: ['subagent-column', 'subagent-resume', 'subagent-listed', 'subagent-process-gone', 'subagent-elsewhere'],
+    timeoutMs: 360_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check, note } = ctx;
       // The main loop launches one subagent; the subagent's own turns are scripted
@@ -1029,6 +1032,114 @@ export const SCENARIOS = [
         await page.screenshot({ path: path.join(ctx.dir, 'subagents.resumed.png') }).catch(() => {});
         await page.locator(`${sel.subagentColumn} .task-column-bar button`).click();
       });
+      // Claude Code 2.1.310+ keeps each subagent's state in its meta file: two more subagents
+      // (one ends at once, one is held running), then a turn longer than the first page. Opened
+      // again, all three are listed with their states though their launches are not loaded; once
+      // the conversation is closed (its process gone), the held one is not shown running.
+      const metaPath = async agent => (await transcriptFile(await ui.activeSessionId()))?.replace(`agent-${agentId}.jsonl`, `agent-${agent}.meta.json`);
+      const older = compareVersions(ctx.version, '2.1.310') < 0 && `Claude Code ${ctx.version} writes no finished: its subagents keep the transcript's state (earlier rows)`;
+      const more = {};
+      api.script('sa-more', ({ step }) => step === 0
+        ? { blocks: [{ type: 'tool_use', name: 'Agent', input: { description: 'Matrix quick helper', prompt: 'Report at once ccm:sa-quick', subagent_type: 'general-purpose', run_in_background: true } },
+          { type: 'tool_use', name: 'Agent', input: { description: 'Matrix held helper', prompt: 'Work until released ccm:sa-hold', subagent_type: 'general-purpose', run_in_background: true } }] }
+        : { text: `More step ${step} (ccm-sa-more-${step}).` });
+      api.script('sa-quick', () => ({ text: 'Quick report (ccm-sa-quick-report).' }));
+      api.script('sa-hold', () => ({ gate: 'sa-hold', gateTimeoutMs: 200_000, text: 'Held report (ccm-sa-hold-report).' }));
+      api.script('sa-filler', () => ({ text: 'Filler (ccm-sa-filler-done). ' + 'lorem ipsum dolor sit amet '.repeat(6000) }));
+      await check('subagent-listed', async () => {
+        if (older) return { skip: older };
+        await ui.waitStatus('idle', 60_000);
+        await ui.send('Launch two more helpers ccm:sa-more');
+        await ui.waitReply('ccm-sa-more-1', { timeout: 60_000 });
+        const id = await ui.activeSessionId();
+        const records = await readJsonl((await sandbox.projectFiles()).find(file => file.includes(id)));
+        // The launching calls by description, then their results (one record each, or several in one without toolUseResult).
+        const calls = new Map(records.flatMap(r => r.type === 'assistant' && Array.isArray(r.message?.content) ? r.message.content : [])
+          .filter(b => b.type === 'tool_use' && b.name === 'Agent' && /^Matrix (quick|held) helper$/.test(b.input?.description)).map(b => [b.id, b.input.description.split(' ')[1]]));
+        for (const r of records) for (const b of r.type === 'user' && Array.isArray(r.message?.content) ? r.message.content : []) {
+          if (b.type !== 'tool_result' || !calls.has(b.tool_use_id)) continue;
+          more[calls.get(b.tool_use_id)] = (r.message.content.length === 1 && r.toolUseResult?.agentId) || /agentId: ([A-Za-z0-9_-]+)/.exec(textOf(b.content))?.[1];
+        }
+        assert.ok(more.quick && more.held, `both launched: ${JSON.stringify(more)}`);
+        for (let i = 0; i < 100 && !api.waiting('sa-hold'); i++) await delay(300);
+        assert.ok(api.waiting('sa-hold') >= 1, 'the held subagent asked the model');
+        // The quick one's notification gets its own reply before the long turn.
+        await ui.waitReply('ccm-sa-more-2', { timeout: 60_000 });
+        await ui.waitStatus('idle', 60_000);
+        await ui.send('Write a long note ccm:sa-filler');
+        await ui.waitReply('ccm-sa-filler-done', { timeout: 90_000 });
+        const metas = {};
+        for (const [name, agent] of Object.entries({ first: agentId, ...more })) metas[name] = JSON.parse(await readFile(await metaPath(agent), 'utf8'));
+        note('meta', Object.fromEntries(Object.entries(metas).map(([name, meta]) => [name, { keys: Object.keys(meta).sort(), finished: meta.finished ?? null }])));
+        // A fresh read: the newest page only.
+        await page.reload();
+        await ui.waitReply('ccm-sa-filler-done', { timeout: 30_000 });
+        await page.locator('.history-page-control button').waitFor({ timeout: 30_000 });
+        assert.equal(await page.locator(`${sel.user}:has-text("Launch two more helpers")`).count(), 0, 'their launch is not on the first page');
+        if (!await page.locator('.activity-float').isVisible()) await page.locator(sel.activityPill).click();
+        const section = page.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: '子代理' }) });
+        await section.waitFor({ timeout: 20_000 });
+        await section.locator('.activity-float-toggle').click();
+        await section.locator(sel.openSubagent).first().click();
+        await page.locator(sel.subagentColumn).waitFor();
+        const rows = () => page.locator(`${sel.subagentColumn} .task-column-list button[data-kind="agent"]`).evaluateAll(buttons => buttons.map(row => [row.dataset.agentId, row.dataset.state, row.querySelector('.task-state')?.textContent]));
+        await page.waitForFunction(selector => document.querySelectorAll(selector).length >= 3, `${sel.subagentColumn} .task-column-list button[data-kind="agent"]`, { timeout: 20_000 });
+        const listed = await rows();
+        note('listed', listed);
+        assert.deepEqual(listed.map(([agent, state]) => [agent, state]), [[more.held, 'running'], [more.quick, 'completed'], [agentId, 'completed']], 'all three, running first, newest first');
+        assert.ok(listed.every(([, , label]) => label !== '较早'), 'none is "earlier"');
+        assert.equal(await page.locator(`${sel.user}:has-text("Launch two more helpers")`).count(), 0, 'still not loaded');
+        await page.screenshot({ path: path.join(ctx.dir, 'subagents.listed.png') }).catch(() => {});
+      });
+      await check('subagent-process-gone', async () => {
+        if (older) return { skip: older };
+        assert.ok(more.held, 'the held subagent runs');
+        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'running', sel.subagentRow(more.held), { timeout: 20_000 });
+        await ui.closeChat();
+        await page.waitForFunction(selector => document.querySelector(selector)?.getAttribute('data-session-live') === 'false', sel.activeRow, { timeout: 30_000 });
+        if (!await page.locator(sel.subagentRow(more.held)).count()) {
+          if (!await page.locator('.activity-float').isVisible()) await page.locator(sel.activityPill).click();
+          const section = page.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: '子代理' }) });
+          if (!await section.locator(sel.openSubagent).count()) await section.locator('.activity-float-toggle').click();
+          await section.locator(sel.openSubagent).first().click();
+        }
+        await page.waitForFunction(selector => { const state = document.querySelector(selector)?.dataset.state; return !!state && state !== 'running'; }, sel.subagentRow(more.held), { timeout: 30_000 });
+        const meta = JSON.parse(await readFile(await metaPath(more.held), 'utf8'));
+        const state = await page.locator(sel.subagentRow(more.held)).getAttribute('data-state');
+        note('after-close', { state, finished: meta.finished ?? null });
+        assert.equal(state, meta.finished ? 'completed' : 'interrupted', 'ended by the process exit: interrupted unless Claude Code wrote finished');
+        assert.equal(await page.locator(`${sel.subagentColumn} .task-column-list button[data-state="running"]`).count(), 0, 'nothing runs');
+        await page.screenshot({ path: path.join(ctx.dir, 'subagents.process-gone.png') }).catch(() => {});
+      });
+      api.release('sa-hold');
+      // The user resumes the session in a terminal of their own (a tmux session the app never reads),
+      // which launches one more subagent: running while that process lives, not once it is gone.
+      api.script('sa-out', ({ step }) => step === 0
+        ? { blocks: [{ type: 'tool_use', name: 'Agent', input: { description: 'Matrix outside helper', prompt: 'Work until released ccm:sa-out-child', subagent_type: 'general-purpose', run_in_background: true } }] }
+        : { text: `Outside step ${step} (ccm-sa-out-${step}).` });
+      api.script('sa-out-child', () => ({ gate: 'sa-out-child', gateTimeoutMs: 200_000, text: 'Outside report (ccm-sa-out-report).' }));
+      await check('subagent-elsewhere', async () => {
+        if (older) return { skip: older };
+        const id = await ui.activeSessionId(), own = 'ccm-own-terminal';
+        sandbox.tmux('new-session', '-d', '-s', own, '-x', '120', '-y', '40', '-c', folders.main.cwd,
+          'env', '-i', ...Object.entries(sandbox.env).map(([key, value]) => `${key}=${value}`), 'claude', '--resume', id);
+        for (let i = 0; i < 100 && !/^\s*❯/m.test(sandbox.capture(own)); i++) await delay(300);
+        sandbox.tmux('send-keys', '-t', own, '-l', 'Launch one more helper ccm:sa-out');
+        await delay(500);
+        sandbox.tmux('send-keys', '-t', own, 'Enter');
+        for (let i = 0; i < 100 && !api.waiting('sa-out-child'); i++) await delay(300);
+        assert.ok(api.waiting('sa-out-child') >= 1, `the outside helper asked the model: ${sandbox.capture(own).slice(-600)}`);
+        const records = await readJsonl((await sandbox.projectFiles()).find(file => file.includes(id)));
+        const out = records.filter(r => r.toolUseResult?.agentId).at(-1)?.toolUseResult.agentId;
+        assert.ok(out && !Object.values(more).includes(out) && out !== agentId, 'its launch is in the same transcript');
+        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'running', sel.subagentRow(out), { timeout: 40_000 });
+        assert.equal(await page.locator(sel.activeRow).getAttribute('data-session-live'), 'false', 'no Lectern pane runs it');
+        await page.screenshot({ path: path.join(ctx.dir, 'subagents.elsewhere.png') }).catch(() => {});
+        sandbox.tmux('kill-session', '-t', own);
+        await page.waitForFunction(selector => { const state = document.querySelector(selector)?.dataset.state; return !!state && state !== 'running'; }, sel.subagentRow(out), { timeout: 40_000 });
+        note('elsewhere', { state: await page.locator(sel.subagentRow(out)).getAttribute('data-state'), held: await page.locator(sel.subagentRow(more.held)).getAttribute('data-state') });
+      });
+      api.release('sa-out-child');
     },
   },
   {

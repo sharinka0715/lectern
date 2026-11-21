@@ -1,7 +1,9 @@
 import { t } from './i18n';
 
 export type ActivityKind = 'agent' | 'shell' | 'monitor';
-export type ActivityState = 'running' | 'completed' | 'failed' | 'stopped' | 'unobserved';
+/** `interrupted`: a subagent whose meta file never said it finished, while the process that ran it
+ * is gone (it exited or crashed mid-run; Claude Code 2.1.310+, core/subagent-status.ts). */
+export type ActivityState = 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted' | 'unobserved';
 
 export interface SessionActivity {
   id: string;
@@ -80,12 +82,15 @@ export function runningMs(item: SessionActivity, now: number): number | undefine
   return (item.priorRunMs ?? 0) + Math.max(0, (item.endedAt ? Date.parse(item.endedAt) : now) - Date.parse(start));
 }
 
-/** The parts of a section header's tally: "2 运行中", "3 完成" (a resumed subagent runs again). */
+/** The parts of a section header's tally: "2 运行中", "3 完成" (a resumed subagent runs again);
+ * failed and interrupted ones are named: "3 结束（1 失败）", "3 结束（1 中断）". */
 export function activityTallyParts(items: readonly Pick<SessionActivity, 'status'>[]): string[] {
   const running = items.filter(item => item.status === 'running').length;
   const failed = items.filter(item => item.status === 'failed').length, ended = items.length - running;
-  return [running && t('activity.running', { count: running }),
-    ended && (failed ? t('activity.endedFailed', { ended, failed }) : t('activity.completed', { count: ended }))].filter((part): part is string => !!part);
+  const interrupted = items.filter(item => item.status === 'interrupted').length;
+  const endedPart = failed && interrupted ? t('activity.endedFailedInterrupted', { ended, failed, interrupted })
+    : failed ? t('activity.endedFailed', { ended, failed }) : interrupted ? t('activity.endedInterrupted', { ended, interrupted }) : t('activity.completed', { count: ended });
+  return [running && t('activity.running', { count: running }), ended && endedPart].filter((part): part is string => !!part);
 }
 
 /** A section header of the activity card: "2 运行中 · 3 完成". */

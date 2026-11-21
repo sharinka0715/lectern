@@ -14,6 +14,7 @@ import { SubagentReader, type SubagentRequest } from './subagent-reader';
 import { TaskOutputReader } from './task-output-reader';
 import type { TaskOutputRequest } from '../shared/types';
 import { activityTaskId } from '../core/session-activity';
+import { listsSubagents, mergeSubagents, metaTracked, runningSubagents, versionAtLeast, type SessionLiveness } from '../core/subagent-status';
 import type { ChatMessage, ChatView, SessionStatus } from '../shared/types';
 import { classifySessionScreen } from '../core/screen';
 import { focusedSettingCommandHistory, isIdleEmptyComposer, observeUltracode } from '../core/settings-screen';
@@ -31,7 +32,7 @@ import { SessionSettingsCache, type SessionSettingsHandle } from './session-sett
 import { ModelCatalogs } from './model-catalogs';
 import { effortsFor, isEffortLevel, isModelValue, type LaunchChoices, type ModelCatalogState } from '../shared/model-catalog';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
-import type { DirectoryTrustDecision, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
+import type { DirectoryTrustDecision, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, SubagentListing, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
 import { WorkspaceStore } from './store';
 import { commandPolicy } from '../shared/native-commands';
 import type { TerminalLink } from '../backend/terminal-link';
@@ -53,6 +54,11 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   /** The fast path while the user controls the terminal; absent or closed means per-command input. */
   terminalLink?: TerminalLink;
   older?: { cursor: HistoryCursor; ticket: string; extending?: boolean; reading?: Promise<SessionSnapshot> };
+  /** The session's subagent folder as the poll last listed it, and when (core/subagent-status.ts). */
+  subagents?: SubagentListing; subagentsAt?: number;
+  /** Whether the latest read found the process that runs the session, and when that process started:
+   * from a Lectern pane (`paneLive`), else from the native record of a process elsewhere. */
+  live?: SessionLiveness; nativeStartedAt?: number; paneLive?: boolean;
   screenHash?: string; screenCaptureId?: string; viewportHash?: string; viewportCaptureId?: string; messagesHash?: string; messagesCaptureId?: string };
 
 interface TurnMemory {
@@ -60,6 +66,23 @@ interface TurnMemory {
   pickerOpen?: boolean; checkpointUuid?: string;
   restoredDraft?: string; restoredUuid?: string;
 }
+
+/** The conversation's activity for its snapshot. Claude Code 2.1.310+ (`listed`): every
+ * subagent of the session's folder, each with the state its meta file and the process give
+ * (core/subagent-status.ts); otherwise what the loaded transcript says. */
+function activityOf(watch: Watch, cliVersion: string | undefined) {
+  const live = watch.live ?? 'unknown', base = watch.display.activity.snapshot(live === 'alive');
+  const files = watch.subagents?.files ?? [];
+  const listed = listsSubagents(cliVersion, files);
+  return { activity: listed ? mergeSubagents(base, files, { live, since: watch.nativeStartedAt }) : base, listed };
+}
+/** The poll lists the subagent folder (at most once a second) unless the session's version predates meta states. */
+const listsFolder = (watch: Watch, now: number) =>
+  versionAtLeast(watch.snapshot.cliVersion, [2, 1, 310]) !== false && (watch.subagentsAt === undefined || now - watch.subagentsAt >= 900);
+/** With the listing, look for a process of the session outside Lectern's panes (a terminal of its own) when
+ * no pane ran it at the last read and a subagent's state depends on it (one not finished, or none listed yet). */
+const looksElsewhere = (watch: Watch, listing: boolean) =>
+  listing && watch.paneLive !== true && (!watch.subagents || watch.subagents.files.some(file => metaTracked(file) && !file.finished));
 
 function historyPage(watch: Watch) {
   return { hasOlder: !!watch.older, cursor: watch.older?.ticket ?? '' };
@@ -413,11 +436,12 @@ export class Controller extends EventEmitter {
 
     older.reading = diagnostic.operation('controller.history.previous', { watchId: watch.id, workspaceId, sessionId }, async () => {
       if (!await this.readHistory(watch, older, true, sizeMiB)) return watch.snapshot;
+      const { activity, listed } = activityOf(watch, watch.snapshot.cliVersion);
       watch.snapshot = {
         ...watch.snapshot, messages: presentedMessages(watch), tasks: watch.nativeTasks ?? watch.display.tasks.list, historyPage: historyPage(watch),
         contextUsage: watch.display.contextUsage, notice: watch.display.notice,
         lastCompact: watch.compactSamples.receipt(watch.display.activity.currentCompact),
-        activity: watch.display.activity.snapshot(!!watch.snapshot.paneId),
+        activity, subagentsListed: listed || undefined,
       };
       this.publish(watch, 'history-prepend', watch.inactiveHistory);
       return watch.snapshot;
@@ -560,7 +584,8 @@ export class Controller extends EventEmitter {
     const settingBusyAtRead = operationAtRead || !!watch.manualRecovery;
     try {
       const forceViewport = !!(freshViewport || watch.terminalVisible || watch.snapshot.terminalControl || settingBusyAtRead || watch.snapshot.status === 'working');
-      const result = await this.backend.readSession(watch.workspace, watch.sessionId, forceViewport, watch.display.activity.targets(), true, !!watch.terminalVisible);
+      const listing = listsFolder(watch, Date.now()), elsewhere = looksElsewhere(watch, listing);
+      const result = await this.backend.readSession(watch.workspace, watch.sessionId, forceViewport, watch.display.activity.targets(), true, !!watch.terminalVisible, true, listing, elsewhere);
       const applied = this.watch === watch;
       // Incremental chunks must not be deduplicated by hash: two equal byte
       // windows may be separate portions of a large record. Empty reads can be.
@@ -619,7 +644,20 @@ export class Controller extends EventEmitter {
         }
       }
       if (!applied) { diagnostic.event('controller.poll.discarded', { reason: 'stale-watch', jsonlCaptureId, screenCaptureId: watch.screenCaptureId }); return; }
-      if (watch.inactiveHistory && !result.active && !result.reset && !result.hasMore && !result.jsonl.length &&
+      const subagentsChanged = !!result.subagents && result.subagents.revision !== watch.subagents?.revision;
+      if (result.subagents) { watch.subagentsAt = Date.now(); watch.subagents = result.subagents; }
+      if (subagentsChanged) diagnostic.event('controller.subagents.listed', { files: result.subagents!.files.length, revision: result.subagents!.revision });
+      // No pane: a process found elsewhere is alive too; not looked for this time, the last finding stands
+      // while no pane has run the session since.
+      const found = result.sessionProcess, kept = !result.active && !found && watch.paneLive === false;
+      const live: SessionLiveness = result.active || found?.alive ? 'alive' : found?.uncertain ? 'unknown' : kept && watch.live ? watch.live : 'gone';
+      const since = result.active ? result.nativeStartedAt : found ? found.startedAt : kept ? watch.nativeStartedAt : undefined;
+      if (found) diagnostic.event('controller.session_process', { alive: found.alive, uncertain: found.uncertain, startedAt: found.startedAt });
+      const liveChanged = watch.live !== live || watch.nativeStartedAt !== since;
+      watch.live = live;
+      watch.nativeStartedAt = since;
+      watch.paneLive = result.active;
+      if (watch.inactiveHistory && !result.active && !result.reset && !result.hasMore && !result.jsonl.length && !subagentsChanged && !liveChanged &&
           !watch.failures && watch.snapshot.endpointBilling === result.endpointBilling && watch.snapshot.status === 'idle' && watch.snapshot.settingBusy === settingBusy &&
           watch.snapshot.trustBusy === trustBusy && watch.snapshot.navigationStatus === result.session.status &&
           watch.snapshot.navigationStatusDetail === result.session.statusDetail && watch.snapshot.screen === result.screen) {
@@ -724,13 +762,14 @@ export class Controller extends EventEmitter {
       const nativeInputReady = paneCanAcceptInput && isIdleEmptyComposer(result.viewport ?? result.screen);
       // The machine answered: read its model list once (cached until the app quits).
       this.catalogs.warm(watch.workspace);
-      const activity = watch.display.activity.snapshot(result.active);
+      const cliVersion = statusLine?.version ?? watch.display.cliVersion ?? watch.snapshot.cliVersion;
+      const { activity, listed } = activityOf(watch, cliVersion);
       const pendingBackground = watch.display.pendingBackground;
       // Background subagents or workflows of this process keep Claude Code busy
       // after its reply; an earlier process's records do not.
       const current = (at?: string) => result.nativeStartedAt === undefined || !at || Date.parse(at) >= result.nativeStartedAt - 1000;
       const delegated = (!!pendingBackground && current(pendingBackground.at)) ||
-        activity.some(item => item.kind === 'agent' && item.background === true && item.status === 'running' && current(runStart(item))) ||
+        (listed ? runningSubagents(activity) > 0 : activity.some(item => item.kind === 'agent' && item.background === true && item.status === 'running' && current(runStart(item)))) ||
         // No transcript record, but busy with the empty prompt on screen (session-status.ts).
         (result.nativeStatus === 'busy' && result.session.status === 'idle' && !!result.session.background);
       const status: SessionStatus = result.hasMore ? 'connecting' : result.active
@@ -740,12 +779,12 @@ export class Controller extends EventEmitter {
         workspaceId: watch.workspace.id, sessionId: watch.sessionId, paneId: result.session.paneId, panePid: result.panePid,
         transcriptPosition: result.transcriptPosition,
         pendingFork: this.backend.pendingFork?.(watch.workspace, watch.sessionId),
-        activity,
+        activity, subagentsListed: listed || undefined,
         // The reply is done; background work Claude Code started still runs.
         background: status === 'idle' && result.active && !result.hasMore
-          ? backgroundSummary(activity, pendingBackground, result.nativeStatus, result.nativeStartedAt) ?? result.session.background : undefined,
+          ? backgroundSummary(activity, pendingBackground, result.nativeStatus, result.nativeStartedAt, listed) ?? result.session.background : undefined,
         // What closing this conversation would stop, during or after a reply.
-        backgroundWork: result.active && !result.hasMore ? backgroundCounts(activity, pendingBackground, result.nativeStatus, result.nativeStartedAt) : undefined,
+        backgroundWork: result.active && !result.hasMore ? backgroundCounts(activity, pendingBackground, result.nativeStatus, result.nativeStartedAt, listed) : undefined,
         lastCompact: result.hasMore ? undefined : watch.compactSamples.receipt(watch.display.activity.currentCompact), turnProgress,
         tasks: watch.nativeTasks ?? watch.display.tasks.list,
         messages, historyPage: historyPage(watch), screen: result.screen, viewport: result.viewport,
@@ -775,7 +814,7 @@ export class Controller extends EventEmitter {
         executionMode: watch.settingsHandle ? this.executionModes.get(watch.settingsHandle) : undefined,
         executionModeLastObserved: !!watch.settingsHandle && !executionMode && this.executionModes.has(watch.settingsHandle),
         contextUsage: result.hasMore ? watch.snapshot.contextUsage : watch.display.contextUsage,
-        cliVersion: statusLine?.version ?? watch.display.cliVersion ?? watch.snapshot.cliVersion,
+        cliVersion,
         directoryTrust: watch.manualRecovery || watch.snapshot.terminalControl ? result.directoryTrust : settingsOverlap ? watch.snapshot.directoryTrust : result.directoryTrust,
         status, notice: watch.display.notice,
       };
@@ -805,7 +844,10 @@ export class Controller extends EventEmitter {
             directoryTrust: undefined, ...(mapping ? { navigationStatus: 'error' as const, navigationStatusDetail: (error as Error).message } : {}) };
         }
         watch.permission = undefined;
-        watch.snapshot = { ...watch.snapshot, question: undefined, questionBusy: undefined, questionUnconfirmed: undefined, permission: undefined, permissionBusy: undefined, permissionUnconfirmed: undefined, activity: watch.display.activity.snapshot(false), turnProgress: undefined, turnControls: undefined, statusLine: undefined, endpointBilling: undefined, status: error instanceof Error && error.name === 'SessionMappingError' ? 'error' : 'offline', error: error instanceof Error ? error.message : String(error) };
+        // Unread, the process may still run: its subagents are not called interrupted.
+        watch.live = error instanceof Error && error.name === 'SessionGoneError' ? 'gone' : 'unknown';
+        const { activity, listed } = activityOf(watch, watch.snapshot.cliVersion);
+        watch.snapshot = { ...watch.snapshot, question: undefined, questionBusy: undefined, questionUnconfirmed: undefined, permission: undefined, permissionBusy: undefined, permissionUnconfirmed: undefined, activity, subagentsListed: listed || undefined, turnProgress: undefined, turnControls: undefined, statusLine: undefined, endpointBilling: undefined, status: error instanceof Error && error.name === 'SessionMappingError' ? 'error' : 'offline', error: error instanceof Error ? error.message : String(error) };
         diagnostic.event('controller.poll.failed', { failures: watch.failures, error: errorDetails(error) }, 'warn');
       }
     }

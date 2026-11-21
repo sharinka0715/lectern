@@ -64,7 +64,8 @@ function ToolCall({ row, compact, onOpenPath, grouped = false }: { row: ToolActi
   const scope = useArtifactScope();
   const { tool, file, subject, changes } = row;
   const state = toolDisplayState(tool);
-  const stateLabel = t(({ error: 'chat.stateError', pending: 'chat.statePending', completed: 'chat.stateCompleted', discussion: 'chat.stateDiscussion', cancelled: 'chat.stateCancelled' } as const)[state]);
+  const stateLabel = t(({ error: 'chat.stateError', pending: 'chat.statePending', completed: 'chat.stateCompleted', discussion: 'chat.stateDiscussion', cancelled: 'chat.stateCancelled',
+    interrupted: 'chat.stateInterrupted', incomplete: 'chat.stateIncomplete' } as const)[state]);
   const showDiff = row.category === 'write' && (tool.name !== 'Write' || !!tool.editPatch);
   return <><details ref={details} className={`tool-block${compact ? ' activity-row' : ''}`} data-tool-id={tool.id} data-tool-name={tool.name} data-tool-state={state}
     onToggle={event => setOpen(event.currentTarget.open)}
@@ -127,11 +128,13 @@ function ActivityRow({ row, compact, onOpenPath, grouped }: { row: Activity; com
 }
 
 function ActivityGroup({ rows, onOpenPath }: { rows: Activity[]; onOpenPath: OpenPath }) {
-  const { labels, pending, failed, changes, partialChanges } = summarizeActivities(rows);
+  const { labels, pending, failed, interrupted, incomplete, changes, partialChanges } = summarizeActivities(rows);
   const label = labels.join(t('sidebar.ariaJoin'));
-  const status = [failed && t('chat.failedCount', { count: failed }), pending && t('chat.pendingCount', { count: pending })].filter(Boolean).join(' · ');
+  const status = [failed && t('chat.failedCount', { count: failed }), pending && t('chat.pendingCount', { count: pending }),
+    interrupted && t('chat.interruptedCount', { count: interrupted }), incomplete && t('chat.incompleteCount', { count: incomplete })].filter(Boolean).join(' · ');
   // A running foreground command stays visible below the collapsed summary.
-  return <><details className="tool-block tool-group activity-group" data-tool-state={failed ? 'error' : pending ? 'pending' : 'completed'}>
+  return <><details className="tool-block tool-group activity-group"
+    data-tool-state={failed ? 'error' : pending ? 'pending' : interrupted ? 'interrupted' : incomplete ? 'incomplete' : 'completed'}>
     <summary><span className="activity-label" title={label}>{label}</span>{status && <span className="tool-state">{status}</span>}
       <ChangeCount changes={changes} partial={partialChanges} /><ChevronRight size={13} aria-hidden="true" /></summary>
     <div className="activity-rows">{rows.map(row => <ActivityRow key={row.key} row={row} compact onOpenPath={onOpenPath} grouped />)}</div>

@@ -52,7 +52,7 @@ export function EditDiff({ tool, onOpenPath }: { tool: ToolBlock; onOpenPath: (p
   const total = hunks.reduce((sum, h) => sum + h.lines.length, 0);
   const sed = edit && 'sed' in edit ? edit.sed : undefined;
   const state = t(tool.isError ? 'chat.appliedFailed' : tool.editPatch || tool.cellEdit ? 'chat.appliedChange' :
-    tool.result === undefined ? 'chat.pendingChange' : sed ? 'chat.sedChange' : 'chat.inputChange');
+    tool.result === undefined ? tool.unfinished ? 'chat.unfinishedChange' : 'chat.pendingChange' : sed ? 'chat.sedChange' : 'chat.inputChange');
   return <section className="edit-diff" aria-label={t('chat.editDiff')} data-diff-source={tool.editPatch || tool.cellEdit ? 'native' : 'input'}>
     <header><FileLink path={edit.path} onOpen={onOpenPath}>{edit.path}</FileLink><span>{state}</span></header>
     {sed && sed.files.length > 1 && <div className="edit-diff-note">{t('chat.alsoChanged')}{sed.files.slice(1).map(file => <FileLink key={file} path={file} onOpen={onOpenPath}>{file} </FileLink>)}</div>}

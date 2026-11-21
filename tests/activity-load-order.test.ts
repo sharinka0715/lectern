@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MessageDisplay } from '../src/core/message-display';
 import { SessionActivityStore } from '../src/core/session-activity';
+import { mergeSubagents } from '../src/core/subagent-status';
 import { subagentEntries } from '../src/renderer/subagent-entries';
+import { taskEntries } from '../src/renderer/task-entries';
 import type { JsonRecord } from '../src/core/jsonl';
 import type { SubagentFile } from '../src/shared/types';
 
@@ -149,6 +151,30 @@ test('every opening page and every page size reconstruct the same activity as a 
     assert.deepEqual(display.activity.snapshot(true), full.activity.snapshot(true), `opened at record ${cut}, pages of ${size}`);
     assert.deepEqual(attachments(display), attachments(full));
     assert.deepEqual(display.pendingBackground, full.pendingBackground);
+  }
+});
+
+test('Claude Code 2.1.310+: every opening page lists the same subagents with the same states', () => {
+  // The meta files as Claude Code left them: the reviewer finished after its interim notices,
+  // the docs helper runs again after its resume, and one launched before this transcript ended.
+  const listed: SubagentFile[] = [
+    { agentId: agentA, description: 'Fixture review', toolUseId: 'toolu_agentA', isBuiltIn: true, finished: true, revivedAt: at(20), startedAt: at(0), metaModifiedAt: at(31) },
+    { agentId: agentB, description: 'Fixture docs', toolUseId: 'toolu_agentB', isBuiltIn: true, revivedAt: at(40), startedAt: at(8), metaModifiedAt: at(40) },
+    { agentId: 'cccc000000000003', description: 'Fixture earlier', toolUseId: 'toolu_agentC', isBuiltIn: true, finished: true, startedAt: at(0), metaModifiedAt: at(2) }];
+  const rows = session();
+  const column = (display: MessageDisplay) => taskEntries(mergeSubagents(display.activity.snapshot(true), listed, { live: 'alive' }), [])
+    .agent.map(entry => [entry.agent?.agentId, entry.status]);
+  const expected = column(read(rows));
+  assert.deepEqual(expected, [[agentB, 'running'], [agentA, 'completed'], ['cccc000000000003', 'completed']]);
+  for (const size of [1, 5, 17]) for (let cut = 1; cut < rows.length; cut++) {
+    paged(rows, cut, size, (shown, start) => assert.deepEqual(column(shown), expected, `opened at record ${cut}, pages of ${size}, loaded from ${start}`));
+  }
+  // Without a live process nothing is running, however much is loaded.
+  for (const cut of [0, rows.length - 3]) {
+    const display = new MessageDisplay(sid);
+    display.ingestJsonl(encode(rows.slice(cut)), true, cut > 0);
+    assert.deepEqual(taskEntries(mergeSubagents(display.activity.snapshot(false), listed, { live: 'gone' }), []).agent.map(entry => [entry.agent?.agentId, entry.status]),
+      [[agentB, 'interrupted'], [agentA, 'completed'], ['cccc000000000003', 'completed']], 'ended ones newest first by their latest run');
   }
 });
 

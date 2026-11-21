@@ -14,25 +14,30 @@ export interface PendingBackground { agents: number; workflows: number; at?: str
  * shells but no subagents or workflows. Work started before the current process
  * (`since`, its registration time) is not counted either; a subagent resumed in
  * this process counts from its resume.
+ *
+ * `listed` (Claude Code 2.1.310+, core/subagent-status.ts): the activity lists every
+ * subagent with the state its meta file gives, already checked against the process;
+ * the subagents counted are exactly the running ones it lists, as the activity card and
+ * the task column show them.
  */
-export function backgroundCounts(activity: readonly SessionActivity[], pending?: PendingBackground, native?: string, since?: number): BackgroundCounts {
+export function backgroundCounts(activity: readonly SessionActivity[], pending?: PendingBackground, native?: string, since?: number, listed = false): BackgroundCounts {
   const current = (at?: string) => since === undefined || !at || Date.parse(at) >= since - 1000;
-  const running = activity.filter(item => item.status === 'running' && (item.kind === 'monitor' || item.background === true) && current(runStart(item)));
+  const running = activity.filter(item => item.status === 'running' && (item.kind === 'monitor' || item.background === true) && (listed && item.kind === 'agent' || current(runStart(item))));
   const count = (kind: SessionActivity['kind']) => running.filter(item => item.kind === kind).length;
   const shellsAllowed = native !== 'idle', delegationAllowed = native !== 'idle' && native !== 'shell';
   const waiting = pending && current(pending.at) ? pending : undefined;
   const shells = shellsAllowed ? count('shell') : 0;
   return {
     shells, monitors: count('monitor'),
-    agents: delegationAllowed ? Math.max(count('agent'), waiting?.agents ?? 0) : 0,
+    agents: listed ? count('agent') : delegationAllowed ? Math.max(count('agent'), waiting?.agents ?? 0) : 0,
     workflows: delegationAllowed ? waiting?.workflows ?? 0 : 0,
     ...(!shells && native === 'shell' && { unknownShells: true }),
   };
 }
 
 /** The sidebar's and title bar's "后台运行中" detail, after Claude's reply. */
-export function backgroundSummary(activity: readonly SessionActivity[], pending?: PendingBackground, native?: string, since?: number): string | undefined {
-  const parts = backgroundParts(backgroundCounts(activity, pending, native, since));
+export function backgroundSummary(activity: readonly SessionActivity[], pending?: PendingBackground, native?: string, since?: number, listed = false): string | undefined {
+  const parts = backgroundParts(backgroundCounts(activity, pending, native, since, listed));
   if (!parts.length) return;
   const text = joinList(parts);
   return t(/[A-Za-z]$/.test(text) ? 'core.stillRunningLatin' : 'core.stillRunning', { what: text });

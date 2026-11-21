@@ -98,11 +98,15 @@ export class SubagentReader {
       historyPage: { hasOlder: !!this.older, cursor: this.older?.ticket ?? '' }, ...(this.missing && { missing: true }) };
     if (known === this.revision) return result;
     const running = status === 'running';
+    // Ended, interrupted, stopped or of unknown end: a call still without a result will get none.
+    const unfinished = status === 'interrupted' || status === 'stopped' ? 'interrupted' as const : status && !running ? 'incomplete' as const : undefined;
+    const settle = (tools: ChatMessage['tools']) => unfinished && tools.some(tool => tool.result === undefined && !tool.isError)
+      ? tools.map(tool => tool.result === undefined && !tool.isError ? { ...tool, unfinished } : tool) : tools;
     const all = this.display.getMessages(), last = all.at(-1);
     this.attachments.clear();
     result.messages = all.filter(message => message.role !== 'assistant' || message.text || message.tools.length || message.peerMessages?.length ||
       message.taskNotifications?.length || message.attachments?.length || running && message === last).map((message): ChatMessage => ({
-      ...message, rewindUuid: undefined, status: running && message === last && message.role === 'assistant' ? 'streaming' : 'complete',
+      ...message, rewindUuid: undefined, status: running && message === last && message.role === 'assistant' ? 'streaming' : 'complete', tools: settle(message.tools),
       attachments: message.attachments?.map(ref => {
         if (ref.path) return ref;
         const id = this.scope + ref.id;

@@ -72,7 +72,7 @@ export function toolDisplayState(tool: ToolBlock) {
     }
     return 'error';
   }
-  return tool.result === undefined ? 'pending' : 'completed';
+  return tool.result !== undefined ? 'completed' : tool.unfinished ?? 'pending';
 }
 
 /** Claude Code shows at least one second ("Thought for 1s"). */
@@ -154,7 +154,7 @@ export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMe
 /** Category order follows first appearance; repeated paths count once, never by basename alone. */
 export function summarizeActivities(rows: Activity[]) {
   const categories = new Map<Category, Activity[]>();
-  let failed = 0, pending = 0, missingChanges = false;
+  let failed = 0, pending = 0, interrupted = 0, incomplete = 0, missingChanges = false;
   let changes: LineChanges | undefined;
   for (const row of rows) {
     const list = categories.get(row.category);
@@ -163,6 +163,8 @@ export function summarizeActivities(rows: Activity[]) {
     const state = toolDisplayState(row.tool);
     if (state === 'error') failed++;
     else if (state === 'pending') pending++;
+    else if (state === 'interrupted') interrupted++;
+    else if (state === 'incomplete') incomplete++;
     else if (row.category === 'write') {
       if (!row.changes) missingChanges = true;
       else {
@@ -196,5 +198,5 @@ export function summarizeActivities(rows: Activity[]) {
       case 'other': return t('chat.otherActions', { count: n });
     }
   });
-  return { labels, failed, pending, changes, partialChanges: !!changes && missingChanges };
+  return { labels, failed, pending, interrupted, incomplete, changes, partialChanges: !!changes && missingChanges };
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, PanelRight, Radio, Square, Terminal, TextSelect } from 'lucide-react';
+import { Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, PanelRight, Radio, Square, Terminal, TextSelect, Unplug } from 'lucide-react';
 import { copyWithToast, showContextMenu } from './ContextMenu';
 import { selectionWithin } from './message-menus';
 import { activityTallyParts, runningMs, type SessionActivity } from '../shared/activity';
@@ -8,7 +8,7 @@ import './activity.css';
 import { localeTag, t } from '../shared/i18n';
 
 const labels = { agent: 'activity.panelAgent', shell: 'activity.panelShell', monitor: 'activity.panelMonitor' } as const;
-const states = { running: 'activity.stateRunning', completed: 'activity.stateCompleted', failed: 'activity.stateFailed', stopped: 'activity.stateStopped', unobserved: 'activity.stateUnobserved' } as const;
+const states = { running: 'activity.stateRunning', completed: 'activity.stateCompleted', failed: 'activity.stateFailed', stopped: 'activity.stateStopped', interrupted: 'activity.stateInterrupted', unobserved: 'activity.stateUnobserved' } as const;
 const icons = { shell: Terminal, agent: Bot, monitor: Radio };
 function time(value?: string) {
   return value ? new Date(value).toLocaleTimeString(localeTag(), { hour12: false }) : undefined;
@@ -23,7 +23,7 @@ export function ActivityCard({ item, now, expand = item.status === 'running', on
   const [expanded, setExpanded] = useState(expand);
   const Icon = icons[item.kind];
   const statusIcon = item.status === 'completed' ? <Check size={12} /> : item.status === 'failed' ? <CircleAlert size={12} />
-    : item.status === 'stopped' ? <Square size={10} /> : <i />;
+    : item.status === 'stopped' ? <Square size={10} /> : item.status === 'interrupted' ? <Unplug size={11} /> : <i />;
   const description = [item.background ? t('activity.background') : '', item.agentType, item.startedAt && time(item.startedAt),
     item.resumes ? t('activity.resumedCount', { count: item.resumes }) : ''].filter(Boolean).join(' · ');
   // Running time across the launch and every resume, without the pauses between them.

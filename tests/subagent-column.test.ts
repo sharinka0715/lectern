@@ -12,6 +12,7 @@ import { adoptSidechain, coordinatorMessage } from '../src/core/subagent-records
 import { SubagentReader, type SubagentBackend } from '../src/main/subagent-reader';
 import { Controller } from '../src/main/controller';
 import { WorkspaceStore } from '../src/main/store';
+import { toolDisplayState } from '../src/renderer/reply-activities';
 import { defaultSubagent, shownSubagent, subagentEntries } from '../src/renderer/subagent-entries';
 import type { SessionActivity } from '../src/shared/activity';
 import type { Workspace } from '../src/shared/types';
@@ -135,6 +136,24 @@ test('the column reader follows a running subagent, answers unchanged polls with
   assert.equal(view.messages!.at(-1)!.text, 'Read it too.');
   // A switched-away reader rejects late results.
   await assert.rejects(reader.read(memory.backend, workspace, {}, 'running', () => false));
+});
+
+test('a call left without a result shows as interrupted or not finished once the subagent no longer runs', async () => {
+  const c = chain();
+  const memory = memoryBackend(jsonl([c.prompt('Look'), c.assistant('g1', [{ type: 'tool_use', id: 'toolu_done', name: 'Read', input: { file_path: '/work/a' } }]),
+    c.result('toolu_done', 'a'), c.assistant('g2', [{ type: 'tool_use', id: 'toolu_left', name: 'Grep', input: { pattern: 'x' } }])]));
+  const reader = new SubagentReader(sid, agent);
+  const tools = async (status?: SessionActivity['status']) => {
+    const view = await reader.read(memory.backend, workspace, {}, status, () => true);
+    return view.messages!.flatMap(m => m.tools).map(tool => [tool.id, tool.unfinished ?? null, toolDisplayState(tool)]);
+  };
+  assert.deepEqual(await tools('running'), [['toolu_done', null, 'completed'], ['toolu_left', null, 'pending']], 'still running: in progress');
+  assert.deepEqual(await tools(undefined), [['toolu_done', null, 'completed'], ['toolu_left', null, 'pending']], 'no known state: as it was');
+  assert.deepEqual(await tools('interrupted'), [['toolu_done', null, 'completed'], ['toolu_left', 'interrupted', 'interrupted']]);
+  assert.deepEqual(await tools('stopped'), [['toolu_done', null, 'completed'], ['toolu_left', 'interrupted', 'interrupted']]);
+  for (const status of ['completed', 'failed', 'unobserved'] as const) assert.deepEqual((await tools(status))[1], ['toolu_left', 'incomplete', 'incomplete'], status);
+  // Resumed: in progress again.
+  assert.deepEqual((await tools('running'))[1], ['toolu_left', null, 'pending']);
 });
 
 test('older pages come on request; a replaced file starts again from its newest page', async () => {

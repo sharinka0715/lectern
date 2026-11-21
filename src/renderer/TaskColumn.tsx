@@ -21,6 +21,8 @@ interface Props {
   view: ChatView;
   /** The activity card's subagents, background shells and monitors. */
   items: SessionActivity[];
+  /** Claude Code 2.1.310+: `items` has every subagent of the session (core/subagent-status.ts), so their files need no listing. */
+  listed?: boolean;
   selected?: string;
   /** The kind the card asked for when it opened the column without naming an entry. */
   kind?: ActivityKind;
@@ -42,7 +44,7 @@ export function TaskColumn(props: Props) {
   const { workspace, sessionId, view, items } = props;
   const agents = useMemo(() => items.filter(item => item.kind === 'agent'), [items]);
   const agentsKey = agents.map(item => `${item.id}:${item.taskId ?? ''}:${item.status}:${item.resumes ?? 0}`).join(',');
-  const files = useSubagentFiles(workspace.id, sessionId, agentsKey, agents.some(item => item.status === 'running' && !item.taskId));
+  const files = useSubagentFiles(workspace.id, sessionId, agentsKey, agents.some(item => item.status === 'running' && !item.taskId), !props.listed);
   const groups = useMemo(() => taskEntries(items, files), [items, files]);
   // The one shown stays shown when others start or end, and a subagent keeps its place
   // when loading older history gives it the activity card's key.

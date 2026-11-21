@@ -8,7 +8,13 @@
 // until interim notifications (waiting on its own background work) end that run.
 // The list keeps running ones first, then ended ones, then an earlier one known only
 // from its transcript; the one shown stays shown as it moves (screenshot: subagent-column-order.png).
+// Then Claude Code 2.1.310+: twelve more subagents whose launch is on a page not loaded; opened
+// again, all fifteen are listed with the states of their meta files (subagent-column-listed.png),
+// meta changes end and resume them, and once the conversation is closed none of them runs
+// (subagent-column-interrupted.png); a live process of the session outside Lectern's panes (its native
+// record) makes them run again until it ends.
 import assert from 'node:assert/strict';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -190,9 +196,108 @@ try {
   // Closing the column leaves the chat as it was.
   await column.locator('.task-column-bar button').click();
   await column.waitFor({ state: 'detached' });
+
+  // Claude Code 2.1.310+ (records carry the version; meta files have isBuiltIn and `finished`):
+  // twelve more subagents, launched in a turn that more than a page of later turns pushes out
+  // of the first page. Opened again, the card and the column list all fifteen with the states
+  // their meta files give, without loading older pages; nothing is "earlier".
+  const many = Array.from({ length: 12 }, (_, i) => `ae2emeta${String(i).padStart(10, '0')}`);
+  const v = { version: '2.1.330' };
+  const metaFile = (agent, fields) => writeFile(path.join(subagents, `agent-${agent}.meta.json`),
+    JSON.stringify({ agentType: 'general-purpose', isBuiltIn: true, spawnDepth: 1, requestShape: 'background', ...fields }));
+  await appendFile(main, lines([
+    record('user', { ...v, origin: { kind: 'human' }, promptSource: 'typed', message: { role: 'user', content: '请十二个子代理分头检查各个目录' } }, 80),
+    record('assistant', { ...v, message: { id: 'msg_e2e_many', role: 'assistant', model: 'fixture', stop_reason: 'tool_use', content: many.map((agent, i) =>
+      ({ type: 'tool_use', id: `toolu_e2e_many${i}`, name: 'Agent', input: { description: `检查目录 ${i}`, prompt: `检查第 ${i} 个目录。`, subagent_type: 'general-purpose', run_in_background: true } })) } }, 81),
+    ...many.map((agent, i) => record('user', { ...v, toolUseResult: { isAsync: true, status: 'async_launched', agentId: agent, description: `检查目录 ${i}` },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_e2e_many${i}`, content: `Async agent launched successfully.\nagentId: ${agent}` }] } }, 82)),
+    // More than the first page (128 KiB) of later turns.
+    ...Array.from({ length: 60 }, (_, i) => [
+      record('user', { ...v, origin: { kind: 'human' }, promptSource: 'typed', message: { role: 'user', content: `Filler question ${i}` } }, 83),
+      record('assistant', { ...v, message: { id: `msg_e2e_filler${i}`, role: 'assistant', model: 'fixture', stop_reason: 'end_turn', content: [{ type: 'text', text: `Filler answer ${i}. ` + 'lorem ipsum '.repeat(250) }] } }, 83)]).flat(),
+  ]));
+  for (const [i, agent] of many.entries()) {
+    const row = chain(agent);
+    await writeFile(path.join(subagents, `agent-${agent}.jsonl`), lines([{ ...row('user', { role: 'user', content: `检查第 ${i} 个目录。` }), timestamp: at(81 + i) }]));
+    // Seven ended (one stopped by the user), five still running.
+    await metaFile(agent, { description: `检查目录 ${i}`, toolUseId: `toolu_e2e_many${i}`, ...(i < 7 && { finished: true }), ...(i === 6 && { stoppedByUser: true }) });
+  }
+  await metaFile(done, { description: '整理测试清单', toolUseId: 'toolu_e2e_done', finished: true });
+  await metaFile(live, { description: '检查构建脚本', toolUseId: 'toolu_e2e_live' });
+  await metaFile(earlier, { agentType: 'Explore', description: '早先的检查', finished: true });
+  await page.reload();
+  await page.locator('.message-assistant', { hasText: 'Filler answer 59' }).waitFor();
+  await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-session-live') === 'true');
+  const expected = [...many.slice(7).reverse().map(agent => [agent, 'running']), [live, 'running'], [many[6], 'stopped'],
+    ...many.slice(0, 6).reverse().map(agent => [agent, 'completed']), [done, 'completed'], [earlier, 'completed']];
+  if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.activity-float-title')].some(title => title.textContent === '子代理'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.activity-float-section')].some(part => /6 运行中 · 9 完成/.test(part.textContent)));
+  assert.equal(await page.locator('.message-user', { hasText: '请十二个子代理分头检查各个目录' }).count(), 0, 'their launch is on a page not loaded');
+  await section.locator('.activity-float-toggle').click();
+  assert.deepEqual(await cardRows(), expected.map(([agent, state]) => [agent === done ? 'toolu_e2e_done' : agent === live ? 'toolu_e2e_live' : agent === earlier ? `agent:${earlier}`
+    : `toolu_e2e_many${many.indexOf(agent)}`, state]), 'the card lists them all, running first, newest first');
+  await section.locator('.activity-open-conversation').first().click();
+  await column.waitFor();
+  assert.deepEqual(await rows(), expected, 'the column lists the same');
+  assert.deepEqual(await column.locator('.task-column-list .task-state').allInnerTexts(), expected.map(([, state]) => ({ running: '运行中', stopped: '已停止', completed: '已完成' })[state]));
+  assert.equal(await page.locator('.message-user', { hasText: '请十二个子代理分头检查各个目录' }).count(), 0, 'still not loaded');
+  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(results, 'subagent-column-listed.png') });
+  // Only the meta files change: one ends, an ended one is resumed (finished cleared).
+  await metaFile(many[7], { description: '检查目录 7', toolUseId: 'toolu_e2e_many7', finished: true });
+  await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'completed', many[7]);
+  await metaFile(many[0], { description: '检查目录 0', toolUseId: 'toolu_e2e_many0', revivedAt: Date.now() });
+  await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'running', many[0]);
+  assert.deepEqual((await rows())[0], [many[0], 'running'], 'resumed last: first');
+  // The title bar and the sidebar count the same six running subagents.
+  await page.waitForFunction(() => /6 个子代理/.test(document.querySelector('.connection-status')?.getAttribute('title') ?? ''));
+  assert.match(await column.locator('.task-group[data-kind="agent"] .activity-tally').innerText(), /6 运行中 · 9 完成/);
+  // The process goes (the conversation is closed): none of them runs any more.
+  await page.getByRole('button', { name: '关闭当前对话', exact: true }).click();
+  const confirm = page.locator('dialog.confirm-action[open]');
+  assert.match(await confirm.innerText(), /6 个子代理/);
+  await confirm.getByRole('button', { name: '关闭对话', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-session-live') === 'false', null, { timeout: 30_000 });
+  if (!await column.isVisible()) {
+    if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
+    await section.locator('.activity-open-conversation').first().click();
+  }
+  await page.waitForFunction(() => !document.querySelector('.task-column-list button[data-kind="agent"][data-state="running"]'));
+  const interrupted = (await rows()).filter(([, state]) => state === 'interrupted').map(([agent]) => agent).sort();
+  assert.deepEqual(interrupted, [live, many[0], ...many.slice(8)].sort(), 'those that ran are interrupted');
+  assert.match(await column.locator('.task-group[data-kind="agent"] .activity-tally').innerText(), /^15 结束（6 中断）$/);
+  assert.equal(await page.locator('.connection-status').getAttribute('title'), null, 'no longer running in the background');
+  await column.locator(`.task-column-list button[data-agent-id="${live}"]`).click();
+  assert.equal(await column.locator(`[data-subagent-detail="${live}"] .subagent-detail-state`).innerText(), '已中断');
+  // Its last call never got a result and never will: interrupted, not in progress.
+  const leftOver = column.locator(`[data-subagent-detail="${live}"] details.tool-block[data-tool-name="Grep"]`);
+  await page.waitForFunction(id => document.querySelector(`[data-subagent-detail="${id}"] details.tool-block[data-tool-name="Grep"]`)?.dataset.toolState === 'interrupted', live);
+  assert.equal(await leftOver.locator('summary .tool-state').innerText(), '已中断');
+  assert.equal(await column.locator(`[data-subagent-detail="${live}"] [data-tool-state="pending"]`).count(), 0);
+  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(results, 'subagent-column-interrupted.png') });
+  // The session runs on outside Lectern's panes (a terminal of its own): its native record names a live
+  // process (here a stand-in with the record Claude Code would write). Running again; interrupted once it ends.
+  const outside = spawn('sleep', ['300'], { stdio: 'ignore' });
+  try {
+    const start = process.platform === 'linux' ? (await readFile(`/proc/${outside.pid}/stat`, 'utf8')).replace(/^.*\) /s, '').split(' ')[19]
+      : execFileSync('ps', ['-p', String(outside.pid), '-o', 'lstart='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).toString().trim();
+    await mkdir(path.join(workspace.claudeDir, 'sessions'), { recursive: true });
+    await writeFile(path.join(workspace.claudeDir, 'sessions', `${outside.pid}.json`), JSON.stringify({ pid: outside.pid, sessionId: sid, cwd: workspace.cwd,
+      procStart: start, startedAt: Date.now() - 600_000, kind: 'interactive', entrypoint: 'cli', status: 'busy' }));
+    await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'running', live, { timeout: 30_000 });
+    assert.deepEqual((await rows()).filter(([, state]) => state === 'running').map(([agent]) => agent).sort(), interrupted, 'the same ones run again');
+    assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'false', 'not a Lectern pane');
+  } finally { outside.kill(); }
+  await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'interrupted', live, { timeout: 30_000 });
+  assert.equal(await page.locator('.task-column-list button[data-kind="agent"][data-state="running"]').count(), 0, 'its process ended: none runs');
   assert.deepEqual(errors, []);
   console.log('PASS: the activity card opens the subagent column; it follows a running subagent live, shows a finished one with thinking, tools and report, a resumed one runs again with its new messages, and interim notifications end that run.');
-  console.log(`Screenshots: ${['running', 'finished', 'order'].map(name => path.join(results, `subagent-column-${name}.png`)).join(', ')}`);
+  console.log('PASS (2.1.310+): opened again, all fifteen subagents are listed with their meta-file states without older pages; meta changes end and resume them; closing the conversation leaves none running.');
+  console.log(`Screenshots: ${['running', 'finished', 'order', 'listed', 'interrupted'].map(name => path.join(results, `subagent-column-${name}.png`)).join(', ')}`);
 } catch (error) {
   const page = app?.windows()[0];
   if (page) await page.screenshot({ path: path.join(results, 'subagent-column-failure.png') }).catch(() => {});

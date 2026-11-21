@@ -115,6 +115,9 @@ export interface ToolBlock {
   isError?: boolean;
   /** Not a tool: reasoning Claude Code folds into "Thought for Ns". Its text is `result`. */
   thought?: { durationMs?: number };
+  /** No result, and none will come: the subagent that called it was interrupted or stopped, or ended
+   * (or its end is unknown) without one. Shown as such, not as in progress (subagent-reader.ts). */
+  unfinished?: 'interrupted' | 'incomplete';
 }
 /** One changed file of a git working tree (paths relative to its root). */
 export interface GitChange {
@@ -225,7 +228,8 @@ export interface HandoffHistorySnapshot {
 /** A subagent transcript file of a session (`<session>/subagents/agent-<id>.jsonl`). */
 export interface SubagentFile {
   agentId: string;
-  size: number;
+  /** Its transcript's size (listSubagents; the poll's listing leaves it out). */
+  size?: number;
   modifiedAt?: string;
   /** From its `.meta.json`, when Claude Code wrote one. */
   agentType?: string;
@@ -234,7 +238,24 @@ export interface SubagentFile {
   toolUseId?: string;
   /** Claude Code 2.1.310+: the subagent's last run has ended. */
   finished?: boolean;
+  /** Claude Code 2.1.310+ (absent from 2.1.300 meta files). */
+  isBuiltIn?: boolean;
+  /** Claude Code 2.1.310+: its latest resume (written with `finished` cleared). */
+  revivedAt?: string;
+  /** Stopped from the UI or TaskStop (kept across a later resume). */
+  stoppedByUser?: boolean;
+  /** `requestShape` "foreground": a call that waited for the subagent. */
+  foreground?: boolean;
+  /** Claude Code 2.1.330+: the subagent's model. */
+  model?: string;
+  /** When its meta file was last written: its launch, resume or end. */
+  metaModifiedAt?: string;
+  /** The time of its transcript's first record (its launch), when read. */
+  startedAt?: string;
 }
+
+/** Every subagent of a session as the poll lists them (subagent-files.ts): changes only when a meta file or the set of transcripts does. */
+export interface SubagentListing { revision: number; files: SubagentFile[] }
 
 /** One subagent's own conversation, read incrementally like the main transcript. */
 export interface SubagentTranscript {
@@ -341,6 +362,9 @@ export interface SessionSnapshot {
   contextUsage?: import('../core/session-telemetry').ContextUsageObservation;
   /** Claude Code version of the running process (status line), else of the latest record. */
   cliVersion?: string;
+  /** Claude Code 2.1.310+: `activity` lists every subagent of the session, each with its state
+   * from its meta file (core/subagent-status.ts), whatever part of the transcript is loaded. */
+  subagentsListed?: boolean;
   /** Only a strictly recognized prompt for this exact workspace can populate this. */
   directoryTrust?: DirectoryTrustSnapshot;
   status: SessionStatus;

@@ -1801,6 +1801,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
         </div>
       </main>
       {taskShown && workspace && <TaskColumn key={activityScope} workspace={workspace} sessionId={sessionId} view={view} items={items}
+        listed={snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId && !!snapshot.subagentsListed}
         selected={taskShown.key} kind={taskShown.kind} focusToken={taskShown.focus} replyDetail={prefs.replyDetail} sizeMiB={prefs.historyPageMiB} openArtifact={openArtifact}
         onSelect={key => setTaskColumn(previous => previous && { ...previous, key })} onClose={() => setTaskColumn(undefined)} />}
       {/* Each split pane keeps its own file panel beside its chat (the activity card floats inside it). */}

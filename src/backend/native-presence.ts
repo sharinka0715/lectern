@@ -52,9 +52,10 @@ export function tornPresence(frame: PresenceFrame): boolean {
 /** Only named process IDs from the pane's foreground process tree are candidates.
  * No directory listing, peer credentials or sockets. Retain a physical directory
  * as cwd, then open each basename with O_NOFOLLOW and a fixed byte budget. */
-export function presenceReadScript(claudeDir: string, pid?: number): string {
+export function presenceReadScript(claudeDir: string, pid?: number, pidVariable = 'lectern_foreground'): string {
   if (pid !== undefined && (!Number.isSafeInteger(pid) || pid < 2)) throw new Error('Invalid native process ID');
-  const pidExpression = pid ?? '$lectern_foreground';
+  if (!/^lectern_[a-z_]+$/.test(pidVariable)) throw new Error('Invalid process list');
+  const pidExpression = pid ?? '$' + pidVariable;
   const perl = 'sysopen(my $fh, $ARGV[0], O_RDONLY|O_NOFOLLOW|O_NONBLOCK) or exit 1; -f $fh && -s $fh <= 32768 or exit 1; binmode $fh; my $n=sysread($fh,my $data,32769); defined($n) && $n <= 32768 or exit 1; print $data';
   return `(
     cd -P ${quoteShell(claudeDir.normalize('NFC'))} 2>/dev/null || exit 0
@@ -109,4 +110,47 @@ ${presenceReadScript(claudeDir, pid)}
 lectern_observed=$(lectern_capture_presence | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
 )
 [ "\${lectern_observed%% *}" = ${quoteShell(fingerprint)} ] || { echo ${quoteShell(message)} >&2; exit 1; }`;
+}
+
+/**
+ * The records of live processes that run `sessionId`, wherever they run (a Lectern pane,
+ * another terminal, a background job): one listing of `<claudeDir>/sessions/` (regular
+ * `<pid>.json` files only), one `grep` for the session's UUID, `kill -0` for the process,
+ * then presenceReadScript for the few left, which pairs each record with the process's
+ * own start time. Only when no Lectern pane runs the session (core/subagent-status.ts).
+ */
+export function sessionPresenceScript(claudeDir: string, sessionId: string): string {
+  if (!SESSION_UUID.test(sessionId)) throw new Error('Invalid native session');
+  return `lectern_session_pids=$(
+    cd -P ${quoteShell(claudeDir.normalize('NFC'))} 2>/dev/null && [ -d sessions ] && [ ! -L sessions ] && cd -P sessions || exit 0
+    lectern_names=
+    for lectern_f in [1-9]*.json; do
+      case "\${lectern_f%.json}" in ''|*[!0-9]*) continue;; esac
+      [ -f "$lectern_f" ] && [ ! -L "$lectern_f" ] && lectern_names="$lectern_names $lectern_f"
+    done
+    [ -n "$lectern_names" ] || exit 0
+    for lectern_f in $(LC_ALL=C grep -l -F ${quoteShell(`"sessionId":"${sessionId.toLowerCase()}"`)} $lectern_names 2>/dev/null); do
+      kill -0 "\${lectern_f%.json}" 2>/dev/null && printf '%s ' "\${lectern_f%.json}"
+    done
+  )
+${presenceReadScript(claudeDir, undefined, 'lectern_session_pids')}`;
+}
+
+/** Whether a process runs the session, from sessionPresenceScript: a record whose `pid` is its file's
+ * name, whose `procStart` (and `pidDomain`) are the running process's own, so a reused PID never
+ * counts, and whose `sessionId` is this one. `startedAt` is that process's registration time;
+ * `uncertain` when a record could not be read whole (rewritten just then) or the registry is unsafe. */
+export function sessionProcess(raw: string[], sessionId: string): { alive: boolean; startedAt?: number; uncertain?: boolean } {
+  const { unsafe, frames } = decodePresence(raw);
+  let alive = false, startedAt: number | undefined, uncertain = unsafe;
+  for (const frame of frames.values()) {
+    if (!frame.start || frame.bytes.length > MAX_BYTES) continue;
+    if (tornPresence(frame)) { uncertain = true; continue; }
+    const record = JSON.parse(frame.bytes.toString('utf8'));
+    if (!record || record.pid !== frame.pid || record.procStart !== frame.start || (record.pidDomain !== undefined && record.pidDomain !== frame.domain)
+      || typeof record.sessionId !== 'string' || record.sessionId.toLowerCase() !== sessionId.toLowerCase()) continue;
+    alive = true;
+    if (Number.isSafeInteger(record.startedAt) && record.startedAt > 0) startedAt = Math.max(startedAt ?? 0, record.startedAt);
+  }
+  return { alive, ...(startedAt !== undefined && { startedAt }), ...(!alive && uncertain && { uncertain: true }) };
 }

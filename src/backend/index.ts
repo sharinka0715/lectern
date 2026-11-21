@@ -12,8 +12,8 @@ export type { HistoryCursor, HistoryPage, LiveCursor } from './transcript-pages'
 import { WorkspaceArtifacts } from './artifacts';
 import { ComposerCompletions } from './composer-completions';
 import { EndpointBillingCache } from './endpoint-billing';
-import type { EndpointBilling, GitChangesResult, SubagentFile } from '../shared/types';
-import { decodeSubagentList, subagentListScript, subagentPaths } from './subagent-files';
+import type { EndpointBilling, GitChangesResult, SubagentFile, SubagentListing } from '../shared/types';
+import { applySubagentPoll, decodeSubagentList, subagentListScript, subagentPaths, subagentPollScript, subagentPollState, type SubagentPollState } from './subagent-files';
 import { decodeTaskOutput, taskOutputScript, type TaskOutputRead, type TaskOutputWindow } from './task-output-files';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, posix } from 'node:path';
@@ -30,7 +30,7 @@ import { missingCwdNotice, scanHistoryProjects } from './history';
 import { normalizeSessionTitle } from '../shared/session-title';
 import { readRecentCustomTitle } from './session-title';
 import { renameInactiveSession } from './history-rename';
-import { SESSION_UUID, decodePresence, matchPresence, presenceReadScript, presenceUnchangedGuard, tornPresence, type NativePresence, type NativeStatus } from './native-presence';
+import { SESSION_UUID, decodePresence, matchPresence, presenceReadScript, presenceUnchangedGuard, sessionPresenceScript, sessionProcess, tornPresence, type NativePresence, type NativeStatus } from './native-presence';
 import { decodeStatusLineSample, readStatusLineSample, statusLineLaunch, statusLineMarker, statusLineRegistration } from './native-status-line';
 import { paneNavigationStatus, type NavigationStatus, type ViewportObservation } from './session-status';
 import { KeybindingUnconfirmed, NativeKeybindings } from './native-keybindings';
@@ -70,7 +70,7 @@ const RECORD_CHANGED = '_RECORD';
 const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_config_override}', '#{@lectern_fork_origin}', '#{pane_title}'].join(SEP);
 interface ProcessRow { pid: number; ppid: number; pgid: number; tpgid: number; args: string }
 interface InternalPane extends PaneInfo { forkOrigin?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; presenceTorn?: boolean; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
-interface Location { tmuxVersion: string; cwd: string; cwdAliases: string[]; claudeDir: string; projectDirs: string[] }
+interface Location { tmuxVersion: string; cwd: string; cwdAliases: string[]; claudeDir: string; projectDirs: string[]; /** `uname -s` of the target. */ os?: string }
 interface SettingRuntime { panePid?: number; instanceId?: string }
 function runtimeIdentity(workspace: Workspace, location: Location, pane?: InternalPane): string | undefined {
   if (pane?.active && pane.native?.registrationId && pane.serverInstance) {
@@ -81,7 +81,9 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
 export interface LaunchPreferences { enableWorkflows: boolean }
 export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'] }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
-export interface ReadResult { nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
+export interface ReadResult { /** Asked for with `listSubagents`: every subagent of the session (subagent-files.ts). */ subagents?: SubagentListing;
+  /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
+  sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean }; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
@@ -168,6 +170,8 @@ export class Backend {
   private readonly physicalPages = new Map<string, PhysicalHistoryPages>();
   private readonly sessions = new Map<string, SessionInfo>();
   private readonly cursors = new Map<string, LiveCursor>();
+  /** What the session polls have read of each session's subagent folder (at most 64 sessions). */
+  private readonly subagentPolls = new Map<string, SubagentPollState>();
   private readonly readGenerations = new Map<string, number>();
   private screenCache?: { identity: string; checksum: string; screen: string; viewport: string; nativeTasks?: ConversationTask[]; capturedAt: number; scrollbackAt: number };
   // Once a pane publishes native identity, a torn/missing record cannot
@@ -225,7 +229,7 @@ export class Backend {
     if (!cwd?.startsWith('/') || !claudeDir?.startsWith('/')) throw new Error('Could not resolve target directories');
     const cwdAliases = [...new Set([cwd, logicalCwd].filter(Boolean))];
     const slugs = new Set(cwdAliases.flatMap(alias => [projectSlug(alias), alias.replace(/[/.]/g, '-')]));
-    const location = { cwd, cwdAliases, claudeDir, tmuxVersion, projectDirs: [...slugs].map(slug => `${claudeDir}/projects/${slug}`) };
+    const location = { cwd, cwdAliases, claudeDir, tmuxVersion, os, projectDirs: [...slugs].map(slug => `${claudeDir}/projects/${slug}`) };
     // An older lookup must not repopulate state cleared by a concurrent edit.
     this.assertCurrentWorkspace(workspace, revision);
     this.locations.set(signature, location);
@@ -1015,6 +1019,14 @@ remaining=$(list_target)
     const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
     return [...(session.path ? [posix.dirname(session.path)] : []), ...location.projectDirs];
   }
+  private subagentPoll(key: string): SubagentPollState {
+    const state = this.subagentPolls.get(key) ?? subagentPollState();
+    // Most recently polled last; the oldest goes beyond 64 sessions.
+    this.subagentPolls.delete(key);
+    this.subagentPolls.set(key, state);
+    if (this.subagentPolls.size > 64) this.subagentPolls.delete(this.subagentPolls.keys().next().value!);
+    return state;
+  }
   /** The subagent transcripts of a session, newest first, with their meta files. */
   async listSubagents(workspace: Workspace, sessionId: string): Promise<SubagentFile[]> {
     const dirs = await this.subagentDirs(workspace, sessionId);
@@ -1060,7 +1072,7 @@ remaining=$(list_target)
     if (cursor.layout) throw new Error(t('backend.resumedHistoryChanged'));
     return new TranscriptPages(this.transport, workspace, sessionId, this.transcriptPaths(session, location)).older(cursor, sizeMiB);
   }
-  async readSession(workspace: Workspace, sessionId: string, forceViewport = false, activityTargets: ActivityReadTarget[] = [], tailFirst = false, terminalVisible = false, recheckLayout = true): Promise<ReadResult> {
+  async readSession(workspace: Workspace, sessionId: string, forceViewport = false, activityTargets: ActivityReadTarget[] = [], tailFirst = false, terminalVisible = false, recheckLayout = true, listSubagents = false, findSessionProcess = false): Promise<ReadResult> {
     return diagnostic.operation('backend.read', { workspaceId: workspace.id, sessionId }, async () => {
     const key = this.key(workspace, sessionId), generation = this.readGenerations.get(key) ?? 0;
     this.readGenerations.set(key, generation);
@@ -1070,8 +1082,16 @@ remaining=$(list_target)
     const script = liveTranscriptScript(candidates, cursor, tailFirst);
     const separator = `__LECTERN_TRANSCRIPT_${randomUUID()}__`;
     const activitySeparator = activityTargets.length ? `__LECTERN_ACTIVITY_${randomUUID()}__` : '';
+    // The subagent folder, in the same command (subagent-files.ts): `=` alone when nothing changed.
+    const subagentSeparator = listSubagents ? `__LECTERN_SUBAGENTS_${randomUUID()}__` : '';
+    // A live Claude Code process of this session outside Lectern's panes (native-presence.ts).
+    const processSeparator = findSessionProcess ? `__LECTERN_PROCESS_${randomUUID()}__` : '';
+    const subagentPoll = listSubagents ? this.subagentPoll(key) : undefined, bsd = /^(Darwin|.*BSD)$/.test(location.os ?? '');
+    const subagentDirs = [...(session.path ? [posix.dirname(session.path)] : []), ...location.projectDirs];
     const pollScript = `${readStatusLineSample(session.paneId, this.options.tmuxSocket)}
 ${activitySeparator ? readActivityFiles(sessionId, location.projectDirs, activityTargets) + '\nprintf %s ' + q(activitySeparator) : ''}
+${subagentPoll ? subagentPollScript(subagentDirs, sessionId, subagentPoll, bsd) + '\nprintf %s ' + q(subagentSeparator) : ''}
+${processSeparator ? '(\n' + sessionPresenceScript(location.claudeDir, sessionId) + '\n)\nprintf %s ' + q(processSeparator) : ''}
 (
 ${this.probeScript(location)}
 )
@@ -1086,7 +1106,16 @@ ${script}`;
     const activityEnd = activitySeparator ? response.stdout.indexOf(activitySeparator, statusEnd + 1) : statusEnd + 1;
     if (activityEnd < 0 || activityEnd > boundary) throw new Error('Incomplete activity poll response');
     const activitySamples = activitySeparator ? decodeActivityFiles(response.stdout.subarray(statusEnd + 1, activityEnd)) : [];
-    const paneData = this.parseProbe(workspace, location, response.stdout.subarray(activityEnd + activitySeparator.length, boundary));
+    const subagentsStart = activityEnd + activitySeparator.length;
+    const subagentsEnd = subagentSeparator ? response.stdout.indexOf(subagentSeparator, subagentsStart) : subagentsStart;
+    if (subagentsEnd < 0 || subagentsEnd > boundary) throw new Error('Incomplete subagent poll response');
+    if (subagentPoll) applySubagentPoll(response.stdout.subarray(subagentsStart, subagentsEnd), subagentPoll, bsd);
+    const subagents = subagentPoll && { revision: subagentPoll.revision, files: subagentPoll.files };
+    const processStart = subagentsEnd + subagentSeparator.length;
+    const processEnd = processSeparator ? response.stdout.indexOf(processSeparator, processStart) : processStart;
+    if (processEnd < 0 || processEnd > boundary) throw new Error('Incomplete session process response');
+    const elsewhere = processSeparator ? sessionProcess(response.stdout.subarray(processStart, processEnd).toString('ascii').split('\0'), sessionId) : undefined;
+    const paneData = this.parseProbe(workspace, location, response.stdout.subarray(processEnd + processSeparator.length, boundary));
     const record = { stdout: response.stdout.subarray(boundary + separator.length) };
     const pane = this.currentPane(paneData, session, location, true);
     const window = decodeFileWindow(record.stdout);
@@ -1096,7 +1125,7 @@ ${script}`;
       // The tip may have appended between sidebar discovery and opening it.
       // Reverify the edge once; a replacement must not inherit the old prefix.
       await this.discover(workspace);
-      return this.readSession(workspace,sessionId,forceViewport,activityTargets,tailFirst,terminalVisible,false);
+      return this.readSession(workspace,sessionId,forceViewport,activityTargets,tailFirst,terminalVisible,false,listSubagents,findSessionProcess);
     }
     if (layout && layout.source.file.id !== sessionId && !layout.matchesTip(window)) throw new Error(t('backend.aliasCopyChanged'));
     const page = reset && tailFirst
@@ -1210,7 +1239,7 @@ ${after}`;
     const runtimeInstanceId = runtimeIdentity(workspace, location, pane);
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
-    return { nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { subagents, sessionProcess: elsewhere, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {
