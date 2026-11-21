@@ -5,7 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Backend, projectSlug, quoteShell, runCommand } from '../src/backend';
-import { decodePresence, matchPresence, presenceReadScript, presenceUnchangedGuard } from '../src/backend/native-presence';
+import { decodePresence, matchPresence, presenceReadScript, presenceUnchangedGuard, tornPresence } from '../src/backend/native-presence';
+import { keysNotSent } from '../src/backend/native-settings';
+import { t as translate } from '../src/shared/i18n';
 import { paneNavigationStatus } from '../src/backend/session-status';
 import type { Workspace } from '../src/shared/types';
 
@@ -34,6 +36,16 @@ test('native identity requires the exact foreground process, start, PID domain, 
   assert.equal(paneNavigationStatus({ ...pane, native: match({ status: undefined }) }).status, 'unknown');
   assert.equal(paneNavigationStatus({ ...pane, identityError: 'invalid' }, { screen: '❯\n? for shortcuts' }).status, 'unknown');
   assert.equal(match({ waitingFor: 'invalid\nreason' })?.waitingFor, undefined);
+});
+
+test('an empty record, or new JSON followed by the old tail, is a torn read', () => {
+  const frame = (text: string) => ({ pid: 215, start: record.procStart, domain: record.pidDomain, bytes: Buffer.from(text) });
+  // Captured from Claude Code 2.1.329 while it opened the /rewind dialog (identifiers replaced).
+  const torn = JSON.stringify({ ...record, status: 'idle', statusUpdatedAt: 1795264908833 }) + '47,"waitingFor":"dialog open"}';
+  assert.equal(tornPresence(frame(torn)), true);
+  assert.equal(tornPresence(frame('')), true);
+  assert.equal(tornPresence(frame(JSON.stringify(record))), false);
+  assert.equal(matchPresence(frame(torn), target, [cwd]), undefined);
 });
 
 test('durable registration identity requires the native start and PID domain and ignores mutable status', () => {
@@ -158,6 +170,9 @@ process.stdout.write('❯\\r\\n? for shortcuts\\r\\n');`);
     await run(workspace, guard, args);
     await update({ sessionId: nextId });
     await assert.rejects(run(workspace, guard, args), /身份或状态/);
+    // Input guards say so when nothing was sent, which lets their callers read again.
+    await assert.rejects(run(workspace, presenceUnchangedGuard(config, Number(pid), frame.fingerprint!, translate('native.presenceChangedNoKeys')), args),
+      error => keysNotSent(error));
     const discovery = await backend.discover(workspace);
     assert.equal(discovery.sessions.find(s => s.id === original.id)?.paneId, undefined);
     assert.equal(discovery.sessions.find(s => s.id === nextId)?.paneId, original.paneId);
@@ -200,6 +215,21 @@ process.stdout.write('❯\\r\\n? for shortcuts\\r\\n');`);
       if (!keys) await new Promise(resolve => setTimeout(resolve, 20));
     }
     assert.equal(keys, ' ');
+    // Claude Code rewrites the record in place: a read can catch the new JSON followed
+    // by the old record's tail. That read is repeated, not taken as a changed identity.
+    const valid = JSON.stringify({ ...base, pidDomain, sessionId: nextId });
+    await writeFile(file, valid + '47,"waitingFor":"dialog open"}');
+    let probes = 0;
+    transport.run = async (...args: any[]) => {
+      const result = await run(...args);
+      if (args[2]?.tag === 'tmux.probe' && ++probes === 1) await writeFile(file, valid);
+      return result;
+    };
+    await backend.sendKey(workspace, nextId, 'Space');
+    assert.equal(probes, 2, 'the torn record was read again');
+    for (let i = 0; i < 50 && keys !== '  '; i++) { keys = await readFile(join(dir, 'keys'), 'utf8'); if (keys !== '  ') await new Promise(resolve => setTimeout(resolve, 20)); }
+    assert.equal(keys, '  ');
+    transport.run = run;
   } finally {
     await backend.dispose();
     await runCommand(workspace, tmux('kill-server') + ' 2>/dev/null || true');

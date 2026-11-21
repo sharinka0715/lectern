@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
+import { readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Backend } from '../src/backend';
 import { readRewind, turnComposer } from '../src/core/turn-controls';
@@ -42,7 +43,18 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     // (e.g. Claude Code appended its auto mode notice just then): pass it on.
     const transport = (backend as any).transport, run = transport.run.bind(transport);
     let submissions = 0;
+    // Claude Code rewrites its PID record (status, updatedAt) as it settles. Do the same,
+    // once, right before the fork's retag and the first rewind key: either guard then
+    // refuses without changing anything, and the step must read again and go on.
+    const rewritten = new Set<string>(), registry = join(root, 'config', 'sessions');
+    const rewriteRecords = () => { for (const f of readdirSync(registry).filter(f => f.endsWith('.json'))) {
+      let record; try { record = JSON.parse(readFileSync(join(registry, f), 'utf8')); } catch { continue; } // mid-write: it changes anyway
+      writeFileSync(join(registry, f + '.tmp'), JSON.stringify({ ...record, updatedAt: (record.updatedAt ?? 0) + 1 }));
+      renameSync(join(registry, f + '.tmp'), join(registry, f));
+    } };
     transport.run = async (...args: any[]) => {
+      const point = args[2]?.tag === 'session.fork.rebind' ? 'rebind' : args[2]?.tag === 'settings.input_observe' && args[1].includes("'Up'") ? 'rewind' : '';
+      if (point && !rewritten.has(point)) { rewritten.add(point); rewriteRecords(); }
       const result = await run(...args);
       if (args[2]?.tag !== 'session.branch.submit' || String(result.stdout).startsWith('LECTERN_MENU_KEY_NOT_SENT_')) return result;
       if (++submissions === 1) throw Error('lost branch acknowledgement');
@@ -69,6 +81,7 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     const confirm=readRewind(frame(pane)); assert.equal(confirm?.message,'Repeated prompt');
     const restored=await backend.turnAction(ws,pair.fork.id,pane,pid,{kind:'restore',signature:confirm!.signature},{index:1,prompts}, undefined, (await backend.readSession(ws,pair.fork.id,true)).transcriptPosition);
     assert.equal(restored?.restoredDraft,'Repeated prompt');
+    assert.deepEqual([...rewritten].sort(), ['rebind','rewind'], 'both native record rewrites happened');
     const cut = frame(pane);
     assert.ok(cut.includes('Fixture answer 0') && !cut.includes('Fixture answer 12'), 'the earlier of the two identical prompts was selected');
     assert.ok(frame(pair.original.paneId!).includes('Fixture answer 14'));

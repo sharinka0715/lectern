@@ -40,6 +40,15 @@ export function matchPresence(frame: PresenceFrame, tmuxTarget: string, cwdAlias
   } catch { return; }
 }
 
+/** Claude Code 2.1.329 rewrites its record in place (new bytes, then truncate), so a
+ * read can catch the new JSON followed by the old record's tail, e.g. `…833}47,
+ * "waitingFor":"dialog open"}`; its own reader reads such a record again. An empty or
+ * unparsable record of a live process is such a torn read, not a verdict on identity. */
+export function tornPresence(frame: PresenceFrame): boolean {
+  if (!frame.bytes.length) return true;
+  try { JSON.parse(frame.bytes.toString('utf8')); return false; } catch { return true; }
+}
+
 /** Only named process IDs from the pane's foreground process tree are candidates.
  * No directory listing, peer credentials or sockets. Retain a physical directory
  * as cwd, then open each basename with O_NOFOLLOW and a fixed byte budget. */
@@ -90,13 +99,14 @@ export function decodePresence(raw: string[]): { unsafe: boolean; frames: Map<nu
 
 /** Run in the same remote shell immediately before a destructive action.
  * Reject an intervening native write (including /clear) or reused PID.
- * No JSON parser or Claude executable is needed on the target. */
-export function presenceUnchangedGuard(claudeDir: string, pid: number, fingerprint: string): string {
+ * No JSON parser or Claude executable is needed on the target. Input guards pass a
+ * message that says no keys were sent, so their callers may read again and retry. */
+export function presenceUnchangedGuard(claudeDir: string, pid: number, fingerprint: string, message = t('backend.presenceChanged')): string {
   if (!Number.isSafeInteger(pid) || pid < 2 || !/^[0-9a-f]{64}$/.test(fingerprint)) throw new Error('Invalid native process identity');
   return `lectern_capture_presence() {
 ${presenceReadScript(claudeDir, pid)}
 }
 lectern_observed=$(lectern_capture_presence | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
 )
-[ "\${lectern_observed%% *}" = ${quoteShell(fingerprint)} ] || { echo ${quoteShell(t('backend.presenceChanged'))} >&2; exit 1; }`;
+[ "\${lectern_observed%% *}" = ${quoteShell(fingerprint)} ] || { echo ${quoteShell(message)} >&2; exit 1; }`;
 }

@@ -11,6 +11,7 @@ export const native = {
   modelNoUltracode: ['当前模型 {model} 不支持 Ultracode', 'The current model {model} does not support Ultracode'],
   ultracodeUnconfirmed: ['未确认 Ultracode 切换：{message}', 'Ultracode switch not confirmed: {message}'],
   screenChangedNoKeys: ['原生设置画面或输入框已变化，未发送按键，请重新读取', 'The native settings screen or input box changed, so no keys were sent. Read it again.'],
+  presenceChangedNoKeys: ['原生会话的状态记录已变化，未发送按键，请重新读取', "The native conversation's state record changed, so no keys were sent. Read it again."],
   recordChangedNoKeys: ['会话记录在读取后又有变化，未发送按键；卡片会按新的记录重新给出，请再选一次', 'The conversation record changed after it was read, so no keys were sent; the card comes back for the new record. Choose again.'],
   menuReadTimeout: ['读取原生设置菜单超时；不会自动重试设置操作', 'Reading the native settings menu timed out; the setting will not be retried automatically.'],
   paneBindingChanged: ['会话的 tmux 绑定已改变，设置操作已停止', "The conversation's tmux binding changed; the setting stopped."],

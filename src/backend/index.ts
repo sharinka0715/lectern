@@ -30,11 +30,11 @@ import { missingCwdNotice, scanHistoryProjects } from './history';
 import { normalizeSessionTitle } from '../shared/session-title';
 import { readRecentCustomTitle } from './session-title';
 import { renameInactiveSession } from './history-rename';
-import { SESSION_UUID, decodePresence, matchPresence, presenceReadScript, presenceUnchangedGuard, type NativePresence, type NativeStatus } from './native-presence';
+import { SESSION_UUID, decodePresence, matchPresence, presenceReadScript, presenceUnchangedGuard, tornPresence, type NativePresence, type NativeStatus } from './native-presence';
 import { decodeStatusLineSample, readStatusLineSample, statusLineLaunch, statusLineMarker, statusLineRegistration } from './native-status-line';
 import { paneNavigationStatus, type NavigationStatus, type ViewportObservation } from './session-status';
 import { KeybindingUnconfirmed, NativeKeybindings } from './native-keybindings';
-import { effortFrameGuard, NativeSettings, NavigationKeyNotSent, SessionSettingError, TranscriptChangedNoKeys, type SettingChoices, type SettingDriver } from './native-settings';
+import { effortFrameGuard, keysNotSent, NativeSettings, NavigationKeyNotSent, SessionSettingError, TranscriptChangedNoKeys, type SettingChoices, type SettingDriver } from './native-settings';
 import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
@@ -69,7 +69,7 @@ const SEP = '|~lectern~|';
 const RECORD_CHANGED = '_RECORD';
 const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_config_override}', '#{@lectern_fork_origin}', '#{pane_title}'].join(SEP);
 interface ProcessRow { pid: number; ppid: number; pgid: number; tpgid: number; args: string }
-interface InternalPane extends PaneInfo { forkOrigin?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
+interface InternalPane extends PaneInfo { forkOrigin?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; presenceTorn?: boolean; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
 interface Location { tmuxVersion: string; cwd: string; cwdAliases: string[]; claudeDir: string; projectDirs: string[] }
 interface SettingRuntime { panePid?: number; instanceId?: string }
 function runtimeIdentity(workspace: Workspace, location: Location, pane?: InternalPane): string | undefined {
@@ -252,8 +252,13 @@ ${presenceReadScript(location.claudeDir)}`;
   }
   private async probe(workspace: Workspace): Promise<InternalPane[]> {
     const location = await this.locate(workspace);
-    const { stdout } = await this.transport.run(workspace, this.probeScript(location), { tag: 'tmux.probe' });
-    return this.parseProbe(workspace, location, stdout);
+    // A torn native record (see tornPresence) is read again shortly, at most twice.
+    for (let attempt = 0; ; attempt++) {
+      const { stdout } = await this.transport.run(workspace, this.probeScript(location), { tag: 'tmux.probe' });
+      const panes = this.parseProbe(workspace, location, stdout);
+      if (attempt >= 2 || !panes.some(pane => pane.presenceTorn)) return panes;
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
   }
   private parseProbe(workspace: Workspace, location: Location, stdout: Buffer): InternalPane[] {
     const [rawPanes, rawPs, ...records] = stdout.toString('utf8').split('\0');
@@ -274,7 +279,7 @@ ${presenceReadScript(location.claudeDir)}`;
       let identityError: string | undefined;
       if (pids.length > 1) identityError = t('backend.multipleClaude');
       else if (claudePid && !native && (unsafe || frame || UUID.test(forkOrigin) || registered.has(registration))) identityError = t('backend.identityUnverified');
-      return [{ id, pid: +pid, claudePid, cwd, forkOrigin: UUID.test(forkOrigin) ? forkOrigin : undefined, configOverride: override ? override === '1' : undefined, explicitlyBound: mapping === 'manual', sessionName, command, nativeTarget, native, statusMarker, serverInstance: /^[1-9]\d*:[1-9]\d*$/.test(server) ? server : undefined, presenceFingerprint: native && frame?.fingerprint, boundSessionId, identityError,
+      return [{ id, pid: +pid, claudePid, cwd, forkOrigin: UUID.test(forkOrigin) ? forkOrigin : undefined, configOverride: override ? override === '1' : undefined, explicitlyBound: mapping === 'manual', sessionName, command, nativeTarget, native, statusMarker, serverInstance: /^[1-9]\d*:[1-9]\d*$/.test(server) ? server : undefined, presenceFingerprint: native && frame?.fingerprint, presenceTorn: !!frame && !native && tornPresence(frame), boundSessionId, identityError,
         dead: dead === '1', deadStatus: /^\d+$/.test(deadStatus) ? +deadStatus : undefined, deadSignal: deadSignal || undefined, title: title.join(SEP),
         sessionId: native?.sessionId ?? lastNativeId ?? boundSessionId, managed: mapping === 'exact', boundCwd: boundCwd || undefined, boundClaudeDir: boundClaudeDir || undefined,
         width: +width, height: +height, cursorX: +cursorX, cursorY: +cursorY, active: !!claudePid && !identityError }];
@@ -790,16 +795,24 @@ exit 0`;
           }, t('backend.forkLineageUnproven'));
           journal!.forkId = forkId;
         }
-        const fresh = target(await probe());
-        if (!fresh || fresh.native!.sessionId !== forkId) throw changed();
-        if (fresh.boundSessionId === sessionId) {
-          // Retag only this exact foreground process, never a pane found by
-          // timestamp or by cwd. Leave unrelated/manual binding options intact.
-          const format = '#{pane_pid}:#{pid}:#{start_time}:#{@lectern_session_id}';
-          const identity = this.tmux('display-message', '-p', '-t', paneId, format);
-          const retag = this.tmux('set-option', '-p', '-t', paneId, '@lectern_session_id', forkId, ';', 'set-option', '-p', '-t', paneId, '@lectern_fork_origin', sessionId);
-          await this.transport.run(workspace, `set -e\n[ "$(${identity})" = ${q(`${panePid}:${fresh.serverInstance}:${sessionId}`)} ]\n${this.nativeGuard(fresh, location)}${retag}`, {tag:'session.fork.rebind'});
-        } else if (fresh.boundSessionId && fresh.boundSessionId !== forkId) throw changed();
+        // Claude Code rewrites its PID record a few times while the branch settles (busy,
+        // the new UUID, its name, idle). A refused guard changed nothing: probe again and
+        // retag against the record as it is now, while it still names the fork (3 tries).
+        for (let attempt = 1; ; attempt++) {
+          const fresh = target(await probe());
+          if (!fresh || fresh.native!.sessionId !== forkId) throw changed();
+          if (fresh.boundSessionId === sessionId) {
+            // Retag only this exact foreground process, never a pane found by
+            // timestamp or by cwd. Leave unrelated/manual binding options intact.
+            const format = '#{pane_pid}:#{pid}:#{start_time}:#{@lectern_session_id}';
+            const identity = this.tmux('display-message', '-p', '-t', paneId, format);
+            const retag = this.tmux('set-option', '-p', '-t', paneId, '@lectern_session_id', forkId, ';', 'set-option', '-p', '-t', paneId, '@lectern_fork_origin', sessionId);
+            try {
+              await this.transport.run(workspace, `set -e\n[ "$(${identity})" = ${q(`${panePid}:${fresh.serverInstance}:${sessionId}`)} ]\n${this.nativeGuard(fresh, location, t('native.presenceChangedNoKeys'))}${retag}`, {tag:'session.fork.rebind'});
+            } catch (error) { if (attempt < 3 && keysNotSent(error)) continue; throw error; }
+          } else if (fresh.boundSessionId && fresh.boundSessionId !== forkId) throw changed();
+          break;
+        }
         this.touchWorkspace(workspace.id);
         // Stable name also covers a transport disconnect after new-session but
         // before its reply: retries can observe that pane without duplicating it.
@@ -1210,8 +1223,8 @@ ${after}`;
     this.inputGuards.set(this.key(workspace, sessionId), this.nativeGuard(pane, location));
     return pane.id;
   }
-  private nativeGuard(pane: InternalPane, location: Location): string {
-    return pane.claudePid && pane.presenceFingerprint ? presenceUnchangedGuard(location.claudeDir, pane.claudePid, pane.presenceFingerprint) + '\n' : '';
+  private nativeGuard(pane: InternalPane, location: Location, message?: string): string {
+    return pane.claudePid && pane.presenceFingerprint ? presenceUnchangedGuard(location.claudeDir, pane.claudePid, pane.presenceFingerprint, message) + '\n' : '';
   }
   private sendPaneInput(workspace: Workspace, sessionId: string, command: string) {
     // livePane refreshed this guard during the current withInput transaction.
@@ -1467,7 +1480,7 @@ ${after}`;
     // mapping in the same round trip. A changed or ambiguous binding discards
     // both captures. Two equal frames separated by a probe and a settle interval
     // can satisfy the native menu's stability check without another SSH call.
-    const read = async (settle: boolean, input = '', rejectedNavigation?: string, switchSession = false) => {
+    const read = async (settle: boolean, input = '', rejectedNavigation?: string, switchSession = false, torn = 0): Promise<{ paneId: string; viewport: string; stable: boolean }> => {
       const { session, location, revision } = await (resolved ??= resolve());
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
       const paneId = last?.pane.id ?? session.paneId ?? this.currentPane(await this.probe(workspace), session, location)?.id;
@@ -1498,6 +1511,12 @@ lectern_frame`;
       const split = stdout.indexOf(0), end = stdout.indexOf(boundary, split + 1);
       if (split < 0 || end < 0) throw new SessionSettingError(t('backend.settingScreenIncomplete'));
       const panes = this.parseProbe(workspace, location, stdout.subarray(split + 1, end));
+      // A torn native record (see tornPresence): observe again, without the input, which
+      // has either been sent already or refused. At most twice, as probe() does.
+      if (torn < 2 && panes.some(pane => pane.id === paneId && pane.presenceTorn)) {
+        await new Promise(resolve => setTimeout(resolve, 30));
+        return read(settle, '', undefined, false, torn + 1);
+      }
       const pane = select(panes, session, location);
       if (!pane?.active || !pane.claudePid || pane.id !== paneId || (last && (last.pane.pid !== pane.pid
         || last.pane.claudePid !== pane.claudePid || last.pane.serverInstance !== pane.serverInstance
@@ -1532,7 +1551,7 @@ lectern_frame`;
       const expectedViewport = frameGuard.tailLines ? border.viewport.split('\n').slice(-frameGuard.tailLines - 1).join('\n') : border.viewport;
       return `[ "$(${this.tmux('display-message', '-p', '-t', paneId, format)})" = ${q(expected)} ] || { echo ${q(t('backend.settingPaneChangedNoInput'))} >&2; exit 1; }
 ps -p ${pane.claudePid} -o pgid=,tpgid= | awk 'NF == 2 && $1 > 0 && $1 == $2 { found=1 } END { exit !found }' || { echo ${q(t('backend.claudeLeftNoInput'))} >&2; exit 1; }
-${this.nativeGuard(pane, location)}lectern_digest=$(${capture(paneId)}${tail}${frameGuard.filter}${border.filter} | head -c 16385 | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; })
+${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_digest=$(${capture(paneId)}${tail}${frameGuard.filter}${border.filter} | head -c 16385 | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; })
 [ "\${lectern_digest%% *}" = ${q(createHash('sha256').update(expectedViewport).digest('hex'))} ] || { ${rejectedNavigation ? `printf '%s' ${q(rejectedNavigation)}; exit 0` : `echo ${q(t('native.screenChangedNoKeys'))} >&2; exit 1`}; }
 `;
     };
