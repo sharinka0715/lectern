@@ -7,15 +7,26 @@ import { useArtifactResolution, useArtifactScope } from './ArtifactReferenceScop
 import { queueThumbnail } from './thumbnail-queue';
 import { t } from '../shared/i18n';
 
-type Source = { path: string } | { id: string; sessionId: string };
+/** A file's extension as a short label (`PNG`), or nothing. */
+export function extensionLabel(name: string) {
+  return /\.([a-z0-9]{1,5})$/i.exec(name)?.[1].toUpperCase() ?? '';
+}
+
+/** A workspace image by path (`explicit`: an attached file, read only when the user opens it), or a
+ * transcript attachment by id (with `path` when it was attached by path: opened and saved from there). */
+export type Source = { path: string; explicit?: boolean } | { id: string; sessionId: string; path?: string };
 type ImageAction = 'copy' | 'download';
+/** `inline`: the chat's own thumbnail; `card`: an attachment card above a user message; `chip`: a file named inside its text. */
+export type ImageVariant = 'inline' | 'card' | 'chip';
 
 export function AttachmentImage({ attachment, onOpen }: { attachment: MessageAttachment; onOpen: (attachment: MessageAttachment) => void }) {
   const scope = useArtifactScope();
-  if (attachment.path) return <WorkspaceImage name={attachment.name} path={attachment.path} explicit onOpen={() => onOpen(attachment)} />;
-  if (!scope?.sessionId) return <span>{attachment.name}</span>;
-  return <ImageView key={JSON.stringify([scope.workspaceId, scope.sessionId, attachment.id, attachment.revision])}
-    workspaceId={scope.workspaceId} source={{ id: attachment.id, sessionId: scope.sessionId }} name={attachment.name} onOpen={() => onOpen(attachment)} />;
+  if (!scope?.sessionId) return attachment.path ? <WorkspaceImage name={attachment.name} path={attachment.path} explicit onOpen={() => onOpen(attachment)} />
+    : <span>{attachment.name}</span>;
+  // An image attached by path is thumbnailed on its machine like the activity card's, inside the folder or not.
+  return <ImageView key={JSON.stringify([scope.workspaceId, scope.sessionId, attachment.id, attachment.revision, attachment.path])}
+    workspaceId={scope.workspaceId} source={{ id: attachment.id, sessionId: scope.sessionId, path: attachment.path }} name={attachment.name}
+    title={attachment.path} onOpen={() => onOpen(attachment)} />;
 }
 
 export function WorkspaceImage({ name, path, fallback, onOpen }: { name: string; path: string; explicit?: boolean; fallback?: string; onOpen: (path: string) => void }) {
@@ -50,7 +61,12 @@ function imageUrl(preview: ArtifactPreview) {
   return URL.createObjectURL(new Blob([new Uint8Array(preview.data)], { type: preview.mime }));
 }
 
-function ImageView({ workspaceId, source, name, onOpen }: { workspaceId: string; source: Source; name: string; onOpen: () => void }) {
+export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline', title, preview }: {
+  workspaceId: string; source: Source; name: string; onOpen: () => void;
+  variant?: ImageVariant; title?: string;
+  /** A thumbnail the caller already has (and owns), shown until this view reads its own. */
+  preview?: string;
+}) {
   const frame = useRef<HTMLSpanElement>(null);
   const fullImage = useRef<HTMLImageElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -60,11 +76,15 @@ function ImageView({ workspaceId, source, name, onOpen }: { workspaceId: string;
   const [actionError, setActionError] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [actualSize, setActualSize] = useState(false);
-  const path = 'path' in source ? source.path : undefined;
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const path = source.path;
   const id = 'id' in source ? source.id : undefined;
   const sessionId = 'id' in source ? source.sessionId : undefined;
-  const readOriginal = useCallback(() => path !== undefined ? window.desktop.previewInlineImage(workspaceId, path)
-    : window.desktop.previewMessageAttachment(workspaceId, sessionId!, id!), [workspaceId, path, sessionId, id]);
+  // Attached files may sit outside the folder: their originals are read like a file the user opens.
+  const explicit = 'id' in source ? path !== undefined : !!source.explicit;
+  const readOriginal = useCallback(() => path !== undefined && explicit ? window.desktop.previewArtifact(workspaceId, path)
+    : path !== undefined && id === undefined ? window.desktop.previewInlineImage(workspaceId, path)
+    : window.desktop.previewMessageAttachment(workspaceId, sessionId!, id!), [workspaceId, path, sessionId, id, explicit]);
 
   useEffect(() => {
     let retired = false, url: string | undefined, cancel: (() => void) | undefined;
@@ -74,10 +94,10 @@ function ImageView({ workspaceId, source, name, onOpen }: { workspaceId: string;
       cancel ??= queueThumbnail(async () => {
         observer.disconnect();
         try {
-          const preview = path !== undefined ? await window.desktop.previewInlineImageThumbnail(workspaceId, path)
-            : await window.desktop.previewMessageAttachmentThumbnail(workspaceId, sessionId!, id!);
+          const result = id === undefined ? await window.desktop.previewInlineImageThumbnail(workspaceId, path!)
+            : await window.desktop.previewMessageAttachmentThumbnail(workspaceId, sessionId!, id);
           if (retired) return;
-          url = imageUrl(preview);
+          url = imageUrl(result);
           setThumbnail(url);
         } catch { /* 单张图片失败不影响文字或后续缩略图。 */ }
       });
@@ -109,8 +129,8 @@ function ImageView({ workspaceId, source, name, onOpen }: { workspaceId: string;
     setActionError('');
     try {
       if (action === 'download') {
-        if ('path' in source) await window.desktop.downloadArtifact(workspaceId, source.path);
-        else await window.desktop.downloadMessageAttachment(workspaceId, source.sessionId, source.id);
+        if ('id' in source && source.path === undefined) await window.desktop.downloadMessageAttachment(workspaceId, source.sessionId, source.id);
+        else await window.desktop.downloadArtifact(workspaceId, source.path!);
         return;
       }
       const displayed = fullImage.current;
@@ -124,11 +144,21 @@ function ImageView({ workspaceId, source, name, onOpen }: { workspaceId: string;
     } catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
   }
   const errorNotice = actionError && <span role="alert" className="chat-image-error">{actionError}</span>;
-  return <span className="chat-image" ref={frame} data-chat-image={name}>
-    <button type="button" className="chat-image-open" aria-label={t('files.zoomName', { name })} title={name}
-      onContextMenu={contextMenu} onClick={() => { setActualSize(false); setActionError(''); setExpanded(true); }}>
-      {thumbnail ? <img alt={name} src={thumbnail} draggable={false} onError={() => setThumbnail('')} /> : <ImageIcon size={19} aria-hidden="true" />}
-    </button>
+  const shown = thumbnail || (!previewFailed && preview) || '';
+  const image = shown && <img alt={name} src={shown} draggable={false} onError={() => thumbnail ? setThumbnail('') : setPreviewFailed(true)} />;
+  const zoom = { 'aria-label': t('files.zoomName', { name }), title: title ?? name, onContextMenu: contextMenu,
+    onClick: () => { setActualSize(false); setActionError(''); setExpanded(true); } };
+  const frameProps = variant === 'card' ? { className: 'attachment-card attachment-card-image', 'data-attachment-card': 'image', 'data-thumbnail': shown ? 'image' : 'icon' }
+    : variant === 'chip' ? { className: 'attachment-chip-frame', 'data-attachment-chip': name, 'data-thumbnail': shown ? 'image' : 'icon' }
+    : { className: 'chat-image', 'data-chat-image': name };
+  return <span ref={frame} {...frameProps}>
+    {variant === 'card' ? <button type="button" className="attachment-card-open" {...zoom}>
+      {image || <span className="attachment-card-placeholder"><ImageIcon size={20} aria-hidden="true" /><span>{extensionLabel(name)}</span></span>}
+    </button> : variant === 'chip' ? <button type="button" className="attachment-chip" {...zoom}>
+      <span className="attachment-chip-icon">{image || <ImageIcon size={13} aria-hidden="true" />}</span><span className="attachment-chip-name">{name}</span>
+    </button> : <button type="button" className="chat-image-open" {...zoom}>
+      {image || <ImageIcon size={19} aria-hidden="true" />}
+    </button>}
     {!expanded && errorNotice}
     {expanded && createPortal(<dialog className="chat-image-dialog" ref={dialog} aria-label={t('files.imagePreview', { name })}
       onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}

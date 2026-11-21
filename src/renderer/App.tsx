@@ -97,7 +97,7 @@ import {
   reportSnapshotApplied,
   setDiagnosticContext,
 } from "./diagnostics";
-import { joinList, t } from '../shared/i18n';
+import { t } from '../shared/i18n';
 import { rich } from './i18n';
 
 // Message keys, translated when shown.
@@ -502,14 +502,15 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     setDraft(d => d || launch.text);
     setLaunch(undefined);
   }
-  const completion = useComposerCompletion({ workspaceId, sessionId: sessionId || (isDraft ? "draft" : ""), view,
-    enabled: canType && !sending && !rewindOpen, value: draft, onValue: setDraft, inputRef });
   // Pasted or dropped files become @-mentions; on an SSH machine they are uploaded first.
+  // The input box shows them as cards and only the text in the textarea (the draft keeps both).
   const attachments = useComposerAttachments({ workspace, sessionId, enabled: canType && !rewindOpen,
-    inputRef, setDraft,
+    draft, inputRef, setDraft,
     showing: (ws, sid) => mounted.current && selected.current.workspaceId === ws && selected.current.sessionId === sid,
     stash: (ws, sid, update) => { const key = draftKey(ws, sid); unsentDrafts.set(key, update(unsentDrafts.get(key) ?? "")); },
     onError: showToast });
+  const completion = useComposerCompletion({ workspaceId, sessionId: sessionId || (isDraft ? "draft" : ""), view,
+    enabled: canType && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef });
   const uploading = attachments.pending.length > 0;
   function openRewind() { setRewindScope(JSON.stringify([workspaceId, sessionId])); }
   useEffect(() => { setRewindScope(undefined); }, [workspaceId, sessionId, paneId]);
@@ -1666,9 +1667,6 @@ export default function App({view = "primary"}: {view?: ChatView}) {
           {!question && <>
           <TurnPanel state={controls} busy={sending || terminalLocked || busy} act={action => void actOnTurn(action)}/>
           <TurnProgress snapshot={snapshot} />
-          {uploading && <div className="composer-uploads" role="status">
-            <Loader2 size={13} className="rotating" /><span>{t('app.addingFiles', { names: joinList(attachments.pending) })}</span>
-          </div>}
           <form
             className={`composer${!canType ? " composer-inactive" : ""}${attachments.dragging ? " composer-drop" : ""}`}
             data-drop-hint={workspace?.kind === "ssh" ? t('app.dropUpload') : t('app.dropReference')}
@@ -1677,6 +1675,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
               if (!uploading) void send();
             }}
           >
+            {attachments.strip}
             <textarea
               ref={inputRef}
               aria-label={t('app.messageLabel')}
@@ -1692,7 +1691,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
               })}
               {...completion.inputProps}
               onPaste={attachments.onPaste}
-              value={draft}
+              value={attachments.text}
               disabled={!canType}
               rows={1}
               onKeyDown={(event) => {

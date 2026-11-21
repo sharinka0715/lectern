@@ -96,7 +96,6 @@ export const app = {
   finishFork: ['完成分叉', 'Finish fork'],
   savedOnMachine: ['这段会话已保存在原机器上。', 'This conversation is saved on its machine.'],
   resume: ['续接会话', 'Resume'],
-  addingFiles: ['正在添加 {names}…', 'Adding {names}…'],
   dropUpload: ['松开以上传到 SSH 机器并引用', 'Drop to upload to the SSH machine and reference it'],
   dropReference: ['松开以引用文件', 'Drop to reference the file'],
   messageLabel: ['发送给 Claude 的消息', 'Message to Claude'],

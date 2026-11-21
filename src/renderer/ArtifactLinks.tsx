@@ -118,8 +118,23 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, onOpen, i
     urlTransform={url => artifactPath(url, true) ? url : defaultUrlTransform(url)}>{text}</Markdown>;
 });
 
-/** The user's prompt stays selectable verbatim, including angle brackets, commands and Markdown syntax. */
-export function LinkedUserText({ text, onOpen }: { text: string; onOpen: OpenPath }) {
+/** The user's prompt stays selectable verbatim, including angle brackets, commands and Markdown syntax.
+ * `chips` replace the attachment mentions they cover (positions in `text`). */
+export function LinkedUserText({ text, onOpen, chips = [] }: { text: string; onOpen: OpenPath; chips?: { start: number; end: number; node: ReactNode }[] }) {
+  if (!chips.length) return linkedPrompt(text, onOpen);
+  const nodes: ReactNode[] = [];
+  let end = 0;
+  for (const chip of chips) {
+    if (chip.start < end) continue;
+    if (end < chip.start) nodes.push(<Fragment key={`text:${end}`}>{linkedPrompt(text.slice(end, chip.start), onOpen)}</Fragment>);
+    nodes.push(<Fragment key={`chip:${chip.start}`}>{chip.node}</Fragment>);
+    end = chip.end;
+  }
+  if (end < text.length) nodes.push(<Fragment key={`text:${end}`}>{linkedPrompt(text.slice(end), onOpen)}</Fragment>);
+  return nodes;
+}
+
+function linkedPrompt(text: string, onOpen: OpenPath) {
   const refs: PathReference[] = [];
   let end = 0;
   function plain(until: number) {

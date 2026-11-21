@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // A deterministic offline TUI fixture. It uses a real PTY and real append-only JSONL.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 const args = process.argv.slice(2);
@@ -134,6 +134,13 @@ async function answer(text) {
   const token = ++generation;
   history.push({ role: 'user', text });
   append(record('user', [{ type: 'text', text }]));
+  // Like Claude Code, every @-mentioned file that exists becomes an attachment row after the prompt.
+  for (const match of text.matchAll(/(^|\s)@(?:"([^"\n]+)"|([^\s"]+))/g)) {
+    const filename = path.resolve(cwd, match[2] ?? match[3]);
+    if (!statSync(filename, { throwIfNoEntry: false })?.isFile()) continue;
+    append({ type: 'attachment', uuid: randomUUID(), sessionId: id, cwd, timestamp: new Date().toISOString(),
+      attachment: { type: 'file', filename, displayPath: path.relative(cwd, filename) } });
+  }
   const response = /hello|你好/i.test(text)
     ? '你好！这是运行在真实 tmux 中的离线模拟会话。\n\n回复先从终端画面逐段出现，然后由 JSONL 正文在原气泡内完成对齐。中文与 emoji 🧭 都会完整保留。\n\n你可以关闭窗口再回来，继续这个会话。'
     : `已收到你的消息：${text}\n\n这段回复正通过 tmux 抓屏显示。模型请求、登录状态和会话文件都由目标机器上的 Claude Code 管理。\n\n**落盘后**，正文会在同一个气泡内补全，不会追加第二份回复。\n\n\`\`\`bash\ntmux capture-pane -p -J\n\`\`\``;

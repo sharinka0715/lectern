@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attachmentName, uploadAttachment } from '../src/backend/attachment-upload';
 import { Transport } from '../src/backend/transport';
-import { appendMentions, insertMentions, mentionFor, pasteAttaches } from '../src/shared/attachments';
+import { addDraftFiles, attachmentKind, findMentions, isUploadedAttachment, joinDraft, mentionFor, messageAttachmentLayout, pasteAttaches, samePath, splitDraft } from '../src/shared/attachments';
 import type { Workspace } from '../src/shared/types';
 
 test('a path becomes an @-mention, quoted when it has spaces or symbols', () => {
@@ -13,12 +13,61 @@ test('a path becomes an @-mention, quoted when it has spaces or symbols', () => 
   assert.equal(mentionFor('/Users/me/My Files/report (1).pdf'), '@"/Users/me/My Files/report (1).pdf"');
 });
 
-test('mentions go where the caret is, separated from the words around them', () => {
-  assert.deepEqual(insertMentions('', 0, 0, ['/a.png']), { text: '@/a.png ', caret: 8 });
-  assert.deepEqual(insertMentions('看看这张图', 5, 5, ['/a.png', '/b c.txt']), { text: '看看这张图 @/a.png @"/b c.txt" ', caret: 26 });
-  // Replaces a selection; existing whitespace after the caret is kept, not doubled.
-  assert.deepEqual(insertMentions('比较 XX 和', 3, 5, ['/a.png']), { text: '比较 @/a.png 和', caret: 10 });
-  assert.equal(appendMentions('先说明', ['/a.png']), '先说明 @/a.png ');
+test('the draft keeps attached files as mentions after the text, exactly what is sent', () => {
+  const attached = (path: string) => path.startsWith('/up/');
+  assert.equal(joinDraft('看看这张图', ['/up/a.png', '/up/b c.txt']), '看看这张图 @/up/a.png @"/up/b c.txt" ');
+  assert.equal(joinDraft('', ['/up/a.png']), '@/up/a.png ');
+  assert.equal(joinDraft('只有文字', []), '只有文字');
+  // The input box shows the text alone, whatever it ends with; the files come back in order.
+  for (const text of ['', '看看', '看看 ', '第一行\n', '@src/app.ts 和 @other', '  ']) {
+    for (const files of [[], ['/up/a.png'], ['/up/a.png', '/up/b c.txt']]) {
+      assert.deepEqual(splitDraft(joinDraft(text, files), attached), { text, files }, JSON.stringify({ text, files }));
+    }
+  }
+  // Mentions typed elsewhere (a quote appended after the files, an older draft) still become files, each once.
+  assert.deepEqual(splitDraft('说明 @/up/a.png\n\n> 引用\n\n', attached), { text: '说明\n\n> 引用\n\n', files: ['/up/a.png'] });
+  assert.deepEqual(splitDraft('@/up/a.png 先看 @/up/a.png 再说', attached), { text: '先看 再说', files: ['/up/a.png'] });
+  assert.deepEqual(splitDraft('读 @src/app.ts', attached), { text: '读 @src/app.ts', files: [] });
+  assert.equal(addDraftFiles('先说明 @/up/a.png ', ['/up/a.png', '/up/b.png'], attached), '先说明 @/up/a.png @/up/b.png ');
+});
+
+test('mentions are found as Claude Code reads them: at the start or after whitespace, quoted when needed', () => {
+  assert.deepEqual(findMentions('看 @/a/b.png 和 @"/c d/e.txt"，邮件 dev@example.com'), [
+    { start: 2, end: 11, path: '/a/b.png' }, { start: 14, end: 27, path: '/c d/e.txt' }]);
+  assert.equal(isUploadedAttachment('/tmp/lectern-attachments-501/aB3dE6gH/image.png'), true);
+  assert.equal(isUploadedAttachment('/home/dev/lectern-attachments-501/image.png'), false);
+  assert.ok(samePath('/home/dev/project/src/a.png', 'src/a.png'));
+  assert.ok(samePath('/home/dev/project/src/a.png', './src/a.png'));
+  assert.ok(samePath('/private/var/folders/zz/T/x.png', '/var/folders/zz/T/x.png'));
+  assert.ok(samePath('/home/dev/a.png', '~/a.png'));
+  assert.ok(!samePath('/home/dev/project/xsrc/a.png', 'src/a.png'));
+  assert.deepEqual(['shot.PNG', 'paper.pdf', 'main.ts', 'notes.md', 'data.csv', 'deck.pptx', 'a.tar.gz', 'clip.mov', 'song.mp3', 'src/', 'blob'].map(attachmentKind),
+    ['image', 'pdf', 'code', 'text', 'sheet', 'slides', 'archive', 'video', 'audio', 'folder', 'file']);
+});
+
+test('a user message shows each attachment once: trailing mentions become cards, mentions inside the text chips', () => {
+  const shot = '/tmp/lectern-attachments-0/aB3dE6gH/image.png', notes = '/home/dev/project/notes.txt';
+  const files = [{ id: 'f1', name: 'image.png', path: shot, image: true as const }, { id: 'f2', name: 'notes.txt', path: notes },
+    { id: 'f3', name: 'pasted.png', image: true as const }, { id: 'f4', name: 'report.pdf' }];
+  const none = () => false;
+  // As the composer sends it: the files after the text leave it and become cards; embedded images keep their place.
+  let layout = messageAttachmentLayout(`看看这两个\n @${shot} @notes.txt `, files, none);
+  assert.equal(layout.text, '看看这两个');
+  assert.deepEqual(layout.chips, []);
+  assert.deepEqual(layout.cards.map(card => card.key), ['f1', 'f2', 'f4']);
+  // Named inside a sentence: a chip there, and no second card for the same file.
+  layout = messageAttachmentLayout(`界面没兼容： @${shot} ，只能在终端操作。`, files.slice(0, 1), none);
+  assert.equal(layout.text, `界面没兼容： @${shot} ，只能在终端操作。`);
+  assert.deepEqual(layout.chips.map(chip => [chip.start, chip.attachment?.id]), [[7, 'f1']]);
+  assert.deepEqual(layout.cards, []);
+  // Before the transcript records the files (a message being sent), known paths count too.
+  layout = messageAttachmentLayout(`看图 @${shot} `, [], isUploadedAttachment);
+  assert.deepEqual([layout.text, layout.cards], ['看图', [{ key: 'path:' + shot, path: shot, attachment: undefined }]]);
+  // Other mentions are ordinary text, and a message with no attachment is unchanged.
+  layout = messageAttachmentLayout('读一下 @src/app.ts ', files.slice(0, 1), none);
+  assert.deepEqual([layout.text, layout.chips.length, layout.cards.map(card => card.key)], ['读一下 @src/app.ts ', 0, ['f1']]);
+  // Only files: no text left.
+  assert.equal(messageAttachmentLayout(`@${shot}`, files.slice(0, 1), none).text, '');
 });
 
 test('copied cells with a picture of themselves paste as text', () => {

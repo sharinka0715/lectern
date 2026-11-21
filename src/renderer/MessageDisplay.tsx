@@ -7,6 +7,9 @@ import { messageMenu, toolMenu } from "./message-menus";
 import { ArtifactMarkdown, FileLink, LinkedToolText, LinkedUserText } from "./ArtifactLinks";
 import { pathBasename } from "./artifact-paths";
 import { AttachmentImage } from './ChatImage';
+import { AttachmentChipView, MessageAttachmentCards } from './AttachmentCards';
+import { isAttachedPath } from './attachment-registry';
+import { messageAttachmentLayout } from '../shared/attachments';
 import { activityExcerpt, replyParts, summarizeActivities, toolDisplayState, type Activity, type LineChanges, type ToolActivity } from './reply-activities';
 import './reply-activities.css';
 import { EditDiff } from "./EditDiff";
@@ -141,16 +144,28 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   const compact = replyDetail === 'compact';
   // Activity verbs and summaries are written in the current language.
   const locale = useLocale();
-  const parts = useMemo(() => replyParts(message, compact), [message, compact, locale]);
+  // A user message shows each attached file once: cards above the text, chips for files named inside it.
+  const layout = useMemo(() => message.role === 'user' ? messageAttachmentLayout(message.text, message.attachments ?? [], isAttachedPath) : undefined,
+    [message.role, message.text, message.attachments]);
+  const shown = useMemo(() => layout ? { ...message, text: layout.text, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
+    [message, layout]);
+  const parts = useMemo(() => replyParts(shown, compact), [shown, compact, locale]);
   if (!parts.length && message.status === 'streaming') return <div className="markdown">{t('chat.waitingClaude')}</div>;
-  return parts.map(part => {
+  let offset = 0;
+  const content = parts.map(part => {
     if (part.kind === 'image') return <AttachmentImage key={part.key} attachment={part.attachment} onOpen={onOpenAttachment} />;
-    if (part.kind === 'text') return message.role === 'user'
-      ? <div key={part.key} className="user-text"><LinkedUserText text={part.text} onOpen={onOpenPath} /></div>
-      : <div key={part.key} className="markdown"><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></div>;
+    if (part.kind === 'text' && layout) {
+      const start = offset, end = offset += part.text.length;
+      const chips = layout.chips.filter(chip => chip.start >= start && chip.end <= end).map(chip => ({ start: chip.start - start, end: chip.end - start,
+        node: <AttachmentChipView chip={chip} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} /> }));
+      return <div key={part.key} className="user-text"><LinkedUserText text={part.text} chips={chips} onOpen={onOpenPath} /></div>;
+    }
+    if (part.kind === 'text') return <div key={part.key} className="markdown"><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></div>;
     return part.rows.length === 1 ? <ActivityRow key={part.key} row={part.rows[0]} compact={compact} onOpenPath={onOpenPath} />
       : <ActivityGroup key={part.key} rows={part.rows} onOpenPath={onOpenPath} />;
   });
+  if (!layout?.cards.length) return content;
+  return <><MessageAttachmentCards cards={layout.cards} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />{content}</>;
 }
 
 export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachment, onRewind, onQuote }: ReplyProps & {
@@ -160,7 +175,8 @@ export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachm
   const [copied, setCopied] = useState(false);
   const scope = useArtifactScope();
   const isUser = message.role === "user";
-  const files = message.attachments?.filter(ref => !ref.image);
+  // A user message's files are cards above its text (ReplyContent).
+  const files = isUser ? undefined : message.attachments?.filter(ref => !ref.image);
   async function copy() {
     try {
       await window.desktop.copyText(message.text);

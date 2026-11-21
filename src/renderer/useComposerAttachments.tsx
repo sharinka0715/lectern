@@ -1,10 +1,15 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type RefObject } from 'react';
 import { joinList, t } from '../shared/i18n';
 import type { Workspace } from '../shared/types';
-import { appendMentions, insertMentions, maxAttachmentBytes, pasteAttaches } from '../shared/attachments';
+import { addDraftFiles, joinDraft, maxAttachmentBytes, pasteAttaches, splitDraft } from '../shared/attachments';
+import { ComposerAttachments, type UploadCard } from './AttachmentCards';
+import { isAttachedPath, localThumbnail, rememberAttachment } from './attachment-registry';
+import { pathBasename } from './artifact-paths';
 
 interface Options {
   workspace?: Workspace; sessionId: string; enabled: boolean;
+  /** The whole draft, attachments included as @-mentions after the text (what is sent). */
+  draft: string;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   setDraft(update: (value: string) => string): void;
   /** Whether this chat (folder and session, "" for a new chat) is still on screen. */
@@ -13,7 +18,7 @@ interface Options {
   stash(workspaceId: string, sessionId: string, update: (value: string) => string): void;
   onError(message: string): void;
 }
-interface Upload { id: number; workspaceId: string; sessionId: string; names: string[] }
+interface Upload { id: number; workspaceId: string; sessionId: string; files: UploadCard[] }
 interface Picked { file: File; directory?: boolean }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -33,6 +38,9 @@ const carriesFiles = (event: DragEvent) => event.dataTransfer.types.includes('Fi
  * Files pasted into or dropped onto a chat become @-mentions. Claude Code on
  * this computer gets the file's own path; on an SSH machine the
  * file is first copied into that machine's temporary directory.
+ * The input box shows them as cards above the text (`strip`) and the text alone
+ * (`text`); the draft keeps them as mentions after the text, so sending,
+ * restoring and stashing a draft need nothing else.
  */
 export function useComposerAttachments(options: Options) {
   const [uploads, setUploads] = useState<Upload[]>([]);
@@ -41,44 +49,52 @@ export function useComposerAttachments(options: Options) {
   latest.current = options;
   const next = useRef(0);
   const chooser = useRef<HTMLInputElement>(null);
-  const pending = uploads.filter(u => u.workspaceId === options.workspace?.id && u.sessionId === options.sessionId).flatMap(u => u.names);
+  const shown = uploads.filter(u => u.workspaceId === options.workspace?.id && u.sessionId === options.sessionId).flatMap(u => u.files);
+  const pending = shown.map(file => file.name);
+  const parts = splitDraft(options.draft, isAttachedPath);
 
   async function attach(items: Picked[]) {
     const { workspace, sessionId } = latest.current;
     if (!workspace || !items.length) return;
-    const direct = workspace.kind === 'local';
     const id = ++next.current;
-    setUploads(list => [...list, { id, workspaceId: workspace.id, sessionId, names: items.map(i => i.file.name || t('composer.clipboardImage')) }]);
-    const mentions: string[] = [], failed: string[] = [];
+    const entries = items.map(({ file, directory }) => ({ file, directory, name: file.name || 'image.png',
+      local: workspace.kind === 'local' ? window.desktop.pathForFile(file) : '' }));
+    // Files from disk on this computer are referenced where they are; the rest are uploaded, shown as cards meanwhile.
+    const waiting = entries.filter(entry => !entry.local);
+    const card = (index: number) => `${id}:${index}`;
+    if (waiting.length) setUploads(list => [...list, { id, workspaceId: workspace.id, sessionId,
+      files: waiting.map(entry => ({ key: card(entries.indexOf(entry)), name: entry.name })) }]);
+    const thumbnails = await Promise.all(entries.map(entry => entry.directory ? undefined : localThumbnail(entry.file)));
+    if (waiting.length) setUploads(list => list.map(u => u.id !== id ? u
+      : { ...u, files: u.files.map(file => ({ ...file, thumbnail: thumbnails[entries.findIndex((_, i) => card(i) === file.key)] })) }));
+    const paths: string[] = [], failed: string[] = [], kept = new Set<number>();
     try {
-      for (const { file, directory } of items) {
-        const name = file.name || 'image.png';
-        const local = window.desktop.pathForFile(file);
-        if (direct && local) { mentions.push(local); continue; }
-        if (directory) { failed.push(t('composer.folderNotUploadable', { name })); continue; }
-        if (file.size > maxAttachmentBytes) { failed.push(t('composer.tooLarge', { name })); continue; }
-        try { mentions.push(await window.desktop.uploadAttachment(workspace.id, name, new Uint8Array(await file.arrayBuffer()))); }
-        catch (error) { failed.push(t('composer.failedWith', { name, error: message(error) })); }
+      for (const [index, { file, directory, name, local }] of entries.entries()) {
+        let path = local || undefined;
+        if (!path && directory) failed.push(t('composer.folderNotUploadable', { name }));
+        else if (!path && file.size > maxAttachmentBytes) failed.push(t('composer.tooLarge', { name }));
+        else if (!path) {
+          try { path = await window.desktop.uploadAttachment(workspace.id, name, new Uint8Array(await file.arrayBuffer())); }
+          catch (error) { failed.push(t('composer.failedWith', { name, error: message(error) })); }
+        }
+        if (!path) continue;
+        // A folder's card name ends with a slash (and gets the folder icon).
+        rememberAttachment(path, { name: pathBasename(path) + (directory ? '/' : ''), thumbnail: thumbnails[index] });
+        kept.add(index);
+        paths.push(path);
       }
     } finally {
       setUploads(list => list.filter(u => u.id !== id));
+      thumbnails.forEach((url, index) => { if (url && !kept.has(index)) URL.revokeObjectURL(url); });
     }
     const now = latest.current;
-    if (mentions.length && now.showing(workspace.id, sessionId)) {
-      const input = now.inputRef.current;
-      let caret: number | undefined;
-      now.setDraft(value => {
-        const [start, end] = input && input.value === value ? [input.selectionStart, input.selectionEnd] : [value.length, value.length];
-        const result = insertMentions(value, start, end, mentions);
-        caret = result.caret;
-        return result.text;
-      });
+    if (paths.length && now.showing(workspace.id, sessionId)) {
+      now.setDraft(value => addDraftFiles(value, paths, isAttachedPath));
       requestAnimationFrame(() => {
-        if (!input?.isConnected || caret === undefined || input.disabled) return;
-        input.focus({ preventScroll: true });
-        input.setSelectionRange(caret, caret);
+        const input = now.inputRef.current;
+        if (input?.isConnected && !input.disabled && document.activeElement !== input) input.focus({ preventScroll: true });
       });
-    } else if (mentions.length) now.stash(workspace.id, sessionId, value => appendMentions(value, mentions));
+    } else if (paths.length) now.stash(workspace.id, sessionId, value => addDraftFiles(value, paths, isAttachedPath));
     if (failed.length) now.onError(t('composer.addFailed', { names: joinList(failed) }));
   }
 
@@ -125,5 +141,19 @@ export function useComposerAttachments(options: Options) {
       if (files.length && latest.current.enabled) void attach(files.map(file => ({ file })));
     }} />;
 
-  return { pending, dragging: dragging && options.enabled, onPaste, dropTarget, choose, fileInput };
+  /** Text typed in the input box; the attached files stay after it. */
+  function setText(text: string) {
+    latest.current.setDraft(value => joinDraft(text, splitDraft(value, isAttachedPath).files));
+  }
+  function remove(path: string) {
+    const now = latest.current;
+    now.setDraft(value => {
+      const draft = splitDraft(value, isAttachedPath);
+      return joinDraft(draft.text, draft.files.filter(file => file !== path));
+    });
+    now.inputRef.current?.focus({ preventScroll: true });
+  }
+  const strip = <ComposerAttachments files={parts.files} uploads={shown} onRemove={remove} />;
+
+  return { pending, text: parts.text, setText, strip, dragging: dragging && options.enabled, onPaste, dropTarget, choose, fileInput };
 }

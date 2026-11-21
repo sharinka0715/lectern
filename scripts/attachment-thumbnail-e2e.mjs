@@ -146,8 +146,13 @@ try {
   assert.ok(hidden.length >= 3, 'the list scrolls: ' + JSON.stringify(before));
   assert.ok(hidden.every(row => row.state === 'icon' && row.icon && !row.img), 'entries out of view keep their icon: ' + JSON.stringify(hidden));
   const requests = await ipcStarts(page, ['previewMessageAttachmentThumbnail', 'previewMessageAttachment', 'previewArtifact', 'previewInlineImage']);
-  // The chat's own thumbnail of the embedded image uses the same call once.
-  assert.ok(requests.previewMessageAttachmentThumbnail <= reachable.length + 1, JSON.stringify({ requests, reachable: reachable.length }));
+  // The chat's own thumbnails use the same call once each: the embedded image in the text, the attached ones as cards above it.
+  const chatThumbs = await page.evaluate(() => {
+    const view = document.querySelector('.conversation-scroll').getBoundingClientRect();
+    return [...document.querySelectorAll('.message-user .attachment-card-image, .message-user .chat-image')]
+      .filter(element => { const box = element.getBoundingClientRect(); return box.bottom > view.top && box.top < view.bottom; }).length;
+  });
+  assert.ok(requests.previewMessageAttachmentThumbnail <= reachable.length + chatThumbs, JSON.stringify({ requests, reachable: reachable.length, chatThumbs }));
   assert.deepEqual([requests.previewMessageAttachment, requests.previewArtifact, requests.previewInlineImage], [0, 0, 0], 'no original is read');
 
   const slot = name => entries.filter({ hasText: name }).locator('.activity-float-thumb');
@@ -174,6 +179,19 @@ try {
     console.log(`${name}：缩略图 ${style.natural.join('×')}，显示为 ${style.width}×${style.height} 的正方形，采样 ${JSON.stringify(seen)}`);
   }
   await panel.screenshot({ path: path.join(results, 'activity-attachments.png') });
+
+  // The message shows the same files once each, as cards above its text: images as their thumbnail
+  // (a placeholder without a converter), the text file with its icon; the embedded image keeps its place.
+  const bubble = page.locator('.message-user').filter({ hasText: '看看这些附件' });
+  const cards = bubble.locator('.attachment-cards [data-attachment-card]');
+  assert.equal(await cards.count(), total - 1);
+  assert.deepEqual(await cards.evaluateAll(nodes => nodes.filter(node => node.dataset.attachmentCard === 'file').map(node => node.textContent)), ['notes.txtTXT']);
+  assert.equal(await bubble.locator('[data-chat-image="wide.png"]').count(), 1);
+  const tallCard = bubble.locator('.attachment-card-image').filter({ has: page.getByRole('button', { name: '放大 tall.png' }) });
+  if (fileThumbnails) await tallCard.locator('img').waitFor();
+  else assert.equal(await tallCard.locator('.attachment-card-placeholder').innerText(), 'PNG');
+  assert.equal(await bubble.getByText(/^查看 /).count(), 0, 'no separate View links');
+  await bubble.locator('.message-content').screenshot({ path: path.join(results, 'bubble-cards.png') });
 
   // Scrolling the list loads the entries that come into view.
   await page.evaluate(() => {

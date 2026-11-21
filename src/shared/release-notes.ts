@@ -36,8 +36,17 @@ export function isLaterVersion(a: string, b: string): boolean {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.1',
-    features: [],
+    features: [
+      ['粘贴、拖入或选择的文件在输入框里显示为附件卡片，可单独移除，不再往文字里插入长路径。',
+        'Pasted, dropped or chosen files show as removable attachment cards in the input box instead of long paths in the text.'],
+      ['发出的消息里，图片附件显示为可放大的缩略图，其他文件显示为带类型图标的文件卡片。',
+        'In sent messages, attached images show as thumbnails that enlarge and other files as cards with a type icon.'],
+      ['正文中提到的附件显示为紧凑的文件名标签，悬停可见完整路径。',
+        'Attachments named in a message show as compact name chips, with the full path on hover.'],
+    ],
     fixes: [
+      ['粘贴的图片在消息里既是长路径、又在底部重复显示「查看 文件名」，现在只显示一次。',
+        'A pasted image showed in its message as a long path and again as "View name" below it; it now shows once.'],
       ['点击消息里的网址链接没有反应，现在会在系统浏览器中打开。',
         'Clicking a web link in a message did nothing; it now opens in the system browser.'],
       ['多题问答有题目折行、或只答了部分题目（Claude Code 2.1.329 起）时，最后的「核对回答」页没有卡片，现在可在卡片里提交、取消或返回改答。',

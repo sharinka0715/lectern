@@ -728,8 +728,6 @@ code, pre, kbd { font-family: var(--font-mono); }
    right side stays clear of the scrollbar). */
 .composer-area::before { content: ""; position: absolute; inset: 0 0 0 -8px; z-index: -1; background: inherit; }
 /* Files pasted or dropped while they are copied to the folder's machine. */
-.composer-uploads { display: flex; align-items: center; gap: 6px; margin: 0 4px 6px; color: var(--secondary-text); font-size: var(--text-label); min-width: 0; }
-.composer-uploads span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer.composer-drop { border-color: var(--accent); border-style: dashed; }
 .composer.composer-drop::after {
   content: attr(data-drop-hint); position: absolute; inset: 0; z-index: 3; display: grid; place-items: center;

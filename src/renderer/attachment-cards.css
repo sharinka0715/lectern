@@ -1,0 +1,75 @@
+/* Attachments as cards: above a user message's text and at the top of the input box.
+   An image is its own thumbnail, center-cropped to a square; any other file is a
+   tinted icon for its kind, the name and the kind. Both share one height. */
+.attachment-cards, .composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.attachment-cards { margin: 1px 0 9px; }
+.attachment-cards:last-child { margin-bottom: 1px; }
+.attachment-card {
+  --card-size: 56px;
+  position: relative; display: inline-flex; flex: none; align-items: center; box-sizing: border-box;
+  height: var(--card-size); min-width: 0; max-width: 100%; padding: 0; vertical-align: top;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised);
+  color: var(--text); font: inherit; font-size: var(--text-label); line-height: 1.3; text-align: left;
+}
+.attachment-card-image { width: var(--card-size); background: var(--surface-muted); }
+/* Out of flow, so a tall image cannot stretch the square: cover crops the long side. */
+.attachment-card-image img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 9px; object-fit: cover; object-position: center; }
+.attachment-card-image[data-thumbnail="image"] { border-color: var(--line); }
+.attachment-card-open {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 0; border-radius: 9px;
+  background: transparent; color: var(--muted); cursor: zoom-in;
+}
+.attachment-card-placeholder { display: grid; justify-items: center; gap: 3px; font-size: var(--text-caption); font-weight: 600; letter-spacing: .03em; }
+.attachment-card-file { gap: 10px; width: max-content; max-width: min(100%, 240px); padding: 0 12px 0 9px; }
+button.attachment-card { cursor: pointer; }
+button.attachment-card, .attachment-card-open { transition: background-color .12s ease, box-shadow .12s ease; }
+button.attachment-card:hover { background: var(--hover); }
+.attachment-card-open:hover, button.attachment-card:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+.attachment-card-open:focus-visible, button.attachment-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.attachment-card-tile {
+  --kind: var(--secondary-text);
+  display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 8px;
+  background: color-mix(in srgb, var(--kind) 13%, transparent); color: var(--kind);
+}
+.attachment-card-tile:is([data-kind="code"], [data-kind="image"]) { --kind: var(--accent); }
+.attachment-card-tile[data-kind="pdf"] { --kind: var(--danger); }
+.attachment-card-tile[data-kind="sheet"] { --kind: var(--success); }
+.attachment-card-tile:is([data-kind="slides"], [data-kind="archive"]) { --kind: var(--warning); }
+.attachment-card-tile:is([data-kind="audio"], [data-kind="video"]) { --kind: var(--code-type); }
+.attachment-card-tile[data-kind="folder"] { --kind: var(--action); }
+.attachment-card-text { display: grid; min-width: 0; }
+.attachment-card-name, .attachment-card-kind { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.attachment-card-name { font-weight: 500; }
+.attachment-card-kind { color: var(--muted); font-size: var(--text-caption); }
+
+/* In the input box: a little smaller, each with a remove badge on its corner. */
+.composer-attachments { margin: 2px 8px 6px 0; }
+.composer-attachments .attachment-card { --card-size: 52px; }
+.attachment-card-remove {
+  position: absolute; top: -7px; right: -7px; z-index: 1; display: grid; place-items: center;
+  width: 20px; height: 20px; padding: 0; border: 2px solid var(--surface-raised); border-radius: 50%;
+  background: var(--secondary-text); color: var(--surface-raised); opacity: 0; transition: opacity .12s ease, background-color .12s ease;
+}
+.attachment-card:hover .attachment-card-remove, .attachment-card:focus-within .attachment-card-remove { opacity: 1; }
+.attachment-card-remove:hover { background: var(--text); }
+@media (hover: none) { .attachment-card-remove { opacity: 1; } }
+.attachment-card[data-state="uploading"] .attachment-card-tile { --kind: var(--muted); }
+.attachment-card-busy {
+  position: absolute; inset: 0; display: grid; place-items: center; border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-raised) 55%, transparent); color: var(--text);
+}
+
+/* An attached file named inside the text: a chip with its thumbnail or icon and its name. */
+.attachment-chip-frame { display: inline; }
+.attachment-chip {
+  display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box; max-width: min(100%, 18em);
+  height: 1.45em; margin: 0 1px; padding: 0 7px 0 3px; vertical-align: -.32em;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent); border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised)); color: var(--accent);
+  font: inherit; font-size: .9em; line-height: 1; white-space: nowrap; cursor: pointer;
+}
+.attachment-chip:hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised)); }
+.attachment-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.attachment-chip-icon { position: relative; display: grid; place-items: center; flex: none; width: 1.15em; height: 1.15em; overflow: hidden; border-radius: 3px; }
+.attachment-chip-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.attachment-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
