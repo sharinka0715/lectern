@@ -1,7 +1,7 @@
 {
   "name": "lectern",
   "productName": "Lectern",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A desktop lectern for terminal coding agents' TUI sessions managed through tmux, locally or over SSH (currently Claude Code)",
   "repository": {
     "type": "git",
