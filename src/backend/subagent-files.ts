@@ -22,17 +22,17 @@ export function subagentListScript(projectDirs: string[], sessionId: string): st
   if (!SESSION_UUID.test(sessionId)) throw new Error('Invalid subagent session');
   const dirs = [...new Set(projectDirs)].map(dir => q(`${dir}/${sessionId}/subagents`));
   return `lectern_count=0
-case "$(uname -s)" in Darwin|*BSD) lectern_bsd=1;; *) lectern_bsd=;; esac
+case "$(uname -s)" in (Darwin|*BSD) lectern_bsd=1;; (*) lectern_bsd=;; esac
 for lectern_s in ${dirs.join(' ')}; do
   [ -d "$lectern_s" ] && [ ! -L "$lectern_s" ] && [ ! -L "\${lectern_s%/*}" ] || continue
   for lectern_f in "$lectern_s"/agent-*.jsonl; do
     [ -f "$lectern_f" ] && [ ! -L "$lectern_f" ] || continue
     lectern_id=\${lectern_f##*/agent-}; lectern_id=\${lectern_id%.jsonl}
-    case "$lectern_id" in ''|*[!A-Za-z0-9_-]*) continue;; esac
+    case "$lectern_id" in (''|*[!A-Za-z0-9_-]*) continue;; esac
     [ "$lectern_count" -lt ${LIST_LIMIT} ] || break 2
     lectern_count=$((lectern_count + 1))
     if [ -n "$lectern_bsd" ]; then lectern_m=$(stat -f '%z:%m' "$lectern_f" 2>/dev/null); else lectern_m=$(stat -c '%s:%Y' "$lectern_f" 2>/dev/null); fi
-    case "$lectern_m" in ''|*[!0-9:]*) continue;; esac
+    case "$lectern_m" in (''|*[!0-9:]*) continue;; esac
     printf '%s\\0%s\\0' "$lectern_id" "$lectern_m"
     lectern_meta="$lectern_s/agent-$lectern_id.meta.json"
     if [ -f "$lectern_meta" ] && [ ! -L "$lectern_meta" ]; then head -c 4096 "$lectern_meta" | base64 | tr -d '\\n'; fi
@@ -125,21 +125,21 @@ ${visit(i => `printf '@${i}\\0%s\\0%s\\0' "$lectern_m${i}" "$lectern_j${i}"
 (cd "$lectern_sd" 2>/dev/null || exit 0
 lectern_read=; lectern_heads=
 while read -r lectern_n lectern_z lectern_t lectern_f; do
-  case "$lectern_n" in agent-*.meta.json) ;; *) continue;; esac
+  case "$lectern_n" in (agent-*.meta.json) ;; (*) continue;; esac
   lectern_id=\${lectern_n#agent-}; lectern_id=\${lectern_id%.meta.json}
-  case "$lectern_id" in ''|*[!A-Za-z0-9_-]*) continue;; esac
-  case "$lectern_z:$lectern_t" in *[!0-9:]*|:*|*:) continue;; esac
+  case "$lectern_id" in (''|*[!A-Za-z0-9_-]*) continue;; esac
+  case "$lectern_z:$lectern_t" in (*[!0-9:]*|:*|*:) continue;; esac
   [ "$lectern_z" -le 16384 ] || continue
-  case "$lectern_known" in *" $lectern_id:$lectern_z:$lectern_t "*) continue;; esac
+  case "$lectern_known" in (*" $lectern_id:$lectern_z:$lectern_t "*) continue;; esac
   [ -f "$lectern_n" ] && [ ! -L "$lectern_n" ] && lectern_read="$lectern_read $lectern_n"
 done <<LECTERN_META
 $lectern_m${i}
 LECTERN_META
 while read -r lectern_n lectern_f; do
-  case "$lectern_n" in agent-*.jsonl) ;; *) continue;; esac
+  case "$lectern_n" in (agent-*.jsonl) ;; (*) continue;; esac
   lectern_id=\${lectern_n#agent-}; lectern_id=\${lectern_id%.jsonl}
-  case "$lectern_id" in ''|*[!A-Za-z0-9_-]*) continue;; esac
-  case "$lectern_started" in *" $lectern_id "*) continue;; esac
+  case "$lectern_id" in (''|*[!A-Za-z0-9_-]*) continue;; esac
+  case "$lectern_started" in (*" $lectern_id "*) continue;; esac
   [ -f "$lectern_n" ] && [ ! -L "$lectern_n" ] && lectern_heads="$lectern_heads $lectern_n"
 done <<LECTERN_JSONL
 $lectern_j${i}

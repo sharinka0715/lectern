@@ -451,7 +451,7 @@ printf '%s\\0' "$PWD"
 count=0
 for item in ./* ./.*; do
   name=\${item#./}
-  case "$name" in .|..|*[[:cntrl:]]*|*'${SEP}'*) continue;; esac
+  case "$name" in (.|..|*[[:cntrl:]]*|*'${SEP}'*) continue;; esac
   [ -d "$item" ] && [ -r "$item" ] && [ -x "$item" ] || continue
   count=$((count + 1))
   [ "$count" -gt ${offset} ] || continue
@@ -914,7 +914,7 @@ ${pane.presenceFingerprint ? presenceUnchangedGuard(location.claudeDir, proc, pa
 kill -TERM ${proc}
 tries=0
 while kill -0 ${proc} 2>/dev/null; do
- case "$(ps -p ${proc} -o stat= 2>/dev/null)" in *Z*) break;; esac
+ case "$(ps -p ${proc} -o stat= 2>/dev/null)" in (*Z*) break;; esac
  tries=$((tries + 1)); [ "$tries" -lt 80 ] || { echo ${q(t('backend.claudeStillExiting'))} >&2; exit 1; }
  sleep 0.1
 done
@@ -922,21 +922,21 @@ list_target() {
  if all=$(${this.tmux('list-panes', '-a', '-F', identity + '|#{pane_dead}|#{pane_current_command}')} 2>&1); then
   printf '%s\\n' "$all" | awk -F '|' -v id=${q(expectedPane)} '$1 == id'
  else
-  case "$all" in *'no server running'*|*'no sessions'*|*'No such file or directory'*) return 0;; *) echo "$all" >&2; return 1;; esac
+  case "$all" in (*'no server running'*|*'no sessions'*|*'No such file or directory'*) return 0;; (*) echo "$all" >&2; return 1;; esac
  fi
 }
 remaining=$(list_target)
 expected=${q(expected)}
 exited=${q(exited)}
 case "$remaining" in
- '') exit 0;;
- "$expected|1|"*|"$exited|1|"*|"$expected|0|sh"|"$expected|0|bash"|"$expected|0|zsh"|"$expected|0|dash"|"$expected|0|fish"|"$expected|0|ksh")
+ ('') exit 0;;
+ ("$expected|1|"*|"$exited|1|"*|"$expected|0|sh"|"$expected|0|bash"|"$expected|0|zsh"|"$expected|0|dash"|"$expected|0|fish"|"$expected|0|ksh")
    if ! error=$(${this.tmux('kill-pane', '-t', expectedPane)} 2>&1); then
      remaining=$(list_target)
      [ -z "$remaining" ] || { echo "$error" >&2; exit 1; }
    fi;;
- "$expected|"*) remaining=$(list_target); [ -z "$remaining" ] || { echo ${q(t('backend.otherForegroundProgram'))} >&2; exit 1; };;
- *) echo ${q(t('backend.closeStoppedIdentity'))} >&2; exit 1;;
+ ("$expected|"*) remaining=$(list_target); [ -z "$remaining" ] || { echo ${q(t('backend.otherForegroundProgram'))} >&2; exit 1; };;
+ (*) echo ${q(t('backend.closeStoppedIdentity'))} >&2; exit 1;;
 esac
 remaining=$(list_target)
 [ -z "$remaining" ] || { echo ${q(t('backend.paneNotClosed'))} >&2; exit 1; }`;

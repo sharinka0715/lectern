@@ -29,7 +29,7 @@ export function readActivityFiles(sessionId: string, projectDirs: string[], targ
       cd -P "./$lectern_suffix" 2>/dev/null && [ "$(pwd -P)" = "$lectern_base/$lectern_suffix" ] || exit 0
       [ -f "$lectern_file" ] && [ ! -L "$lectern_file" ] || exit 0
       lectern_meta=$(stat -f '%i:%z:%m' "$lectern_file" 2>/dev/null) || lectern_meta=$(stat -c '%i:%s:%Y' "$lectern_file" 2>/dev/null) || exit 0
-      case "$lectern_meta" in *[!0-9:]*) exit 0;; esac
+      case "$lectern_meta" in (*[!0-9:]*) exit 0;; esac
       printf '%s\\0%s\\0' "$lectern_id" "$lectern_meta"
       lectern_size=\${lectern_meta#*:}; lectern_size=\${lectern_size%:*}
       lectern_cap=4096; [ "$lectern_kind" = agent ] && lectern_cap=65536

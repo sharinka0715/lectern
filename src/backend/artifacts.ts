@@ -91,8 +91,8 @@ for item in ./.[!.]* ./..?* ./*; do
   [ -L "$item" ] && continue
   if [ -d "$item" ]; then type=directory; elif [ -f "$item" ]; then type=file; else continue; fi
   name=\${item#./}
-  case "$name" in *[[:cntrl:]]*|${shellSecretNames}) continue;; esac
-  ${target.documents ? `if [ "$type" = file ]; then case "$name" in *.[mM][dD]|*.[mM][aA][rR][kK][dD][oO][wW][nN]) ;; *) continue;; esac; fi` : ''}
+  case "$name" in (*[[:cntrl:]]*|${shellSecretNames}) continue;; esac
+  ${target.documents ? `if [ "$type" = file ]; then case "$name" in (*.[mM][dD]|*.[mM][aA][rR][kK][dD][oO][wW][nN]) ;; (*) continue;; esac; fi` : ''}
   ${target.documents === 'plans' ? '[ "$type" = file ] || continue' : ''}
   child="\${expected_dir%/}/$name"
   ${target.protectedRoots.map(root => `[ "$child" != ${q(root)} ] || continue`).join('\n  ')}
@@ -125,7 +125,7 @@ check_file() {
 check_file
 ${expectedStamp ? `[ "$fd_stamp" = ${q(expectedStamp)} ] || die ${q(t('artifacts.fileChangedReopen'))}` : ''}
 size=\${fd_stamp%%:*}
-case "$size" in ''|*[!0-9]*) die ${q(t('artifacts.cannotReadSize'))};; esac
+case "$size" in (''|*[!0-9]*) die ${q(t('artifacts.cannotReadSize'))};; esac
 ${transfer}
 check_file`;
 
@@ -222,7 +222,7 @@ $0 == "complete" { complete=1; next }
     hit = index(key, "/") ? (length(path) > length(key) && substr(path, length(path) - length(key)) == "/" key) : (name == key)
     if (hit) { if (key in seen) seen[key]=""; else seen[key]=path } } }
 END { if (complete) { print "!"; for (key in seen) { print "?" key; if (seen[key] != "") print "=" key "\\t" seen[key] } } }' |
-while IFS= read -r item; do case "$item" in =*) probe "\${item#*\t}" any || continue;; esac; printf '%s\\n' "$item"; done` : ':'}`;
+while IFS= read -r item; do case "$item" in (=*) probe "\${item#*\t}" any || continue;; esac; printf '%s\\n' "$item"; done` : ':'}`;
 }
 
 export class WorkspaceArtifacts {

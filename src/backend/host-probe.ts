@@ -20,7 +20,7 @@ export function hostProbeScript({ claude = 'claude', version = true }: { claude?
   return `lectern_field() { printf '%s=%s\\n' "$1" "$2"; }
 lectern_tool() {
  lectern_path=$(command -v "$2" 2>/dev/null) || lectern_path=
- case "$lectern_path" in /*) ;; *) lectern_path= ;; esac
+ case "$lectern_path" in (/*) ;; (*) lectern_path= ;; esac
  lectern_field "$1.path" "$lectern_path"
  if [ -n "$lectern_path" ] && [ -n "$3" ]; then
   if command -v timeout >/dev/null 2>&1; then lectern_v=$(timeout 10 "$lectern_path" "$3" </dev/null 2>/dev/null | head -n 1)

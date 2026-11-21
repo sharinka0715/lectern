@@ -30,8 +30,8 @@ export function statusLineLaunch(sessionId: string, nonce: string, tmuxVersion: 
   const command = `(
     export LC_ALL=C
     pane=\${TMUX_PANE:-}
-    case "$pane" in %*) ;; *) exit 0;; esac
-    case "\${pane#%}" in ''|*[!0-9]*) exit 0;; esac
+    case "$pane" in (%*) ;; (*) exit 0;; esac
+    case "\${pane#%}" in (''|*[!0-9]*) exit 0;; esac
     tmux set-option -p -t "$pane" ${owner} "$$" || exit 0
     sample=$(head -c ${limit + 1} | base64 | tr -d '\\r\\n')
     if [ -z "$sample" ] || [ "\${#sample}" -gt ${encodedLimit} ]; then sample=invalid; fi
@@ -55,13 +55,13 @@ export function readStatusLineSample(paneId?: string, socket?: string): string {
   return `(
   marker=$(${show} ${statusLineMarker} 2>/dev/null | head -c 256)
   nonce=\${marker##*,}
-  case "$nonce" in ''|*[!0-9a-f]*) exit 0;; esac
+  case "$nonce" in (''|*[!0-9a-f]*) exit 0;; esac
   [ "\${#nonce}" -eq 32 ] || exit 0
   launch_pid=$(printf '%s' "$marker" | awk -F, 'NF==7 && $4 ~ /^[1-9][0-9]*$/ {print $4}')
   [ -n "$launch_pid" ] || exit 0
   birth=$( ${processStart('$launch_pid')} )
   [ -n "$birth" ] || exit 0
-  case "$marker" in *,"$birth","$nonce") ;; *) exit 0;; esac
+  case "$marker" in (*,"$birth","$nonce") ;; (*) exit 0;; esac
   printf '%s,' "$nonce"
   ${show} "${samplePrefix}$nonce" 2>/dev/null | head -c ${encodedLimit + 9}
 )

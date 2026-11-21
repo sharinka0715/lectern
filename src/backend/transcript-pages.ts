@@ -33,7 +33,7 @@ function withTranscript(files: string[], body: string, missing: string) {
 for f in ${files.map(q).join(' ')}; do
  d=\${f%/*}; [ ! -L "$d" ] && [ ! -L "\${d%/*}" ] && [ -f "$f" ] && [ ! -L "$f" ] || continue
  exec 3< "$f"
- case "$(uname -s)" in Darwin|*BSD) stamp=$(stat -Lf '%i %z %.9Fm %.9Fc' /dev/fd/3);; *) stamp=$(stat -Lc '%i %s %y %z' /dev/fd/3);; esac
+ case "$(uname -s)" in (Darwin|*BSD) stamp=$(stat -Lf '%i %z %.9Fm %.9Fc' /dev/fd/3);; (*) stamp=$(stat -Lc '%i %s %y %z' /dev/fd/3);; esac
  set -- $stamp; inode=$1; size=$2; shift 2; stamp="$*"
  ${guardAt}
  ${body}

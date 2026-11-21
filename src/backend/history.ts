@@ -164,7 +164,7 @@ else
    files=$((files + 1))
    if [ -L "$f" ] || [ ! -f "$f" ]; then skipped=$((skipped + 1)); continue; fi
    id=\${f##*/}; id=\${id%.jsonl}
-   case "$id" in ????????-????-????-????-????????????) case "$id" in *[!0123456789abcdefABCDEF-]*) skipped=$((skipped + 1)); continue;; esac;; *) skipped=$((skipped + 1)); continue;; esac
+   case "$id" in (????????-????-????-????-????????????) case "$id" in (*[!0123456789abcdefABCDEF-]*) skipped=$((skipped + 1)); continue;; esac;; (*) skipped=$((skipped + 1)); continue;; esac
    printf '%s\\0' "$f"; head -c 8192 "$f" | base64; printf '\\0'; tail -c 16384 "$f" | base64; printf '\\0'
   done
  done

@@ -55,7 +55,7 @@ done
 # Use layout evidence only for old/no-registry installs (or explicitly enabled cache entries).
 for p in "$plugins"/cache/*/*/* "$plugins"/cache/* "$plugins"/synced/*; do
  [ -d "$p" ] && [ ! -f "$p/.orphaned_at" ] && { [ -d "$p/skills" ] || [ -d "$p/commands" ] || [ -f "$p/.claude-plugin/plugin.json" ]; } || continue
- case "$p" in "$plugins"/cache/*/*/*) parent=\${p%/*}; name=\${parent##*/}; market=\${parent%/*}; id="$name@\${market##*/}";; "$plugins"/synced/*) id="\${p##*/}@synced";; *) id=\${p##*/};; esac
+ case "$p" in ("$plugins"/cache/*/*/*) parent=\${p%/*}; name=\${parent##*/}; market=\${parent%/*}; id="$name@\${market##*/}";; ("$plugins"/synced/*) id="\${p##*/}@synced";; (*) id=\${p##*/};; esac
  printf 'cache\\0%s\\0%s\\0' "$id" "$p"
 done` , signal);
   const cwd = metadata.find(([t]) => t === 'cwd')?.[2];
@@ -107,24 +107,24 @@ done` , signal);
   const listing = await reader(transport, workspace, `emit() {
  [ -f "$1" ] && [ ! -L "$1" ] && [ -r "$1" ] || return 0
  hint=$(head -c 8192 < "$1" | awk ${q(nameReader)}); [ "$hint" != '!' ] || return 0
- case "$1" in SKILL.md|*/SKILL.md) ;; *) hint='';; esac
+ case "$1" in (SKILL.md|*/SKILL.md) ;; (*) hint='';; esac
  printf '%s\\0%s\\0%s\\0' "$3" "$4$2" "$hint"
 }
 scan() (
  cd -P "$1" 2>/dev/null || exit 0; base=$(pwd -P); rel=\${2#./}; leaf=\${rel##*/}; parent=\${rel%/*}
  if [ -f "$rel" ]; then
   [ "$parent" != "$rel" ] || parent=.; cd -P "./$parent" || exit 0
-  case "$(pwd -P)/" in "$base/"*) ;; *) exit 0;; esac
-  case "$3:$leaf" in skills:SKILL.md) [ ! -d "$base/skills" ] && emit "$leaf" "\${5%:}" "$4" "$5";; commands:*.md) emit "$leaf" "\${leaf%.md}" "$4" "$5";; esac; exit 0
+  case "$(pwd -P)/" in ("$base/"*) ;; (*) exit 0;; esac
+  case "$3:$leaf" in (skills:SKILL.md) [ ! -d "$base/skills" ] && emit "$leaf" "\${5%:}" "$4" "$5";; (commands:*.md) emit "$leaf" "\${leaf%.md}" "$4" "$5";; esac; exit 0
  fi
- cd -P "./$rel" 2>/dev/null || exit 0; here=$(pwd -P); case "$here/" in "$base/"*) ;; *) exit 0;; esac
+ cd -P "./$rel" 2>/dev/null || exit 0; here=$(pwd -P); case "$here/" in ("$base/"*) ;; (*) exit 0;; esac
  if [ "$3" = skills ]; then
   if [ -f SKILL.md ]; then emit SKILL.md "\${here##*/}" "$4" "$5"; else
    for d in ./*; do [ -d "$d" ] || continue; [ "$d" != ./synced ] || continue
     # skills installers often symlink project entries into .agents/skills. Stay inside that repository.
     if [ -L "$d" ] && [ "$4" != user ]; then
       [ "$4" = project ] || continue; physical=$(cd -P "$d" 2>/dev/null && pwd -P) || continue
-      case "$physical/" in "\${base%/*}/"*) ;; *) continue;; esac
+      case "$physical/" in ("\${base%/*}/"*) ;; (*) continue;; esac
     fi
     emit "$d/SKILL.md" "\${d#./}" "$4" "$5"
    done

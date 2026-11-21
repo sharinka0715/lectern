@@ -3,7 +3,7 @@ import { quoteShell as q, type Transport } from './transport';
 
 // A routing hint, not proof of who ultimately receives payment. Never emit the URL:
 // even a URL can contain identifying information. Never consult keys/tokens.
-export const customRouteCase = 'case "${ANTHROPIC_BASE_URL:-}" in ""|https://api.anthropic.com|https://api.anthropic.com/) custom=0;; *) custom=1;; esac';
+export const customRouteCase = 'case "${ANTHROPIC_BASE_URL:-}" in (""|https://api.anthropic.com|https://api.anthropic.com/) custom=0;; (*) custom=1;; esac';
 
 export function endpointBillingProbe(claudeDir?: string): string {
   return `cd "$HOME" || exit 1

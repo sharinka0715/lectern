@@ -35,10 +35,10 @@ if [ -x /usr/bin/sips ] && [ "$(uname -s)" = Darwin ]; then
   # ImageIO needs a named, seekable input. Never reopen the workspace path.
   head -c "$size" > "$dir/input" || exit 1
   sig=$(od -An -tx1 -N12 "$dir/input" | tr -d ' \\n')
-  case "$sig" in 89504e470d0a1a0a*|ffd8ff*|474946383761*|474946383961*|52494646????????57454250|424d*|00000100*) ;; *) exit 0;; esac
+  case "$sig" in (89504e470d0a1a0a*|ffd8ff*|474946383761*|474946383961*|52494646????????57454250|424d*|00000100*) ;; (*) exit 0;; esac
   props=$(/usr/bin/sips -g format -g pixelWidth -g pixelHeight "$dir/input" 2>/dev/null) || exit 0
   fit=$(printf '%s\\n' "$props" | awk '$1=="format:"{f=$2} $1=="pixelWidth:"{w=$2} $1=="pixelHeight:"{h=$2} END{if (f ~ /^(png|jpeg|gif|webp|bmp|ico)$/ && w ~ /^[0-9]+$/ && h ~ /^[0-9]+$/ && w*h>0 && w*h<=${THUMB_INPUT_PIXELS}) print (w+0>${THUMB_EDGE} || h+0>${THUMB_EDGE}) ? "scale" : "keep"}')
-  case "$fit" in scale) set -- -Z ${THUMB_EDGE};; keep) set --;; *) exit 0;; esac
+  case "$fit" in (scale) set -- -Z ${THUMB_EDGE};; (keep) set --;; (*) exit 0;; esac
   /usr/bin/sips "$@" -s format png "$dir/input" --out "$dir/thumb.png" >/dev/null 2>&1 || exit 0
   [ -f "$dir/thumb.png" ] && [ "$(wc -c < "$dir/thumb.png")" -le ${THUMB_BYTES} ] || exit 0
   head -c ${THUMB_BYTES} "$dir/thumb.png"

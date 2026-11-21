@@ -34,10 +34,10 @@ command -v base64 >/dev/null 2>&1 && command -v head >/dev/null 2>&1 || exit 1
 lectern_gzip=; command -v gzip >/dev/null 2>&1 && lectern_gzip=1
 printf '\\nLECTERN_CHANNEL_READY %s\\n' ${nonce}
 while IFS= read -r lectern_line; do
- case $lectern_line in 'R '*) ;; *) exit 1;; esac
+ case $lectern_line in ('R '*) ;; (*) exit 1;; esac
  lectern_line=\${lectern_line#R }
  lectern_id=\${lectern_line%% *}
- case $lectern_id in ''|*[!0-9]*) exit 1;; esac
+ case $lectern_id in (''|*[!0-9]*) exit 1;; esac
  lectern_s="$lectern_dir/s$lectern_id" lectern_o="$lectern_dir/o$lectern_id" lectern_e="$lectern_dir/e$lectern_id"
  if printf '%s\\n' "\${lectern_line#* }" | base64 -d > "$lectern_s" 2> "$lectern_e"; then
   sh "$lectern_s" > "$lectern_o" 2> "$lectern_e" < /dev/null

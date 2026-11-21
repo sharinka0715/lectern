@@ -64,7 +64,7 @@ export function presenceReadScript(claudeDir: string, pid?: number, pidVariable 
     [ -d sessions ] || exit 0
     cd -P sessions && [ "$(pwd -P)" = "$lectern_registry" ] || { printf 'unsafe-registry\\0'; exit 0; }
     for lectern_pid in ${pidExpression}; do
-      case "$lectern_pid" in ''|0*|*[!0-9]*) continue;; esac
+      case "$lectern_pid" in (''|0*|*[!0-9]*) continue;; esac
       lectern_file="$lectern_pid.json"
       [ -e "$lectern_file" ] || [ -L "$lectern_file" ] || continue
       lectern_start='' lectern_domain=''
@@ -125,7 +125,7 @@ export function sessionPresenceScript(claudeDir: string, sessionId: string): str
     cd -P ${quoteShell(claudeDir.normalize('NFC'))} 2>/dev/null && [ -d sessions ] && [ ! -L sessions ] && cd -P sessions || exit 0
     lectern_names=
     for lectern_f in [1-9]*.json; do
-      case "\${lectern_f%.json}" in ''|*[!0-9]*) continue;; esac
+      case "\${lectern_f%.json}" in (''|*[!0-9]*) continue;; esac
       [ -f "$lectern_f" ] && [ ! -L "$lectern_f" ] && lectern_names="$lectern_names $lectern_f"
     done
     [ -n "$lectern_names" ] || exit 0

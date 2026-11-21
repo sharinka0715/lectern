@@ -38,7 +38,7 @@ const inspectPair = async (t: Transport, w: Workspace, a: File, b: File, body: s
 safe() { d=\${1%/*}; [ ! -L "$d" ] && [ ! -L "\${d%/*}" ] && [ ! -L "$1" ] && [ -f "$1" ]; }
 safe ${q(a.path)} && safe ${q(b.path)} || { printf stale; exit 0; }
 exec 3< ${q(a.path)} 4< ${q(b.path)}
-case "$(uname -s)" in Darwin|*BSD) stamp() { stat -Lf '%i|%z|%.9Fm|%.9Fc' "$1"; };; *) stamp() { stat -Lc '%i|%s|%y|%z' "$1"; };; esac
+case "$(uname -s)" in (Darwin|*BSD) stamp() { stat -Lf '%i|%z|%.9Fm|%.9Fc' "$1"; };; (*) stamp() { stat -Lc '%i|%s|%y|%z' "$1"; };; esac
 verify() { [ "$(stamp /dev/fd/3)" = ${q(a.stamp)} ] && [ "$(stamp /dev/fd/4)" = ${q(b.stamp)} ]; }
 verify || { printf stale; exit 0; }
 out=$( ${body} )

@@ -23,7 +23,7 @@ export function taskListFrame(config: string, sessionId: string) {
     print encode_json([sort { length($a->{id}) <=> length($b->{id}) || $a->{id} cmp $b->{id} } @tasks]) if @tasks;
   `;
   return `(
-    case "$lectern_visible" in *'to show tasks'*|*'to hide tasks'*) ;; *) exit 0;; esac
+    case "$lectern_visible" in (*'to show tasks'*|*'to hide tasks'*) ;; (*) exit 0;; esac
     [ -z "\${CLAUDE_CODE_TASK_LIST_ID:-}" ] || [ "$CLAUDE_CODE_TASK_LIST_ID" = ${q(sessionId)} ] || exit 0
     cd -P ${q(config)} && [ ! -L tasks ] && cd -P tasks && [ ! -L ${q(sessionId)} ] && cd -P ${q(sessionId)} || exit 0
     perl -MFcntl=:DEFAULT -MJSON::PP -e ${q(reader)}

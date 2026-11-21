@@ -262,8 +262,8 @@ for dir in ${dirs.map(q).join(' ')}; do
  [ -d "$dir" ] && [ ! -L "$dir" ] && [ ! -L "\${dir%/*}" ] || continue
  cd "$dir"; set --
  for file in *.jsonl; do
-  case "$file" in ????????-????-????-????-????????????.jsonl) ;; *) continue;; esac
-  case "\${file%.jsonl}" in *[!a-fA-F0-9-]*) continue;; esac
+  case "$file" in (????????-????-????-????-????????????.jsonl) ;; (*) continue;; esac
+  case "\${file%.jsonl}" in (*[!a-fA-F0-9-]*) continue;; esac
   [ -f "$file" ] && [ ! -L "$file" ] || continue
   count=$((count + 1)); [ "$count" -le 1000 ] || break
   set -- "$@" "./$file"
@@ -271,7 +271,7 @@ for dir in ${dirs.map(q).join(' ')}; do
   if [ ! -L "\${side%/*}" ] && [ -f "$side" ] && [ ! -L "$side" ]; then set -- "$@" "$side"; fi
  done
  if [ "$#" -gt 0 ]; then
-  case "$platform" in Darwin|*BSD) stat -f '%N|%i|%z|%.9Fm|%.9Fc' "$@";; *) stat -c '%n|%i|%s|%y|%z' "$@";; esac
+  case "$platform" in (Darwin|*BSD) stat -f '%N|%i|%z|%.9Fm|%.9Fc' "$@";; (*) stat -c '%n|%i|%s|%y|%z' "$@";; esac
  fi
  [ "$count" -le 1000 ] || { echo '!limit'; break; }
 done`;

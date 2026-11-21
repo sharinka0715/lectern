@@ -49,7 +49,7 @@ lectern_task_read() (
   cd -P "./$lectern_suffix" 2>/dev/null && [ "$(pwd -P)" = "\${lectern_base%/}/$lectern_suffix" ] || exit 1
   [ -f "$lectern_file" ] && [ ! -L "$lectern_file" ] || exit 1
   lectern_meta=$(stat -f '%i:%z:%m' "$lectern_file" 2>/dev/null) || lectern_meta=$(stat -c '%i:%s:%Y' "$lectern_file" 2>/dev/null) || exit 1
-  case "$lectern_meta" in *[!0-9:]*|'') exit 1;; esac
+  case "$lectern_meta" in (*[!0-9:]*|'') exit 1;; esac
   printf 'found\\0%s\\0' "$lectern_meta"
   if [ "$lectern_meta" = ${q(known)} ]; then printf 'same\\0'; exit 0; fi
   lectern_size=\${lectern_meta#*:}; lectern_size=\${lectern_size%:*}

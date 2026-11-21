@@ -36,10 +36,10 @@ check || { printf 'E pane\\n'; exit 0; }
 printf 'R\\n'
 while IFS= read -r line; do
  case "$line" in
-  'K '*) if check; then ${c.sendKeys} \${line#K } 2>/dev/null || printf 'E keys\\n'; else printf 'E pane\\n'; exit 0; fi;;
-  'P '*) if check; then printf '%s' "\${line#P }" | base64 -d | ${c.loadBuffer} && ${c.pasteBuffer} || printf 'E paste\\n'; else printf 'E pane\\n'; exit 0; fi;;
-  F) printf 'F '; { ${c.capture}; } 2>/dev/null | head -c 262144 | base64 | tr -d '\\n'; printf '\\n';;
-  Q) exit 0;;
+  ('K '*) if check; then ${c.sendKeys} \${line#K } 2>/dev/null || printf 'E keys\\n'; else printf 'E pane\\n'; exit 0; fi;;
+  ('P '*) if check; then printf '%s' "\${line#P }" | base64 -d | ${c.loadBuffer} && ${c.pasteBuffer} || printf 'E paste\\n'; else printf 'E pane\\n'; exit 0; fi;;
+  (F) printf 'F '; { ${c.capture}; } 2>/dev/null | head -c 262144 | base64 | tr -d '\\n'; printf '\\n';;
+  (Q) exit 0;;
  esac
 done`;
 }
