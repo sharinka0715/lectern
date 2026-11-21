@@ -61,6 +61,8 @@ export const releaseNotes: ReleaseNote[] = [
         'After many later tool calls an earlier subagent could drop out of the activity card and miss a later resume; subagents now stay in the card.'],
       ['子代理栏查看较早的子代理时，往前翻页加载到它的启动记录会跳到别的子代理；现在保持不变。',
         'Scrolling back to the launch of an earlier subagent shown in the subagent column switched the column to another one; it now stays.'],
+      ['对话刚开始或刚续接时分叉，若 Claude Code 恰好追加说明（如首次 auto mode 介绍）会报「画面已变化」；现在重读后继续，画面真变了仍不发键。',
+        'Forking a just-started or resumed chat failed with "screen changed" if Claude Code added a note (like its auto mode intro) just then; it now rereads and goes on, and a real change still sends no keys.'],
     ],
   },
   {

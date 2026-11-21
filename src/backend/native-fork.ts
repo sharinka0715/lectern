@@ -2,6 +2,7 @@ import { stripTerminalEscapes } from '../core/screen';
 import { isIdleEmptyComposer } from '../core/settings-screen';
 import { focusedTurnCommandDescription } from '../core/turn-controls';
 import type { TurnDriver } from './native-turn-controls';
+import { keysNotSent } from './native-settings';
 import { SESSION_UUID } from './native-presence';
 import { t } from '../shared/i18n';
 
@@ -30,17 +31,36 @@ export async function submitNativeFork(driver: TurnDriver, pane: string, pid: nu
     }
     throw new Error(t('backend.forkCommandUnclear'));
   };
+  // Every key is bound to the whole frame it was chosen from. Claude Code can
+  // append to the transcript at any moment: 2.1.329 adds its one-time auto mode
+  // description about 0.8 s after a session first enters auto mode, which on a
+  // slow machine lands in the middle of these steps. The guard then refuses
+  // before sending anything. Only that explicit refusal, on a fresh frame that
+  // still satisfies the same precondition, repeats the step (at most 3 times).
+  // Otherwise the refusal stands: a refused Enter must still clear the journal.
+  const step = async (send: () => Promise<void>, still: (view: string) => boolean) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await send(); }
+      catch (error) {
+        if (attempt >= 3 || !keysNotSent(error)) throw error;
+        try { await wait(view => still(view) || undefined); } catch { throw error; }
+      }
+    }
+  };
   if (!isIdleEmptyComposer(await frame())) throw new Error(t('backend.forkNeedsIdle'));
-  await driver.pasteForTurn('/fork', false);
+  await step(() => driver.pasteForTurn('/fork', false), isIdleEmptyComposer);
+  let command: '/fork' | '/branch' = '/fork';
   const capability = await wait(view => forkCapability(view, '/fork'));
   if (capability === 'background') {
     // Do not submit /fork in versions where it starts a background session.
-    await driver.keyForTurn('erase');
+    await step(() => driver.keyForTurn('erase'), view => forkCapability(view, '/fork') === 'background');
     await wait(view => isIdleEmptyComposer(view) ? true : undefined);
-    await driver.pasteForTurn('/branch', false);
+    await step(() => driver.pasteForTurn('/branch', false), isIdleEmptyComposer);
+    command = '/branch';
     if (await wait(view => forkCapability(view, '/branch')) !== 'branch') throw new Error(t('backend.forkCommandMissing'));
   }
-  await driver.keyForTurn('switchSession'); // Guard the last frame but don't resolve the old UUID after Enter.
+  // Guard the last frame but don't resolve the old UUID after Enter.
+  await step(() => driver.keyForTurn('switchSession'), view => forkCapability(view, command) === 'branch');
 }
 
 export function forkReceipt(view: string, original: string, fork: string): boolean {

@@ -38,9 +38,16 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     await assert.rejects(backend.forkSession(ws,originalId,pane,pid), /Multiple live/);
     tmux('kill-pane','-t',duplicate);
     // Simulate a disconnect after the native command was actually delivered.
+    // A guard refusal answers with its one-use receipt instead and sent nothing
+    // (e.g. Claude Code appended its auto mode notice just then): pass it on.
     const transport = (backend as any).transport, run = transport.run.bind(transport);
     let submissions = 0;
-    transport.run = async (...args: any[]) => { const result = await run(...args); if(args[2]?.tag==='session.branch.submit' && ++submissions===1) throw Error('lost branch acknowledgement'); return result; };
+    transport.run = async (...args: any[]) => {
+      const result = await run(...args);
+      if (args[2]?.tag !== 'session.branch.submit' || String(result.stdout).startsWith('LECTERN_MENU_KEY_NOT_SENT_')) return result;
+      if (++submissions === 1) throw Error('lost branch acknowledgement');
+      return result;
+    };
     const first = backend.forkSession(ws,originalId,pane,pid);
     await assert.rejects(backend.forkSession(ws,originalId,pane,pid),/正在发送/);
     await assert.rejects(first,/lost branch acknowledgement/);

@@ -1,0 +1,40 @@
+
+[97m●[39m Fixture answer 6            
+
+[37m[40m❯ [97mPrompt 7[39m                                                                                                              
+
+[97m[49m●[39m Fixture answer 7            
+
+[37m[40m❯ [97mPrompt 8[39m                                                                                                              
+
+[97m[49m●[39m Fixture answer 8            
+
+[37m[40m❯ [97mPrompt 9[39m                                                                                                              
+
+[97m[49m●[39m Fixture answer 9            
+
+[37m[40m❯ [97mPrompt 10[39m                                                                                                             
+
+[97m[49m●[39m Fixture answer 10           
+
+[37m[40m❯ [97mPrompt 11[39m                                                                                                             
+
+[97m[49m●[39m Fixture answer 11           
+
+[37m[40m❯ [97mPrompt 12[39m                                                                                                             
+
+[97m[49m●[39m Fixture answer 12           
+
+[37m[40m❯ [97mRepeated prompt[39m                                                                                                       
+
+[97m[49m●[39m Fixture answer 13           
+
+
+  [97m❯ /[1mbranch[0m[97m[49m                     Create a [1mbranch[0m[97m[49m of the current conversation at this point[39m                               
+  [2m[37m  /code-review                Review the current diff or a PR for bugs[0m[39m[49m                                                
+  [2m[37m  /security-review            Complete a security review of the pending changes on the current [0;1m[39m[49mbranch[0m[39m[49m                 
+[37m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [97m/branch[7m[39m [0m[39m[49m                    
+[37m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+[39m  [93m⏵⏵ auto mode on[2m[37m (shift+tab to cycle)[0m[39m[49m                      

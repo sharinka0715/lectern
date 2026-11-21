@@ -138,6 +138,10 @@ try {
   await confirmDialog.getByRole('button', { name: '关闭对话', exact: true }).click();
   const resume = page.getByRole('button', { name: '续接会话', exact: true });
   await resume.waitFor();
+  // The bar shows (its button disabled) as soon as the pane is gone, while 关闭对话
+  // still reopens the conversation as history, which remounts the transcript.
+  // Let that finish, so the observer below sees only what 续接会话 does.
+  await page.waitForFunction(() => [...document.querySelectorAll('.resume-bar button')].some(b => b.textContent.includes('续接会话') && !b.disabled));
   assert.equal(await input.isDisabled(), true);
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'false');
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-persisted'), 'true');
