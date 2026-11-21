@@ -260,6 +260,8 @@ export default function App({view = "primary"}: {view?: ChatView}) {
   const [folderState, setFolderState] = useState<"resolving">();
   const folderResolving = folderState === "resolving";
   const transcript = useRef<ConversationTranscript>(null);
+  // The input area floats over the bottom of the conversation (see ConversationTranscript's dock).
+  const [composerDock, setComposerDock] = useState<HTMLDivElement | null>(null);
   const [followingLatest, setFollowingLatest] = useState(true);
   const [rewindScope, setRewindScope] = useState<string>();
   const rewindOpen = rewindScope === JSON.stringify([workspaceId, sessionId]) && !!sessionId;
@@ -1497,8 +1499,10 @@ export default function App({view = "primary"}: {view?: ChatView}) {
           </div>
         )}
 
+        {/* The conversation scrolls the full height; the input area floats over its bottom. */}
+        <div className="conversation-stage">
         <LiveShells.Provider value={liveShells}>
-        <ConversationTranscript key={selectionGeneration} ref={transcript} workspace={workspace} sessionId={snapshot?.sessionId} replyDetail={prefs.replyDetail} onFollowLatest={setFollowingLatest}
+        <ConversationTranscript key={selectionGeneration} ref={transcript} dock={composerDock} workspace={workspace} sessionId={snapshot?.sessionId} replyDetail={prefs.replyDetail} onFollowLatest={setFollowingLatest}
           tasks={snapshot?.tasks} messages={displayedMessages} historyPage={snapshot?.historyPage} loadEarlier={loadEarlierMessages} openArtifact={openArtifact}
           onRewind={canRewind ? uuid => void actOnTurn({ kind: 'rewindTo', uuid }) : undefined}
           onQuote={snapshot?.sessionId ? quoteIntoComposer : undefined}
@@ -1570,8 +1574,8 @@ export default function App({view = "primary"}: {view?: ChatView}) {
         </ConversationTranscript>
         </LiveShells.Provider>
 
-        <div
-          className={`composer-area${question || permission ? " composer-has-question" : ""}${directoryTrust ? " composer-has-trust" : ""}${terminalLocked ? " composer-has-manual-terminal" : ""}`}
+        <div ref={setComposerDock} onWheel={event => transcript.current?.wheelFromDock(event.nativeEvent)}
+          className={`composer-area${question || permission ? " composer-has-question" : ""}${directoryTrust ? " composer-has-trust" : ""}${terminalOpen ? " composer-has-terminal" : ""}${terminalLocked ? " composer-has-manual-terminal" : ""}`}
         >
           {terminalOpen && (
             <TerminalPanel
@@ -1783,6 +1787,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             onClose={() => setRewindScope(undefined)} onLoadEarlier={async () => {
               if (snapshot.historyPage?.hasOlder) await loadEarlierMessages(snapshot.historyPage.cursor);
             }} onSelect={async uuid => { setRewindScope(undefined); await actOnTurn({kind:'rewindTo', uuid}); }}/>}
+        </div>
         </div>
       </main>
       {subagentShown && workspace && <SubagentColumn key={activityScope} workspace={workspace} sessionId={sessionId} view={view} items={items}

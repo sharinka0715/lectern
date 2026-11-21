@@ -55,7 +55,10 @@ async function observeRefreshes(cycles, expectBanner) {
     const anchor = [...viewport.querySelectorAll(".message")].find(el =>
       el.getBoundingClientRect().bottom > viewport.getBoundingClientRect().top);
     const top = anchor.getBoundingClientRect().top;
-    const height = viewport.clientHeight;
+    // The visible conversation ends at the input area floating over its bottom.
+    const dock = document.querySelector(".composer-area");
+    const shown = () => dock.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    const height = shown();
     const start = performance.now();
     const observed = { bannerChanges: [], maxHeightChangePx: 0, maxMessageShiftPx: 0 };
     let visible = expectBanner;
@@ -65,12 +68,13 @@ async function observeRefreshes(cycles, expectBanner) {
         observed.bannerChanges.push({ ms: Math.round(performance.now() - start), visible: nowVisible });
         visible = nowVisible;
       }
-      observed.maxHeightChangePx = Math.max(observed.maxHeightChangePx, Math.abs(viewport.clientHeight - height));
+      observed.maxHeightChangePx = Math.max(observed.maxHeightChangePx, Math.abs(shown() - height));
       observed.maxMessageShiftPx = Math.max(observed.maxMessageShiftPx, Math.abs(anchor.getBoundingClientRect().top - top));
     }
     const mutations = new MutationObserver(sample), resize = new ResizeObserver(sample);
     mutations.observe(document.body, { childList: true, subtree: true, attributes: true });
     resize.observe(viewport);
+    resize.observe(dock);
     sample();
     return { finish: () => { sample(); mutations.disconnect(); resize.disconnect(); return observed; } };
   }, expectBanner);

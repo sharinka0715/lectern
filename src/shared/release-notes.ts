@@ -44,6 +44,8 @@ export const releaseNotes: ReleaseNote[] = [
         'The final "Review your answers" page of a multi-question prompt showed no card when a question wrapped or (Claude Code 2.1.329+) some were unanswered; it now has one.'],
       ['折行的中文题目在问答卡上不再多出空格。',
         'Wrapped Chinese questions no longer gain stray spaces on the question card.'],
+      ['对话滚到底时，右侧滚动条停在输入框上方；现在滚动条一直延伸到窗口底部，消息从输入框下方滚过，在输入框区域滚动滚轮也能翻看对话。',
+        'At the end of a chat the scrollbar stopped above the input box; it now reaches the bottom of the window, messages scroll beneath the input area, and the wheel over it scrolls the chat.'],
     ],
   },
   {

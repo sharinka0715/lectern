@@ -1,7 +1,7 @@
 /* Bound the question to its own pane, not the full workbench viewport. The
    whole form scrolls together: even a short horizontal split can reach its actions. */
 .composer-area.composer-has-question {
-  display: flex; flex-direction: column; min-height: 0; max-height: 70%; flex-shrink: 1;
+  display: flex; flex-direction: column; min-height: 0; max-height: 70%;
 }
 .composer-has-question .composer-footnote { flex-shrink: 0; }
 .composer-has-question > .terminal-panel { min-height: 0; overflow-y: auto; }

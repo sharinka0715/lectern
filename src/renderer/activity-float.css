@@ -1,6 +1,6 @@
 /* The chat's activity card, floating at the top right of its conversation. */
 .activity-float-anchor { position: absolute; top: 12px; right: 14px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end;
-  max-width: calc(100% - 28px); max-height: calc(100% - 24px); pointer-events: none; }
+  max-width: calc(100% - 28px); max-height: calc(100% - 24px - var(--dock-inset, 0px)); pointer-events: none; }
 .activity-float, .activity-float-pill {
   /* Cream, like the user's bubbles: a shade warmer than the page, not white. */
   --float-bg: color-mix(in srgb, var(--bubble) 50%, var(--surface));

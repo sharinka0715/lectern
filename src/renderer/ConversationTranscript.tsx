@@ -23,6 +23,9 @@ interface Props {
   openArtifact: (target: ArtifactTarget) => void;
   /** Floats over the conversation's top right corner (the activity card). */
   overlay?: ReactNode;
+  /** The input area floating over the bottom of the conversation: the messages
+   * scroll under it (the scrollbar runs to the bottom) and end above it. */
+  dock?: HTMLElement | null;
   children: ReactNode;
 }
 
@@ -45,6 +48,7 @@ interface BottomAnchor { element: Element; offset: number }
 // is in flight, so its offset at request time would be stale.
 export class ConversationTranscript extends Component<Props, State, ScrollAnchor | null> {
   state: State = { readingEarlier: false, loading: false };
+  private area = createRef<HTMLDivElement>();
   private viewport = createRef<HTMLDivElement>();
   private followLatest = true;
   private lastScrollTop = 0;
@@ -52,6 +56,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   private mounted = false;
   private resize?: ResizeObserver;
   private observedContent?: Element | null;
+  private observedDock?: HTMLElement | null;
   private bottomAnchor?: BottomAnchor;
   // Only the reader's own scrolling (wheel, touch, keys, scrollbar) leaves the
   // latest message; zoom, window and input box changes never do.
@@ -67,10 +72,16 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     if (viewport) {
       // The viewport (window, zoom, input box, panels) or its content (images,
       // expanded blocks) changed size: keep the latest message, or the line
-      // being read at the bottom edge, where it was.
-      this.resize = new ResizeObserver(entries => this.keepPosition(entries.some(entry => entry.target === viewport)));
-      this.resize.observe(viewport);
+      // being read at the bottom edge, where it was. The border box: the
+      // padding kept under the input area is not a resize.
+      this.resize = new ResizeObserver(entries => {
+        const viewChanged = entries.some(entry => entry.target === viewport || entry.target === this.observedDock);
+        if (viewChanged) this.fitDock();
+        this.keepPosition(viewChanged);
+      });
+      this.resize.observe(viewport, { box: "border-box" });
       this.observeContent();
+      this.observeDock();
     }
     window.addEventListener("pointerup", this.releasePointer);
     window.addEventListener("pointercancel", this.releasePointer);
@@ -99,6 +110,46 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     if (content) this.resize?.observe(content);
   }
 
+  private observeDock() {
+    const dock = this.props.dock ?? null;
+    if (dock === this.observedDock || !this.resize) return;
+    if (this.observedDock) this.resize.unobserve(this.observedDock);
+    this.observedDock = dock;
+    if (dock) this.resize.observe(dock, { box: "border-box" });
+    else this.fitDock();
+  }
+
+  /** Room under the last message for the input area (and the jump button above it). */
+  private fitDock() {
+    const area = this.area.current, viewport = this.viewport.current;
+    if (!area || !viewport) return;
+    const box = viewport.getBoundingClientRect();
+    const inset = Math.max(0, box.bottom - this.visibleBottom(box));
+    area.style.setProperty("--dock-inset", `${inset}px`);
+  }
+
+  /** The bottom edge of the visible conversation: the top of the input area floating over it. */
+  private visibleBottom(box: DOMRect) {
+    const dock = this.observedDock;
+    return dock?.isConnected ? Math.max(box.top, Math.min(box.bottom, dock.getBoundingClientRect().top)) : box.bottom;
+  }
+
+  /** A wheel over the input area scrolls the conversation, unless what is under
+   * the pointer scrolls by itself (a long draft, a question, the terminal). */
+  wheelFromDock = (event: WheelEvent) => {
+    const viewport = this.viewport.current, dock = this.observedDock;
+    if (!viewport || !dock || event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    for (let element = event.target instanceof Element ? event.target : null; element && element !== dock; element = element.parentElement) {
+      const style = getComputedStyle(element);
+      // A dialog over the window (the rewind picker), or a box with its own scrolling.
+      if (style.position === "fixed" || (/auto|scroll/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 1)) return;
+    }
+    this.noteIntent();
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1;
+    viewport.scrollTop += event.deltaY * unit;
+    if (event.deltaY < 0 && viewport.scrollTop <= 0) void this.loadEarlier();
+  };
+
   private keepPosition(viewportResized: boolean) {
     const viewport = this.viewport.current;
     if (!viewport) return;
@@ -110,7 +161,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     }
     if (this.followLatest) viewport.scrollTop = viewport.scrollHeight;
     else if (this.bottomAnchor?.element.isConnected) {
-      const now = this.bottomAnchor.element.getBoundingClientRect().top - viewport.getBoundingClientRect().bottom;
+      const now = this.bottomAnchor.element.getBoundingClientRect().top - this.visibleBottom(viewport.getBoundingClientRect());
       viewport.scrollTop += now - this.bottomAnchor.offset;
     }
     this.lastScrollTop = viewport.scrollTop;
@@ -122,15 +173,16 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     const viewport = this.viewport.current;
     if (!viewport || this.followLatest) { this.bottomAnchor = undefined; return; }
     const box = viewport.getBoundingClientRect();
-    if (!box.height) return;
-    let element = document.elementFromPoint(box.left + box.width / 2, box.bottom - 6);
+    const bottom = this.visibleBottom(box);
+    if (bottom <= box.top) return;
+    let element = document.elementFromPoint(box.left + box.width / 2, bottom - 6);
     if (!element || element === viewport || !viewport.contains(element)) {
       const messages = [...viewport.getElementsByClassName("message")];
-      element = messages.filter(message => message.getBoundingClientRect().top < box.bottom).at(-1) ?? null;
+      element = messages.filter(message => message.getBoundingClientRect().top < bottom).at(-1) ?? null;
     }
     while (element && element.parentElement && element.parentElement !== viewport && getComputedStyle(element).display.startsWith("inline"))
       element = element.parentElement;
-    this.bottomAnchor = element ? { element, offset: element.getBoundingClientRect().top - box.bottom } : undefined;
+    this.bottomAnchor = element ? { element, offset: element.getBoundingClientRect().top - bottom } : undefined;
   }
 
   getSnapshotBeforeUpdate(previous: Props, previousState: State): ScrollAnchor | null {
@@ -151,6 +203,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   }
 
   componentDidUpdate(previous: Props, previousState: State, anchor?: ScrollAnchor | null) {
+    this.observeDock();
     const viewport = this.viewport.current;
     if (!viewport || (previous.messages === this.props.messages && previous.replyDetail === this.props.replyDetail && previousState.error === this.state.error)) return;
     this.observeContent();
@@ -223,7 +276,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     const cwd = workspace?.cwd ?? "";
     const error = this.state.error?.cursor === historyPage?.cursor ? this.state.error?.message : undefined;
     return (
-      <div className="transcript-area">
+      <div className="transcript-area" ref={this.area}>
         <div className="conversation-scroll" ref={this.viewport} onScroll={this.onScroll}
           role="region" aria-label={t('composer.messages')} tabIndex={0}
           onPointerDown={() => { this.pointerHeld = true; this.pointerAt = performance.now(); this.noteIntent(); }}

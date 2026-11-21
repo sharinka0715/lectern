@@ -1,7 +1,9 @@
 // npm run build && node scripts/scroll-anchor-e2e.mjs [packaged-executable]
 // The conversation keeps its latest message in view (and, while reading older
 // messages, the line at the bottom edge) when the window, zoom, input box or
-// content changes size. Demo mode: no real model.
+// content changes size. Its scrollbar runs to the bottom of the chat, under the
+// input area floating there, and a wheel over that area scrolls the chat.
+// Demo mode: no real model.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -49,13 +51,40 @@ async function atLatest(step) {
   assert.ok(value <= 2, `${step}: the latest message stays in view (${value}px below)`);
   assert.equal(await page.getByRole("button", { name: "滚动到最新消息", exact: true }).count(), 0, `${step}: still following the latest message`);
 }
-/** The text line at the bottom edge of the visible conversation, and how far above the edge it is. */
+/** The text line at the bottom edge of the visible conversation (the top of
+ * the input area floating over it), and how far above the edge it is. */
 const bottomLine = () => page.evaluate(() => {
-  const v = document.querySelector(".conversation-scroll"), box = v.getBoundingClientRect();
-  const paragraphs = [...v.querySelectorAll(".message")].filter(el => el.getBoundingClientRect().top < box.bottom - 40);
+  const v = document.querySelector(".conversation-scroll"), bottom = document.querySelector(".composer-area").getBoundingClientRect().top;
+  const paragraphs = [...v.querySelectorAll(".message")].filter(el => el.getBoundingClientRect().top < bottom - 40);
   const el = paragraphs.at(-1);
-  return { text: el.textContent.slice(0, 12), offset: box.bottom - el.getBoundingClientRect().top };
+  return { text: el.textContent.slice(0, 12), offset: bottom - el.getBoundingClientRect().top };
 });
+const dockTop = () => page.evaluate(() => document.querySelector(".composer-area").getBoundingClientRect().top);
+/** At the latest message the scrollbar runs to the bottom of the chat column,
+ * under the input area, and the last message ends above the input area. */
+async function docked(step, screenshot) {
+  await atLatest(step);
+  const m = await page.evaluate(() => {
+    const v = document.querySelector(".conversation-scroll"), box = v.getBoundingClientRect();
+    const column = v.closest(".main-area").getBoundingClientRect();
+    const dock = document.querySelector(".composer-area").getBoundingClientRect();
+    const last = [...v.querySelectorAll(".message")].at(-1).getBoundingClientRect();
+    const probe = document.elementFromPoint(last.left + 20, last.bottom - 8);
+    return { scrollBottom: box.bottom, columnBottom: column.bottom, scrollRight: box.right, scrollbar: v.offsetWidth - v.clientWidth,
+      end: v.scrollTop + v.clientHeight - v.scrollHeight, dockTop: dock.top, dockBottom: dock.bottom, dockRight: dock.right,
+      lastTop: last.top, lastBottom: last.bottom, top: box.top, lastShown: !!probe?.closest(".message") };
+  });
+  report[step + " (docked)"] = m;
+  assert.ok(Math.abs(m.scrollBottom - m.columnBottom) <= 1, `${step}: the scroll area (and its scrollbar) reaches the bottom of the chat column`);
+  assert.ok(m.scrollbar > 0 && m.dockRight <= m.scrollRight - m.scrollbar, `${step}: the input area leaves the scrollbar uncovered`);
+  assert.ok(Math.abs(m.dockBottom - m.columnBottom) <= 1, `${step}: the input area sits at the bottom`);
+  assert.ok(Math.abs(m.end) <= 1, `${step}: scrolled to the end (${m.end})`);
+  // Just above the input area (the message's margin and the end spacer between),
+  // and whole unless it and that space are taller than the visible conversation.
+  assert.ok(m.lastBottom <= m.dockTop + 0.5 && m.dockTop - m.lastBottom <= 48 && m.lastShown, `${step}: the last message ends above the input area`);
+  if (m.dockTop - m.top >= m.lastBottom - m.lastTop + 48) assert.ok(m.lastTop >= m.top, `${step}: the last message is whole`);
+  if (screenshot) await page.screenshot({ path: path.join(output, screenshot) });
+}
 
 try {
   const executable = process.argv[2];
@@ -69,12 +98,12 @@ try {
   const archiveId = await seedArchive();
   await page.locator('.session-row[data-session-id="' + archiveId + '"]').click();
   await page.getByText("问题 39", { exact: true }).waitFor();
-  await atLatest("opened");
+  await docked("opened", "bottom-wide.png");
 
   await resize(1320, 560);
   await atLatest("shorter window");
   await resize(900, 560);
-  await atLatest("narrower window");
+  await docked("narrower window", "bottom-narrow.png");
   await resize(1320, 840);
   await atLatest("larger window");
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1.3));
@@ -95,12 +124,37 @@ try {
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
   await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.disabled, null, { timeout: 30000 });
   await atLatest("resumed");
-  const before = await page.evaluate(() => document.querySelector(".conversation-scroll").clientHeight);
+  await docked("resumed");
+  const before = await dockTop();
   await input.fill(Array.from({ length: 8 }, (_, i) => "第 " + (i + 1) + " 行").join("\n"));
-  await page.waitForFunction(height => document.querySelector(".conversation-scroll").clientHeight < height - 60, before);
-  await atLatest("taller input box");
+  await page.waitForFunction(top => document.querySelector(".composer-area").getBoundingClientRect().top < top - 60, before);
+  await docked("taller input box", "bottom-taller-input.png");
   await input.fill("");
-  await atLatest("input box back");
+  await docked("input box back");
+
+  // A wheel over the input area scrolls the conversation; over a draft that
+  // scrolls by itself it scrolls the draft.
+  const scrollTop = () => page.evaluate(() => document.querySelector(".conversation-scroll").scrollTop);
+  const latestTop = await scrollTop();
+  await page.locator(".composer-footnote").hover();
+  await page.mouse.wheel(0, -300);
+  await page.waitForFunction(top => document.querySelector(".conversation-scroll").scrollTop <= top - 290, latestTop);
+  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).waitFor();
+  const jump = await page.evaluate(() => [document.querySelector(".scroll-latest").getBoundingClientRect().bottom,
+    document.querySelector(".composer-area").getBoundingClientRect().top]);
+  assert.ok(jump[0] <= jump[1], `the jump button sits above the input area (${jump})`);
+  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
+  await atLatest("wheel over the input area, back");
+  await input.fill(Array.from({ length: 30 }, (_, i) => "草稿 " + (i + 1)).join("\n"));
+  await settle();
+  await input.hover();
+  const draftTop = await input.evaluate(el => { el.scrollTop = el.scrollHeight; return el.scrollTop; });
+  assert.ok(draftTop > 0, "the long draft scrolls inside the input box");
+  await page.mouse.wheel(0, -120);
+  await page.waitForFunction(top => document.querySelector(".composer textarea").scrollTop < top, draftTop);
+  await atLatest("wheel over a long draft");
+  await input.fill("");
+  await atLatest("long draft cleared");
 
   // Reading older messages: the line at the bottom edge stays where it was.
   // The reader's own scroll (a wheel event first; other scrolls keep the latest message).
@@ -112,6 +166,20 @@ try {
   await page.getByRole("button", { name: "滚动到最新消息", exact: true }).waitFor();
   await settle();
   const reading = await bottomLine();
+  await page.screenshot({ path: path.join(output, "reading-under-input.png") });
+  // Messages pass under the input area, which covers them (opaque, above them).
+  const covered = await page.evaluate(() => {
+    const dock = document.querySelector(".composer-area").getBoundingClientRect();
+    const under = [...document.querySelectorAll(".conversation-scroll .message")].some(el => {
+      const box = el.getBoundingClientRect();
+      return box.top < dock.bottom - 20 && box.bottom > dock.top + 20;
+    });
+    const hit = [dock.top + 6, (dock.top + dock.bottom) / 2, dock.bottom - 4]
+      .map(y => !!document.elementFromPoint((dock.left + dock.right) / 2, y)?.closest(".composer-area"));
+    return { under, hit, background: getComputedStyle(document.querySelector(".composer-area")).backgroundImage };
+  });
+  report.covered = covered;
+  assert.ok(covered.under && covered.hit.every(Boolean) && covered.background.includes("gradient"), "the input area covers the messages under it");
   await resize(1320, 600);
   await settle();
   const after = await bottomLine();
