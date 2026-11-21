@@ -1,7 +1,6 @@
 import type { CompactReceipt, TurnProgressObservation } from '../shared/types';
 import type { JsonRecord } from './jsonl';
-import { stripTerminalEscapes, withoutEditorNotices } from './screen';
-import { rowAboveEditor, turnComposer } from './turn-controls';
+import { composerLines, rowAboveEditor, turnComposer } from './turn-controls';
 
 const spinner = /^([·✢✳✶✻✽✺*●∴∷∵]) +(.{1,200}?)\s*$/u;
 const timer = /^(?:\d+(?:\.\d+)?(?:ms|[smhd])\s*){1,4}$/;
@@ -13,15 +12,16 @@ const phase = (label: string): TurnProgressObservation['compactPhase'] => {
   if (/^Running PostCompact hooks$/i.test(label)) return 'after';
 };
 
-const activityAboveEditor = rowAboveEditor;
-const viewLines = (viewport: string) => withoutEditorNotices(stripTerminalEscapes(viewport).replace(/\u00a0/g, ' ').split('\n').map(l => l.trimEnd()));
+// Read the rows `turnComposer` parsed, up from its upper border (`editor.top`). Counted from
+// the bottom, background tasks listed below the footer put the start inside the input box.
+const activityAboveEditor = (lines: string[], editor: { top: number }) => rowAboveEditor(lines, editor.top);
 
 /** The native command may report success before the boundary flushes. Permit
  * that short gap only for the current /compact's own result, never just idle. */
 export function showsCompactCompletion(viewport: string, editor = turnComposer(viewport)): boolean {
   if (!editor || editor.running) return false;
-  const lines = viewLines(viewport);
-  const end = activityAboveEditor(lines, lines.length - editor.tailLines);
+  const lines = composerLines(viewport);
+  const end = activityAboveEditor(lines, editor);
   return /^\s+⎿\s+Compacted \([^()]+ to see full summary\)\s*$/u.test(lines[end] ?? '') &&
     /^❯\s+\/compact(?:\s|$)/u.test(lines[end - 1] ?? '');
 }
@@ -30,8 +30,8 @@ export function showsCompactCompletion(viewport: string, editor = turnComposer(v
  * for the most recent spinner anywhere in the pane. Shell output, old turns
  * and a boxed composer in scrollback are not progress for this turn. */
 export function parseTurnProgress(viewport: string, editor = turnComposer(viewport), nativeBusy = false): TurnProgressObservation | undefined {
-  const lines = viewLines(viewport);
-  let end = editor ? activityAboveEditor(lines, lines.length - editor.tailLines) : lines.length - 1;
+  const lines = composerLines(viewport);
+  let end = editor ? activityAboveEditor(lines, editor) : lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
   // Older layouts have a bare interrupt hint (no input box) at the very bottom.
   const bareHint = !editor && /^\s*esc to interrupt\s*$/i.test(lines[end] ?? '');

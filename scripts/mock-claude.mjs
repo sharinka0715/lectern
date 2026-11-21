@@ -97,7 +97,8 @@ if (args.includes('--effort')) {
   if (index < 0) { process.stderr.write(`error: option '--effort <level>' argument '${arg('--effort')}' is invalid\n`); process.exit(1); }
   selectedEffort = index;
 }
-let fixtureState = 'ready';
+// "<state> agents" also lists background work below the footer, as Claude Code 2.1.329+ does.
+let fixtureState = 'ready', fixtureAgents = false;
 const stateFile = path.join(config, 'screen-state');
 const draw = () => {
   const lines = ['╭─ Claude Code · offline fixture ─╮', '  Local simulation · no model requests', ''];
@@ -125,6 +126,7 @@ const draw = () => {
     }
     lines.push('────────────────────────────────────────────────────────────────', `❯ ${input}`, '────────────────────────────────────────────────────────────────',
       ['progress', 'compacting'].includes(fixtureState) ? '  ⏸ manual mode on · esc to interrupt' : '  ⏸ manual mode on · ? for shortcuts');
+    if (fixtureAgents) lines.push('', '  ⏺ main', '  ◯ general-purpose  检查归档中的版本信息          3m 8s · ↓ 141.6k tokens');
   }
   process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
@@ -231,12 +233,13 @@ process.stdin.on('data', chunk => {
 const readFixtureState = () => {
   let next = 'ready';
   try { next = readFileSync(stateFile, 'utf8').trim(); } catch {}
-  return ['ready', 'waiting', 'error', 'progress', 'compacting'].includes(next) ? next : 'ready';
+  const [state, agents] = next.split(/\s+/);
+  return [['ready', 'waiting', 'error', 'progress', 'compacting'].includes(state) ? state : 'ready', agents === 'agents'];
 };
-fixtureState = readFixtureState();
+[fixtureState, fixtureAgents] = readFixtureState();
 setInterval(() => {
-  const next = readFixtureState();
-  if (next !== fixtureState) { fixtureState = next; draw(); }
+  const [next, agents] = readFixtureState();
+  if (next !== fixtureState || agents !== fixtureAgents) { [fixtureState, fixtureAgents] = [next, agents]; draw(); }
 }, 100);
 draw();
 }

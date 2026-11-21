@@ -2,7 +2,7 @@ import type { SessionStatus } from '../shared/types';
 import { diagnostic, summarize } from '../diagnostics';
 import { parseCacheConfirmationLines } from './model-switch-confirmation';
 import { AUTO_MODE_BILLING_TITLE, AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudgeLines, showsAutoModeBillingNotice, showsAutoModeUnavailable, type AutoModeNudge } from './auto-mode-screen';
-import { nativeTaskPanel } from './native-task-screen';
+import { nativeTaskPanel, withoutTaskRows } from './native-task-screen';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 import { t } from '../shared/i18n';
 
@@ -151,18 +151,9 @@ function terminalLines(screen: string): string[] {
   return withoutEditorNotices(withoutTaskRows(lines));
 }
 
-// Claude Code 2.1.329 lists background work below the input box's footer: a
-// workflow ("◯ name  ▱▱▱  0/4 · 11s"), the main thread and its subagents
-// ("⏺ main", "◯ general-purpose  description  2s"). They belong to neither the
-// editor nor its footer, and there can be many of them.
-const taskRow = /^ {2,}[◯○◌◉◎●⏺✓✔✗✘] \S/u;
-/** The screen without the task rows below the editor (only right below its rule and footer). */
-export function withoutTaskRows(lines: string[]): string[] {
-  let end = lines.length;
-  while (end > 0 && (!lines[end - 1].trim() || taskRow.test(lines[end - 1]))) end--;
-  if (end === lines.length || !lines.slice(end, lines.length).some(line => taskRow.test(line))) return lines;
-  return lines.slice(Math.max(0, end - 4), end).some(line => /^\s*[─━]{8,}/u.test(line)) ? lines.slice(0, end) : lines;
-}
+// The background task rows below the input box (2.1.329) are cut in native-task-screen.ts,
+// beside the native task panel, which needs that too.
+export { withoutTaskRows };
 
 /** Exclude assistant prose/code and tool output from native status evidence. */
 function nativeEvidence(lines: string[]): boolean[] {

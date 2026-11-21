@@ -101,6 +101,8 @@ export const releaseNotes: ReleaseNote[] = [
         "Claude Code's \"Auto mode can't check actions\" prompt could only be answered in the terminal; a card in the chat now offers its choices."],
       ['命令确认在问题上方多一行说明（如「This command requires approval」）时不显示卡片，现在显示。',
         "A command confirmation with a reason line above its question (such as \"This command requires approval\") showed no card; it now does."],
+      ['输入框下方列着后台子代理或工作流时（Claude Code 2.1.329 起），回复和压缩的进度提示不显示，压缩中的新消息也没有限制为只能排队；现已修复。',
+        'With background agents or workflows listed below the input box (Claude Code 2.1.329+), reply and compaction progress did not show, nor were new messages held to the queue while compacting; fixed.'],
     ],
   },
   {

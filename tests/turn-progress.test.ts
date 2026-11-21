@@ -52,6 +52,42 @@ test('read compact hook stages and an operation even when a verified task list i
   assert.equal(showsCompactCompletion(withBox('❯ /compact\n  ⎿  Error during compaction: Not enough messages to compact.', '')), false);
 });
 
+// Claude Code 2.1.329+ lists background work below the footer. A user's 2.1.330 screen
+// (through Lectern 0.2.0, session name replaced): /compact while a subagent still ran.
+// Its progress pill never showed: the spinner was looked for inside the input box.
+const named = '─'.repeat(48) + ' 示例会话 ─';
+const agents = (n: number) => n === 1 ? ['  ◯ demo-map  ▱▱▱▱▱▱▱▱  0/4 · 11s'] : ['  ● main',
+  ...Array.from({ length: n - 1 }, (_, i) => `  ○ general-purpose  检查第 ${i + 1} 个记录字段          3m ${i}s · ↓ 141.6k tokens`)];
+const below = (activity: string, rows: string[], hint = 'esc to interrupt · ↓ to manage') => [
+  '* Waiting for 1 background agent to finish', '', '❯ /compact', '', activity, '', named, '❯', '─'.repeat(68), '',
+  `  ⏵⏵ auto mode on (shift+tab to cycle)${hint ? ' · ' + hint : ''}`, ...rows.length ? ['', ...rows] : [], ''].join('\n');
+
+test('progress and a finished /compact are read right above the input box, whatever is listed below it', () => {
+  const compact = '* Compacting conversation… (1m 11s · ↓ 4.5k tokens)';
+  const tip = '  ⎿  Tip: Run claude --continue or claude --resume to resume a session';
+  const thinking = '✻ Thinking… (12s · ↓ 1.2k tokens)';
+  const todo = '  1/3 tasks done · 1 in progress\n  ✔ Inspect fixture\n  ◼ Test fixture\n  ◻ Release fixture';
+  const compacting = { activity: 'Compacting conversation', compactPhase: 'compacting', elapsed: '1m 11s', tokens: { display: '4.5k', direction: 'down' } };
+  const replying = { activity: 'Thinking', elapsed: '12s', tokens: { display: '1.2k', direction: 'down' } };
+  // No rows below is the layout before 2.1.329; one row is a workflow alone; then main and its subagents.
+  for (const rows of [[], agents(1), agents(2), agents(3), agents(12)]) {
+    const at = `${rows.length} rows below`;
+    assert.deepEqual(parseTurnProgress(below(`${compact}\n${tip}`, rows)), compacting, at);
+    assert.deepEqual(parseTurnProgress(below(compact, rows)), compacting, at);
+    assert.deepEqual(parseTurnProgress(below(thinking, rows)), replying, at);
+    assert.deepEqual(parseTurnProgress(below(`${thinking}\n${tip}`, rows), undefined, true), replying, at);
+    assert.deepEqual(parseTurnProgress(below(`${thinking}\n${todo}`, rows, 'esc to interrupt · ctrl+t to hide tasks · ↓ to manage')), replying, at);
+    // The waiting line is a status, the task rows' own timers and counts never the turn's.
+    assert.equal(parseTurnProgress(below('* Waiting for 1 background agent to finish', rows, '↓ to manage'), undefined, true), undefined, at);
+    assert.equal(parseTurnProgress(below('● Finished.', rows)), undefined, at);
+    const done = below('❯ /compact\n  ⎿  Compacted (ctrl+o to see full summary)', rows, '↓ to manage');
+    assert.equal(showsCompactCompletion(done), true, at);
+    assert.equal(parseTurnProgress(done, undefined, true), undefined, at);
+    assert.equal(showsCompactCompletion(below(`${compact}\n${tip}`, rows)), false, at);
+    assert.equal(showsCompactCompletion(below('❯ /compact\n  ⎿  Error during compaction: Not enough messages to compact.', rows, '')), false, at);
+  }
+});
+
 test('ignore old frames, code, body text, drafts, menus and padding; never resurrect metrics from another line', () => {
   for (const viewport of [group('telemetry/manual-idle.txt'), group('telemetry/manual-draft.txt'),
     compacting + withBox('❯ New prompt\n● Finished', ''), withBox('✶ Thinking… (3s · ↓ 7 tokens)\n● This is a new reply.'),

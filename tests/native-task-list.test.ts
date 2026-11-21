@@ -20,6 +20,12 @@ test('only a current native task panel is extracted and its rows stay out of the
   assert.equal(nativeTaskPanel(lines.slice(0,-1)), undefined);
   assert.equal(nativeTaskPanel([...lines,'❯ another question','──────────────','❯','──────────────','? for shortcuts']),undefined);
   assert.equal(nativeTaskPanel(lines.map(l=>l.replace('1/3 tasks','1/5 tasks')))?.tasks, undefined);
+  // 2.1.329 起页脚下方还列出后台任务（main 和各子代理），再多也不把下边框挤出页脚范围。
+  for (const n of [1, 4, 12]) {
+    const agents = ['', '  ⏺ main', ...Array.from({length:n}, (_, i) => `  ◯ general-purpose  第 ${i + 1} 个子代理  ${i + 2}s`)];
+    assert.deepEqual(nativeTaskPanel([...lines, ...agents])?.tasks?.map(t=>t.status), ['completed','in_progress','pending'], `${n}`);
+    assert.equal(nativeTaskPanel([...lines.slice(0,-1), ...agents]), undefined);
+  }
 });
 
 test('collapsed native task files return only titles and status for the selected session', {skip:process.platform==='win32'}, async t=>{

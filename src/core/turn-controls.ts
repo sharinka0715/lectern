@@ -28,6 +28,13 @@ export function rowAboveEditor(lines: string[], top: number): number {
 // show a tmux mouse/focus advisory in its upper rule.
 const rule = /^\s*(?:[─━▔]{5,}|[─━▔]{5,} [^\n]+ [─━▔]+)\s*$/u;
 const linesOf = (view: string) => stripTerminalEscapes(view).replace(/\u00a0/g, ' ').split('\n').map(line => line.trimEnd());
+/** The rows every reader of the input box parses (`turnComposer`, turn progress): task
+ * rows below the footer dropped, notices on top of the box blanked. Rows above the task
+ * rows keep their index, so `turnComposer(view).top` is the same row here and in the
+ * pane; a count from the bottom is not. */
+export function composerLines(view: string): string[] {
+  return withoutEditorNotices(withoutTaskRows(linesOf(view)));
+}
 function lastMatch(lines: string[], test: (line: string, index: number) => boolean): number {
   for (let i = lines.length - 1; i >= 0; i--) if (test(lines[i], i)) return i;
   return -1;
@@ -36,7 +43,7 @@ const placeholder = /^(?:Press up to (?:edit queued messages|select a queued mes
 
 /** The current boxed editor only. Ignore identical text printed above it by tools or assistants. */
 export function turnComposer(view: string) {
-  const lines = withoutEditorNotices(withoutTaskRows(linesOf(view)));
+  const lines = composerLines(view);
   let end = lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
   let bottom = end;
@@ -74,7 +81,9 @@ export function turnComposer(view: string) {
       }
     }
   }
-  return { text, empty: !text || placeholder.test(text), running, queued, tailLines: lines.length - top };
+  // `top` (the upper border) is the same row here and in the pane. `tailLines` counts from
+  // it to the end of the capture, task rows included, for the input guard's `tail -n`.
+  return { text, empty: !text || placeholder.test(text), running, queued, top, tailLines: linesOf(view).length - top };
 }
 
 export function focusedTurnCommandDescription(view: string, command: '/rewind' | '/branch' | '/fork') {

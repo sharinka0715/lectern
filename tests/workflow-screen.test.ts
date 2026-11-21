@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { classifySessionScreen, withoutTaskRows } from '../src/core/screen';
@@ -23,6 +24,20 @@ test('the input box is found with background work listed below it, however many 
     assert.equal(canInterruptTurn(screen, 'busy', editor), false, 'nothing to stop while only the workflow runs');
     const nav = paneNavigationStatus({ id: '%1', active: true, dead: false, native: { sessionId: 's', procStart: '1', status: 'busy' } }, { screen });
     assert.equal(nav.status, 'idle'); assert.match(nav.background!, /工作流/);
+  }
+});
+
+// A turn action (stop, queue, steer) binds its key to the rows from the input box down:
+// the backend hashes `capture-pane … | tail -n <tailLines - 1>` against the same rows of
+// the read. Counted on the parsed rows (tasks dropped), that tail missed the input box.
+test('a turn action guards the pane from the input box down, background task rows and all', { skip: process.platform === 'win32' ? 'POSIX tail' : false }, () => {
+  const before = running.replace(/\n\n  ◯ demo-map[^\n]*/u, '');
+  assert.ok(!before.includes('demo-map') && before.endsWith('(shift+tab to cycle)\n'));
+  for (const screen of [running, agents, spaced, before]) {
+    const editor = turnComposer(screen)!;
+    const guarded = execFileSync('tail', ['-n', String(editor.tailLines - 1)], { input: screen, encoding: 'utf8' });
+    assert.match(guarded, /^─{8,}\n❯/u, 'from the upper border of the input box');
+    assert.equal(guarded, screen.split('\n').slice(editor.top).join('\n'));
   }
 });
 
