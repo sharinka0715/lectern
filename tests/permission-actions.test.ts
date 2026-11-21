@@ -78,3 +78,65 @@ test('an explicit "not sent" receipt on an unchanged dialog is retried; an unver
   await assert.rejects(run(stuck, { kind: 'choose', number: 1 }), PermissionInputUnconfirmed);
   assert.deepEqual(stuck.keys, ['Enter']);
 });
+
+// "Auto mode can't check actions in this session" (Claude Code 2.1.330): choices are keys.
+const unavailable = readFileSync(new URL('./fixtures/auto-mode-unavailable-2.1.330/dialog.txt', import.meta.url), 'utf8');
+const tooShort = unavailable.replace('and stop · Esc', 'and stop (needs a taller window) · Esc');
+const keyed = (d: ReturnType<typeof driver>, action: PermissionAction, expected = parsePermissionScreen(unavailable)!) =>
+  performPermissionAction(d, '%3', 77, expected, action, () => {});
+
+test('staying in auto mode is Enter on the verified dialog; the tool\'s own permission dialog follows', async () => {
+  const d = driver([unavailable, unavailable, bash]);
+  await keyed(d, { kind: 'choose', number: 1 });
+  assert.deepEqual(d.keys, ['Enter']);
+});
+
+test('leaving for accept edits mode is Shift+Tab; the input box coming back closes it', async () => {
+  const d = driver([unavailable, unavailable, done]);
+  await keyed(d, { kind: 'choose', number: 2 });
+  assert.deepEqual(d.keys, ['BTab']);
+  const stop = driver([unavailable, unavailable, done]);
+  await keyed(stop, { kind: 'cancel' });
+  assert.deepEqual(stop.keys, ['Escape']);
+});
+
+test('a choice Claude Code does not take now, or a changed dialog, sends nothing', async () => {
+  const short = driver([tooShort]);
+  await assert.rejects(keyed(short, { kind: 'choose', number: 2 }, parsePermissionScreen(tooShort)!), /不接受这个选项/);
+  const grown = driver([unavailable]);
+  await assert.rejects(keyed(grown, { kind: 'choose', number: 2 }, parsePermissionScreen(tooShort)!), /已变化/, 'the card was made from another frame');
+  const other = driver([bash]);
+  await assert.rejects(keyed(other, { kind: 'choose', number: 1 }), /已变化/);
+  await assert.rejects(keyed(driver([unavailable]), { kind: 'choose', number: 3 }), /没有这个选项/);
+  assert.deepEqual([...short.keys, ...grown.keys, ...other.keys], []);
+});
+
+test('a keyed choice waits out the dialog\'s input grace on the same, rechecked dialog', async () => {
+  const started = Date.now(), d = driver([unavailable, unavailable, done]);
+  await keyed(d, { kind: 'choose', number: 2 });
+  assert.ok(Date.now() - started >= 1000, 'Claude Code ignores Shift+Tab in the dialog\'s first 700 ms');
+  assert.deepEqual(d.keys, ['BTab']);
+  const replaced = driver([unavailable, bash]);
+  await assert.rejects(keyed(replaced, { kind: 'choose', number: 1 }), /已变化/);
+  assert.deepEqual(replaced.keys, [], 'the dialog changed while waiting: nothing is pressed');
+});
+
+test('a key the dialog ignores (it was too soon, or refused) is reported unconfirmed, never pressed again', async () => {
+  const ignored = driver([unavailable, unavailable]);
+  await assert.rejects(keyed(ignored, { kind: 'choose', number: 1 }), PermissionInputUnconfirmed);
+  assert.deepEqual(ignored.keys, ['Enter']);
+  const retried = driver([unavailable, unavailable, unavailable, done], { notSentOnce: 'BTab' });
+  await keyed(retried, { kind: 'choose', number: 2 });
+  assert.deepEqual(retried.keys, ['BTab']);
+});
+
+test('the unnumbered "No / Yes" that follows staying in auto mode is answered by verified arrows too', async () => {
+  const ask = readFileSync(new URL('./fixtures/auto-mode-unavailable-2.1.321/after-stay.txt', import.meta.url), 'utf8');
+  const onYes = ask.replace(' ❯ No', '   No').replace('   Yes', ' ❯ Yes');
+  const d = driver([ask, ask, onYes, onYes, done]);
+  await performPermissionAction(d, '%3', 77, parsePermissionScreen(ask)!, { kind: 'choose', number: 2 }, () => {});
+  assert.deepEqual(d.keys, ['Down', 'Enter']);
+  const no = driver([ask, done]);
+  await performPermissionAction(no, '%3', 77, parsePermissionScreen(ask)!, { kind: 'choose', number: 1 }, () => {});
+  assert.deepEqual(no.keys, ['Enter']);
+});

@@ -65,3 +65,11 @@
 .permission-content pre { margin: 0; }
 .permission-add { color: var(--success, #2f855a); background: color-mix(in srgb, var(--success, #2f855a) 12%, transparent); display: inline-block; min-width: 100%; }
 .permission-del { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); display: inline-block; min-width: 100%; }
+/* "Auto mode can't check actions in this session": Lectern's explanation, Claude Code's
+   own paragraphs, and choices made with keys (Enter, Shift+Tab) rather than numbers. */
+.permission-intro { margin: 2px 0 6px; font-size: var(--text-ui); line-height: 1.5; }
+.permission-native { max-height: 9lh; overflow: auto; }
+.permission-native p { margin: 6px 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--secondary-text); overflow-wrap: anywhere; }
+.permission-native p strong { color: var(--text); font-weight: 550; }
+.question-mark.key { width: auto; min-width: 1.35rem; padding: 0 6px; border-radius: 5px; font-size: var(--text-meta); }
+.question-option-copy small.permission-native-label { font-style: italic; }

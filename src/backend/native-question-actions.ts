@@ -7,7 +7,7 @@ import type { NativeQuestionScreen } from '../shared/native-question';
 import { isQuestionText, type QuestionAction } from '../shared/question-action';
 import { t } from '../shared/i18n';
 
-export type QuestionKey = 'Up' | 'Down' | 'Left' | 'Right' | 'Space' | 'Enter' | 'Escape' | 'n' | 'End' | 'C-u';
+export type QuestionKey = 'Up' | 'Down' | 'Left' | 'Right' | 'Space' | 'Enter' | 'Escape' | 'n' | 'End' | 'C-u' | 'BTab';
 interface QuestionFrame { paneId: string; panePid: number; viewport: string; nativeStatus?: string; nativeWaitingFor?: string }
 export interface QuestionDriver {
   frame(): Promise<QuestionFrame>;

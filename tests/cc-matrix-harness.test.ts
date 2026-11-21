@@ -34,3 +34,25 @@ test('compatibility matrix fake API: the marker picks the script, the step follo
     assert.equal(api.external.length, 0);
   } finally { await api.close(); }
 });
+
+test('compatibility matrix fake API: the safety check can be answered or failed in each way', async () => {
+  const api = await startFakeApi();
+  try {
+    const check = (action: string) => fetch(`${api.url}/v1/messages`, { method: 'POST', body: JSON.stringify({ model: 'm', max_tokens: 64,
+      system: 'You are a security monitor for autonomous AI coding agents.', messages: [{ role: 'user', content: `<transcript>\nBash ${action}\n</transcript>` }] }) });
+    const plans: Record<string, object> = { status: { status: 529, errorType: 'overloaded_error' }, reset: { reset: true }, hang: { hangMs: 150 }, refused: { refuseMs: 400 } };
+    api.script('@classifier', ({ action, answer }: { action: string; answer: () => string }) => plans[action.split(' ')[1]] ?? { text: answer() });
+    assert.match(await (await check('fine')).text(), /<severity>0<\/severity>/);
+    const overloaded = await check('status');
+    assert.equal(overloaded.status, 529);
+    assert.equal((await overloaded.json()).error.type, 'overloaded_error');
+    await assert.rejects(check('reset'));
+    await assert.rejects(check('hang'));
+    await assert.rejects(check('refused'));
+    // Meanwhile new connections are refused; then the same address answers again.
+    await assert.rejects(fetch(`${api.url}/v1/models`), (error: Error & { cause?: { code?: string } }) => error.cause?.code === 'ECONNREFUSED');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.ok((await fetch(`${api.url}/v1/models`)).ok);
+    assert.deepEqual(api.requests.filter((r: { kind: string }) => r.kind === 'classifier').map((r: { failed?: unknown }) => r.failed ?? null), [null, 529, 'reset', 'hang', 'refused']);
+  } finally { await api.close(); }
+});

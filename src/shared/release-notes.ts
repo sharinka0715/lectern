@@ -75,6 +75,10 @@ export const releaseNotes: ReleaseNote[] = [
         'After "Close conversation" the chat went blank and reloaded (longer on SSH machines), losing the scroll position; it now stays in place and turns into resumable history.'],
       ['英文界面下活动卡片分区标题的计数会被截断（如「2 r」）；现在卡片加宽，计数总是完整显示，放不下时整项换行，后台任务栏的计数也是如此。',
         'In English the counts in the activity card\'s section headers were cut short (like "2 r"); the card is wider now and counts show whole, wrapping by item when needed, as in the task column.'],
+      ['Claude Code 提示「Auto mode can\'t check actions」时以前只能去终端处理，现在对话里显示卡片，可直接选择怎么继续。',
+        "Claude Code's \"Auto mode can't check actions\" prompt could only be answered in the terminal; a card in the chat now offers its choices."],
+      ['命令确认在问题上方多一行说明（如「This command requires approval」）时不显示卡片，现在显示。',
+        "A command confirmation with a reason line above its question (such as \"This command requires approval\") showed no card; it now does."],
     ],
   },
   {

@@ -7,16 +7,22 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { _electron } from 'playwright';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-perm-ui-')));
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
+// A second folder whose sessions stay in auto mode, with its own Claude configuration.
+const autoConfig = path.join(root, 'claude-auto'), autoCwd = path.join(root, 'work-auto');
 // One tool call per prompt, chosen by the prompt text; afterwards plain text.
 const plans = {
   '运行命令': { name: 'Bash', input: { command: 'echo hello > greeting.txt', description: 'Write a greeting file' } },
   '写个文件': { name: 'Write', input: { file_path: path.join(cwd, 'new.md'), content: '# New\n' } },
   '清理构建': { name: 'Bash', input: { command: 'rm -rf build', description: 'Remove the build directory' } },
+  // Pipelines go to auto mode's safety check, which this loopback "gateway" does not run.
+  '检查不了': { name: 'Bash', input: { command: "seq -w 1 3 | sed 's/$/ unchecked/' | tee unchecked.txt", description: 'Write an unchecked file' } },
+  '再检查一次': { name: 'Bash', input: { command: "seq -w 1 3 | sed 's/$/ again/' | tee again.txt", description: 'Write another unchecked file' } },
 };
 let calls = 0;
 const served = new Set();
@@ -42,14 +48,22 @@ const server = createServer(async (req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 let app;
 try {
-  await Promise.all([profile, config, cwd, path.join(cwd, 'build')].map(dir => mkdir(dir, { recursive: true })));
+  await Promise.all([profile, config, cwd, path.join(cwd, 'build'), autoConfig, autoCwd].map(dir => mkdir(dir, { recursive: true })));
   await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['perm-e2e'] } }));
   // The app starts sessions in auto mode, which would run these tools without asking.
   // This user has turned auto mode off (Claude Code's documented opt-out), so the
   // session falls back to manual mode and every tool asks.
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'default', disableAutoMode: 'disable' },
     env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'perm', name: '权限确认', kind: 'local', cwd, claudeDir: config }]));
+  // Auto mode stays on there. With a third-party endpoint that does not run auto mode's
+  // server-side check, Claude Code 2.1.321+ asks "Auto mode can't check actions in this
+  // session" — in a session that keeps that check on: Lectern's own launch settings turn
+  // it off, so these sessions are started outside the app (step 4), as a user's own would be.
+  await writeFile(path.join(autoConfig, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [autoCwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['perm-e2e'] } }));
+  await writeFile(path.join(autoConfig, 'settings.json'), JSON.stringify({
+    env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'perm', name: '权限确认', kind: 'local', cwd, claudeDir: config },
+    { id: 'auto', name: '自动检查', kind: 'local', cwd: autoCwd, claudeDir: autoConfig }]));
   const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   const exe = process.argv[2];
@@ -140,7 +154,71 @@ try {
   const projects = path.join(config, 'projects');
   const jsonl = execFileSync('sh', ['-c', `cat "${projects}"/*/*.jsonl`]).toString();
   assert.equal((jsonl.match(/User rejected tool use/g) ?? []).length, 2);
-  console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true }));
+
+  // 4. "Auto mode can't check actions in this session": a card, never answered by Lectern.
+  const unavailable = page.locator('section.permission-card[data-permission-kind="auto-mode-unavailable"]');
+  const dumpPanes = async () => {
+    for (const pane of tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').filter(line => / lectern-/.test(line)).map(line => line.split(' ')[0]))
+      console.error(`PANE ${pane}\n` + tmux('capture-pane', '-p', '-t', pane).split('\n').filter(l => l.trim()).slice(-30).join('\n'));
+    console.error('ROWS', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.session-row')].map(row => [row.getAttribute('data-session-id'), row.textContent.slice(0, 60)]))));
+  };
+  const startAuto = async prompt => {
+    // The user's own `claude` in that folder, in a tmux session the app lists.
+    const id = randomUUID(), quote = arg => `'${arg.replaceAll("'", "'\\''")}'`;
+    const settings = JSON.stringify({ promptSuggestionEnabled: false, permissions: { defaultMode: 'auto' } });
+    // Without CLAUDE_CODE_AUTO_MODE_SERVER, which a shell started from a Lectern session inherits (as 0).
+    tmux('new-session', '-d', '-s', `lectern-${id.slice(0, 8)}-own`, '-x', '120', '-y', '40', '-c', autoCwd, '-e', `CLAUDE_CONFIG_DIR=${autoConfig}`,
+      `exec env -u CLAUDE_CODE_AUTO_MODE_SERVER claude --settings ${quote(settings)} --session-id ${id}`);
+    // Its folder is listed (opening a draft there selects it); the running session shows in it.
+    await page.locator('.workspace-select[aria-label="自动检查"]').click();
+    await page.locator(`.session-row[data-session-id="${id}"]`).click({ timeout: 60000 }).catch(async error => { await dumpPanes(); throw error; });
+    await ready();
+    await input.fill(prompt);
+    await page.getByRole('button', { name: '发送消息', exact: true }).click();
+    await unavailable.waitFor({ timeout: 60000 }).catch(async error => {
+      await dumpPanes();
+      console.error('STATE', JSON.stringify(await page.evaluate(() => ({ status: document.querySelector('.session-row.active')?.getAttribute('data-status'),
+        cards: [...document.querySelectorAll('section.question-card')].map(c => c.textContent.slice(0, 200)), placeholder: document.querySelector('form.composer textarea')?.getAttribute('placeholder') }))));
+      throw error;
+    });
+    return id;
+  };
+  const own = await startAuto('检查不了');
+  assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
+  const text = await unavailable.innerText();
+  assert.match(text, /auto mode 无法检查操作/);
+  assert.match(text, /Auto mode can't check actions in this session/);
+  assert.match(text, /You can stay in auto mode and approve each action that needs the check yourself\./);
+  assert.deepEqual(await unavailable.locator('[data-permission-option] strong').allInnerTexts(), ['留在 auto mode', '改用 accept edits 模式并停止本轮']);
+  assert.deepEqual(await unavailable.locator('.question-mark').allInnerTexts(), ['Enter', '⇧Tab']);
+  assert.equal(await unavailable.locator('.question-option[aria-pressed="true"]').count(), 0, 'nothing is preselected');
+  await mkdir('test-results', { recursive: true });
+  await unavailable.screenshot({ path: path.join('test-results', 'permission-auto-mode-unavailable.png') });
+  // Digits pick nothing here (the native dialog has no numbers), and nothing answers by itself.
+  await unavailable.locator('[data-permission-option="1"]').focus();
+  await page.keyboard.press('1');
+  await page.waitForTimeout(1500);
+  assert.equal(await unavailable.count(), 1);
+  assert.match(tmux('capture-pane', '-p', '-t', `lectern-${own.slice(0, 8)}-own`), /Enter to stay in auto mode/);
+  await unavailable.locator('[data-permission-option="1"]').click();
+  await unavailable.waitFor({ state: 'detached' });
+  // Staying: this action now asks like any tool, "No" focused first; approve it.
+  await card.waitFor();
+  assert.match(await card.innerText(), /Auto mode can't check actions in this session, so this one needs your approval/);
+  assert.deepEqual(await card.locator('[data-permission-option] strong').allInnerTexts(), ['No', 'Yes']);
+  assert.equal(await card.locator('[data-permission-option="1"]').getAttribute('aria-pressed'), 'true');
+  await card.locator('[data-permission-option="2"]').click();
+  await finished();
+  assert.match(await readFile(path.join(autoCwd, 'unchecked.txt'), 'utf8'), /^1 unchecked$/m);
+
+  // 5. Leaving for accept edits mode stops the turn; the waiting action never runs.
+  await startAuto('再检查一次');
+  await unavailable.locator('[data-permission-option="2"]').click();
+  await unavailable.waitFor({ state: 'detached' });
+  await page.waitForFunction(() => document.querySelector('.session-execution-mode')?.getAttribute('data-execution-mode') === 'acceptEdits', null, { timeout: 30000 });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '发送给 Claude 的消息', null, { timeout: 30000 });
+  assert.equal(existsSync(path.join(autoCwd, 'again.txt')), false);
+  console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true, autoModeUnavailable: { stayed: true, left: true } }));
 } finally {
   await app?.close().catch(() => {});
   try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}

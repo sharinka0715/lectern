@@ -366,7 +366,9 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     if (!permission || !paneId || !snapshot?.panePid || permissionBusy || terminalLocked ||
         sessionRequest.current !== selectionGeneration || selected.current.workspaceId !== workspaceId || selected.current.sessionId !== sessionId)
       throw new Error(t('app.permissionChanged'));
-    const reject = action.kind === 'cancel' || rejects(permission.options.find(option => option.number === action.number)?.label ?? '');
+    // A refusal, or leaving auto mode (which stops the turn), hands the next move to the user.
+    const chosen = action.kind === 'choose' ? permission.options.find(option => option.number === action.number) : undefined;
+    const reject = action.kind === 'cancel' || chosen?.key === 'BTab' || rejects(chosen?.label ?? '');
     setAnsweringScopes(previous => new Set(previous).add(settingScope));
     try {
       await window.desktop.answerPermission(workspaceId, sessionId, paneId, snapshot.panePid, permission.token, action);
@@ -1619,7 +1621,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
               onAction={answerQuestion} onViewTerminal={() => setTerminalOpen(true)} />)}
           {permission && !terminalOpen && (terminalLocked ?
             <div className="resume-bar"><span>{t('app.permissionInTerminal')}</span><button onClick={() => setTerminalOpen(true)}>{t('app.viewTerminal')}</button></div> :
-            <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.toolUseId])}
+            <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.toolUseId, permission.kind])}
               permission={permission} unconfirmed={snapshot?.permissionUnconfirmed} busy={permissionBusy || busy || sending || settingUIBusy || !!snapshot?.settingBusy || !!snapshot?.trustBusy}
               onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} />)}
           {directoryTrust && (

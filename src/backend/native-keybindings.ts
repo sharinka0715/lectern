@@ -10,7 +10,7 @@ const actions: Partial<Record<BindingsContext, Record<string, string>>> = {
   ModelPicker: { s: 'modelPicker:thisSessionOnly' },
   EffortSlider: { left: 'effortSlider:decreaseEffort', right: 'effortSlider:increaseEffort', s: 'effortSlider:thisSessionOnly' },
   Select: { up: 'select:previous', down: 'select:next', home: 'select:first', end: 'select:last', pageup: 'select:pageUp', pagedown: 'select:pageDown', enter: 'select:accept', escape: 'select:cancel' },
-  Confirmation: { up: 'confirm:previous', down: 'confirm:next', enter: 'confirm:yes', escape: 'confirm:no' },
+  Confirmation: { up: 'confirm:previous', down: 'confirm:next', enter: 'confirm:yes', escape: 'confirm:no', 'shift+tab': 'confirm:cycleMode' },
 };
 
 const normalizeChord = (chord: string) => chord.trim().toLowerCase().replace(/\besc\b/g, 'escape').replace(/\breturn\b/g, 'enter');

@@ -9,7 +9,12 @@
 // - Side requests (session titles, topic checks, the compaction summary, quota
 //   probes) get short canned answers; the compaction request is recognised by its
 //   summary instructions, auto mode's safety check by its system prompt (it passes
-//   everything but actions marked ccm-blocked).
+//   everything but actions marked ccm-blocked; the '@classifier' script can answer or
+//   fail it instead). A script may also fail its request: { status: 529 } (an error
+//   envelope), { reset: true } (connection dropped), { hangMs } (no answer until the
+//   client gives up) or { refuseMs } (the server stops listening for that long).
+// - Server-side checks are never run: an endpoint other than *.anthropic.com is a
+//   gateway to Claude Code, and this one does not pass auto mode's server check through.
 // - count_tokens, model listing and anything else the CLI asks for at startup are
 //   answered sanely and logged; unknown endpoints are recorded in `unknown`.
 // - The server is also the CLI's HTTP(S) proxy (HTTPS_PROXY): any attempt to reach
@@ -73,12 +78,23 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     return gates.get(name);
   };
 
+  // Close the listener and every open connection, then listen on the same port again:
+  // meanwhile a new connection is refused (ECONNREFUSED), as with a server that is down.
+  let refusing, closed = false;
+  const refuseConnections = ms => refusing ??= (async () => {
+    const { port } = server.address();
+    await new Promise(resolve => { server.close(resolve); for (const socket of sockets) socket.destroy(); });
+    await new Promise(resolve => setTimeout(resolve, ms));
+    if (!closed) await new Promise((resolve, reject) => server.once('error', reject).listen(port, '127.0.0.1', resolve));
+    refusing = undefined;
+  })();
+
   async function respond(req, res, body) {
     const kind = kindOf(body);
     const messages = body.messages ?? [];
     const found = kind === 'main' || kind === 'agent' ? locate(messages) : undefined;
     const script = found && scripts.get(found.name);
-    const entry = { id: ++sequence, kind, model: body.model, stream: !!body.stream, script: found?.name, step: found?.step, tools: (body.tools ?? []).map(tool => tool.name), maxTokens: body.max_tokens, thinking: body.thinking?.type, effort: body.output_config?.effort,
+    const entry = { id: ++sequence, kind, model: body.model, stream: !!body.stream, script: found?.name, step: found?.step, tools: (body.tools ?? []).map(tool => tool.name), maxTokens: body.max_tokens, thinking: body.thinking?.type, effort: body.output_config?.effort, beta: req.headers['anthropic-beta'],
       images: imagesSinceReply(messages), at: Date.now() };
     requests.push(entry);
     // CC_MATRIX_DUMP=<dir> keeps every request body, for writing new scenarios.
@@ -89,6 +105,8 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     // A test can hold or replace the compaction answer with the '@compact' script.
     else if (kind === 'compact' && scripts.has('@compact')) plan = await scripts.get('@compact')({ body, messages, kind });
     else if (kind === 'compact') plan = { blocks: [{ type: 'text', text: '<summary>\n1. Primary Request and Intent: the compatibility matrix exercised compaction.\n2. Pending Tasks: none.\n</summary>' }] };
+    // A test can fail the safety check with the '@classifier' script (see failure plans below).
+    else if (kind === 'classifier' && scripts.has('@classifier')) plan = await scripts.get('@classifier')({ body, messages, kind, action: gradedAction(messages), answer: () => classifierAnswer(body, messages) });
     else if (kind === 'classifier') plan = { blocks: [{ type: 'text', text: classifierAnswer(body, messages) }] };
     else if (kind === 'side') plan = { blocks: [{ type: 'text', text: sideAnswer(body) }] };
     else plan = { blocks: [{ type: 'text', text: defaultText }] };
@@ -100,7 +118,19 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
       entry.gated = plan.gate;
       await Promise.race([held.promise, new Promise(resolve => setTimeout(resolve, plan.gateTimeoutMs ?? 120_000))]);
     }
+    // Failure plans: drop the connection, never answer (until the client gives up),
+    // or stop listening for a while so that new connections are refused.
+    if (plan.reset) { entry.failed = 'reset'; req.socket.destroy(); return; }
+    if (plan.hangMs) {
+      entry.failed = 'hang';
+      await new Promise(resolve => { const timer = setTimeout(resolve, plan.hangMs); res.on('close', () => { clearTimeout(timer); resolve(); }); });
+      entry.aborted = res.destroyed || res.writableEnded ? true : undefined;
+      if (!res.destroyed) req.socket.destroy();
+      return;
+    }
+    if (plan.refuseMs) { entry.failed = 'refused'; req.socket.destroy(); await refuseConnections(plan.refuseMs); return; }
     if (plan.status && plan.status >= 400) {
+      entry.failed = plan.status;
       res.writeHead(plan.status, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ type: 'error', error: { type: plan.errorType ?? 'api_error', message: plan.errorMessage ?? 'Scripted failure' } }));
     }
@@ -205,6 +235,7 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     waiting(name) { return gates.get(name)?.waiting ?? 0; },
     reset() { requests.length = 0; },
     async close() {
+      closed = true;
       for (const held of gates.values()) held.release();
       for (const socket of sockets) socket.destroy();
       await new Promise(resolve => server.close(resolve));
@@ -246,11 +277,15 @@ function pieces(text, size) {
  * here, except actions carrying "ccm-blocked", which get an answer the check cannot use:
  * Claude Code then blocks the action, and after three in a row asks the user. */
 function classifierAnswer(body, messages) {
+  if (/ccm-blocked/.test(gradedAction(messages))) return 'Unable to grade this action.';
+  return (body.max_tokens ?? 0) <= 256 ? '<severity>0</severity>' : '<thinking>A routine command inside the working directory.</thinking>\n<severity>0</severity>';
+}
+
+/** The action the safety check grades: the last entry of the transcript it was sent. */
+function gradedAction(messages) {
   const request = textOf([...messages].reverse().find(message => message.role === 'user')?.content);
   const transcript = /<transcript>([\s\S]*)<\/transcript>/.exec(request)?.[1] ?? request;
-  // The action being graded is the transcript's last entry.
-  if (/ccm-blocked/.test(transcript.trim().split('\n').filter(Boolean).at(-1) ?? '')) return 'Unable to grade this action.';
-  return (body.max_tokens ?? 0) <= 256 ? '<severity>0</severity>' : '<thinking>A routine command inside the working directory.</thinking>\n<severity>0</severity>';
+  return transcript.trim().split('\n').filter(Boolean).at(-1) ?? '';
 }
 
 function sideAnswer(body) {

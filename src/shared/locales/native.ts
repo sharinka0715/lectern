@@ -55,6 +55,7 @@ export const native = {
   permissionNoResult: ['原生画面没有确认权限选择的结果。', 'The native screen did not confirm the permission choice.'],
   invalidPermissionChoice: ['无效的权限选择', 'Invalid permission choice.'],
   permissionNoOption: ['原生权限确认没有这个选项', 'The native permission request has no such option.'],
+  permissionOptionUnavailable: ['Claude Code 现在不接受这个选项（终端窗口太矮时它不接受切换模式），请在原生终端里处理', "Claude Code does not take this choice now (it refuses the mode switch while its terminal is too short); answer it in the terminal."],
   questionUnconfirmed: ['原生问答输入可能已发送，但结果未确认；不会自动重试。请查看原生终端。', 'The answer may have been sent, but the result is unconfirmed; it will not be retried. Check the terminal.'],
   questionChanged: ['原生问答画面或会话已变化，未继续操作。请重新查看。', 'The native question or conversation changed, so nothing more was done. Take another look.'],
   questionUnsupported: ['当前原生问答控件不支持此操作。请查看原生终端。', 'The native question control does not support this action. Check the terminal.'],

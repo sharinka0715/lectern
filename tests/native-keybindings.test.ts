@@ -20,6 +20,15 @@ test('an unrelated custom shortcut has no effect on native model and confirmatio
   assert.equal(defaultNativeKey('{ // custom keys\n "bindings": [ { "context": "Chat", "bindings": { "x": "abc//def", }, }, ], }', 's', ['ModelPicker']), true);
 });
 
+test('Shift+Tab leaves auto mode in a confirmation only while it is still confirm:cycleMode', () => {
+  const contexts = ['Question', 'Select', 'Confirmation', 'Tabs', 'TextInput'] as const;
+  assert.equal(defaultNativeKey('{"bindings":[]}', 'shift+tab', [...contexts]), true);
+  assert.equal(defaultNativeKey('{"bindings":[{"context":"Chat","bindings":{"shift+tab":"chat:cycleMode"}}]}', 'shift+tab', [...contexts]), true);
+  for (const custom of [{ 'shift+tab': 'confirm:yes' }, { 'shift+tab': null }, { 'meta+m': 'confirm:cycleMode' }]) {
+    assert.equal(defaultNativeKey(JSON.stringify({ bindings: [{ context: 'Confirmation', bindings: custom }] }), 'shift+tab', [...contexts]), false, JSON.stringify(custom));
+  }
+});
+
 test('reassigned, unbound, prefixed and ambiguous model keys have to be handled in the terminal', () => {
   for (const custom of [{ s: 'select:accept' }, { s: null }, { 's x': 'other' }, { n: 'modelPicker:thisSessionOnly' }]) {
     const bindings = JSON.stringify({ bindings: [{ context: 'ModelPicker', bindings: custom }] });

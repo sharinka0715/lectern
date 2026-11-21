@@ -1512,7 +1512,7 @@ ${this.nativeGuard(pane, location)}lectern_digest=$(${capture(paneId)}${tail}${f
       },
       questionKey: async key => {
         if (!last) throw new Error(t('backend.questionScreenUnchecked'));
-        const binding = key.replace(/^C-/, 'ctrl+');
+        const binding = key === 'BTab' ? 'shift+tab' : key.replace(/^C-/, 'ctrl+');
         await input(last.pane.id, binding, ['Question', 'Select', 'Confirmation', 'Tabs', 'TextInput'], this.tmux('send-keys', '-t', last.pane.id, key), false);
       },
       pasteQuestion: async text => {

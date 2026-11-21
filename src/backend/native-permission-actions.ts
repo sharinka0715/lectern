@@ -11,12 +11,16 @@ export class PermissionInputUnconfirmed extends Error {
   constructor(cause?: unknown) { super(t('native.permissionUnconfirmed'), { cause }); }
 }
 const changed = () => new Error(t('native.permissionChanged'));
+/** Claude Code ignores a keyed dialog's keys for a moment after it opens (Shift+Tab for 700 ms,
+ * and a refused key holds off the next for a second); press only once it has been up this long. */
+const KEYED_SETTLE_MS = 1000;
 const equalScreen = (a: NativePermissionScreen, b: NativePermissionScreen) => samePermission(a, b) && focusedPermission(a) === focusedPermission(b);
 
 /**
  * Answer Claude Code's tool permission dialog the way a user would: move the
  * focus with arrows, proving each step on a fresh frame, then press Enter
- * (or Esc to cancel), and confirm that this dialog has closed.
+ * (or Esc to cancel), and confirm that this dialog has closed. A dialog whose
+ * choices are keys (Enter, Shift+Tab) gets that one key on the verified frame.
  */
 export async function performPermissionAction(driver: Pick<QuestionDriver, 'frame' | 'questionKey'>, paneId: string, panePid: number,
   expected: NativePermissionScreen, action: PermissionAction, assertCurrent: () => void): Promise<void> {
@@ -31,8 +35,9 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
   };
   const initial = (await inspect()).screen;
   if (!initial || !equalScreen(initial, expected)) throw changed();
+  const seen = Date.now();
   let current = initial, awaitingEffect = false;
-  const key = async (value: 'Up' | 'Down' | 'Enter' | 'Escape') => {
+  const key = async (value: 'Up' | 'Down' | 'Enter' | 'Escape' | 'BTab') => {
     for (let attempt = 0; ; attempt++) {
       check();
       awaitingEffect = true;
@@ -64,11 +69,30 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
     }
     throw new Error(t('native.permissionNoResult'));
   };
+  // A keyed dialog: wait out its input grace on the same dialog, checked again.
+  const settleKeyed = async () => {
+    if (Date.now() - seen >= KEYED_SETTLE_MS) return;
+    await delay(KEYED_SETTLE_MS - (Date.now() - seen));
+    const again = (await inspect()).screen;
+    if (!again || !equalScreen(again, current)) throw changed();
+  };
   try {
-    if (action?.kind === 'cancel') { await key('Escape'); await settle(() => false, true); return; }
+    if (action?.kind === 'cancel') {
+      if (current.kind) await settleKeyed();
+      await key('Escape'); await settle(() => false, true); return;
+    }
     if (action?.kind !== 'choose' || !Number.isSafeInteger(action.number)) throw new Error(t('native.invalidPermissionChoice'));
     const index = current.options.findIndex(option => option.number === action.number);
     if (index < 0) throw new Error(t('native.permissionNoOption'));
+    // A keyed choice ("Auto mode can't check actions …"): its own key, then the dialog must close.
+    const keyed = current.options[index].key;
+    if (current.kind || keyed) {
+      if (!keyed || current.options[index].unavailable) throw new Error(t('native.permissionOptionUnavailable'));
+      await settleKeyed();
+      await key(keyed);
+      await settle(() => false, true);
+      return;
+    }
     let at = focusedPermission(current);
     while (at !== index) {
       const step = Math.sign(index - at);

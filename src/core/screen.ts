@@ -1,7 +1,7 @@
 import type { SessionStatus } from '../shared/types';
 import { diagnostic, summarize } from '../diagnostics';
 import { parseCacheConfirmationLines } from './model-switch-confirmation';
-import { parseAutoModeNudgeLines, type AutoModeNudge } from './auto-mode-screen';
+import { AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudgeLines, showsAutoModeUnavailable, type AutoModeNudge } from './auto-mode-screen';
 import { nativeTaskPanel } from './native-task-screen';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 import { t } from '../shared/i18n';
@@ -191,6 +191,11 @@ function classifyLines(allLines: string[]): SessionScreenClassification {
   const lines = allLines.slice(-64);
   const native = nativeEvidence(allLines).slice(-64);
   const has = (last: number, matcher: RegExp) => lines.some((line, index) => index >= lines.length - last && native[index] && matcher.test(line));
+  // "Auto mode can't check actions in this session" holds the turn until answered. Even
+  // a variant the card cannot parse (or one a short terminal cuts off) is a native prompt,
+  // never an idle input box.
+  if (showsAutoModeUnavailable(allLines) || (lines.some((line, index) => index >= lines.length - 40 && line.trim() === AUTO_MODE_UNAVAILABLE_TITLE)
+    && has(3, /\b(?:Enter to stay in auto mode|Esc to cancel)\b/))) return { status: 'waiting', detail: t('core.waitingAutoModeUnavailable') };
   const theme = has(64, /^\s*Choose the text style that looks best with your terminal\.?\s*$/)
     && has(64, /^\s*❯\s*(?:✔\s*)?(?:\d+\.\s*)?(?:Auto|Dark|Light)\b/);
   if (theme) return { status: 'waiting', detail: t('core.waitingTheme') };

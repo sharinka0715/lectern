@@ -5,6 +5,7 @@ export const core = {
   waitingModelCache: ['等待确认模型切换的缓存成本', 'Waiting to confirm the cache cost of switching models'],
   waitingEffortCache: ['等待确认 effort 切换的缓存成本', 'Waiting to confirm the cache cost of switching effort'],
   waitingAutoModeNudge: ['正在跳过「是否把 auto mode 设为默认」的提示', 'Getting past the prompt to make auto mode the default'],
+  waitingAutoModeUnavailable: ['auto mode 无法检查操作，等你选择怎么继续', "Auto mode can't check actions; waiting for your choice"],
   waitingTheme: ['等待选择终端主题', 'Waiting for a terminal theme choice'],
   waitingBypass: ['等待用户确认是否启用跳过权限模式', 'Waiting for the user to confirm bypass permissions mode'],
   waitingStartupNotice: ['等待确认启动提示', 'Waiting to confirm a startup notice'],
