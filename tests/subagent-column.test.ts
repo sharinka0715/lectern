@@ -12,7 +12,7 @@ import { adoptSidechain, coordinatorMessage } from '../src/core/subagent-records
 import { SubagentReader, type SubagentBackend } from '../src/main/subagent-reader';
 import { Controller } from '../src/main/controller';
 import { WorkspaceStore } from '../src/main/store';
-import { defaultSubagent, subagentEntries } from '../src/renderer/subagent-entries';
+import { defaultSubagent, shownSubagent, subagentEntries } from '../src/renderer/subagent-entries';
 import type { SessionActivity } from '../src/shared/activity';
 import type { Workspace } from '../src/shared/types';
 
@@ -175,6 +175,12 @@ test('the column lists the activity card subagents first, matched to their trans
   assert.equal(entries[1].agentType, 'Explore');
   assert.equal(defaultSubagent(entries)?.key, 'toolu_sync', 'a running subagent first');
   assert.equal(defaultSubagent(subagentEntries([item('toolu_x', 'running')], []))?.key, 'toolu_x');
+  // Loading older history reaches the launch of the earlier one the column shows:
+  // its row becomes the activity card's (another key), and it stays shown.
+  const older = subagentEntries([item('toolu_sync', 'running'), item('toolu_older', 'completed', 'aolder')], files);
+  assert.equal(shownSubagent(older, 'agent:aolder', 'aolder')?.key, 'toolu_older');
+  assert.equal(shownSubagent(older, 'toolu_older', 'aolder')?.key, 'toolu_older');
+  assert.equal(shownSubagent(older, 'agent:gone', undefined)?.key, 'toolu_sync', 'without a match the default');
 });
 
 const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windows runs no local commands' : false };

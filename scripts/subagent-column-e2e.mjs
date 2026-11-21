@@ -4,7 +4,8 @@
 // one running, each with its own transcript under <session>/subagents/. The
 // activity card opens the column; it lists both, shows the running one's
 // conversation as it grows, the finished one's thinking, tools and report, and a
-// SendMessage resume makes the finished one run again with its new messages.
+// SendMessage resume makes the finished one run again with its new messages,
+// until interim notifications (waiting on its own background work) end that run.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -141,11 +142,28 @@ try {
   assert.equal(await finished.getAttribute('data-state'), 'running');
   assert.equal(await finished.locator('article.message-user', { hasText: 'The coordinator sent' }).count(), 0, 'the native wrapper is not shown');
 
+  // The resumed run stops while its own background work runs (Claude Code 2.1.329):
+  // only interim notifications follow, and its meta file says finished. It has ended.
+  const waiting = tool => `<task-notification>\n<task-id>${done}</task-id>\n${tool ? `<tool-use-id>${tool}</tool-use-id>\n` : ''}<status>completed</status>\n<summary>Agent "整理测试清单" is waiting on its own background work</summary>\n<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>\n<result>补充完毕。</result>\n</task-notification>`;
+  await writeFile(path.join(subagents, `agent-${done}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description: '整理测试清单', toolUseId: 'toolu_e2e_done', finished: true }));
+  await appendFile(main, lines([
+    { type: 'queue-operation', operation: 'enqueue', sessionId: sid, timestamp: at(70), content: waiting('toolu_e2e_send') },
+    { type: 'queue-operation', operation: 'enqueue', sessionId: sid, timestamp: at(71), content: waiting() },
+    record('user', { origin: { kind: 'task-notification' }, promptSource: 'system', message: { role: 'user', content: waiting('toolu_e2e_send') } }, 72),
+  ]));
+  await page.waitForFunction(id => document.querySelector(`.subagent-list button[data-agent-id="${id}"]`)?.dataset.state === 'completed', done);
+  assert.equal(await finished.getAttribute('data-state'), 'completed');
+  const facts = await finished.locator('.subagent-detail-head small').innerText();
+  assert.match(facts, /已续接 1 次/);
+  await page.waitForTimeout(1500);
+  assert.equal(await finished.locator('.subagent-detail-head small').innerText(), facts, 'an ended run no longer counts time');
+  assert.match(await column.locator('.subagent-column-bar small').innerText(), /1 运行中 · 1 完成/);
+
   // Closing the column leaves the chat as it was.
   await column.locator('.subagent-column-bar button').click();
   await column.waitFor({ state: 'detached' });
   assert.deepEqual(errors, []);
-  console.log('PASS: the activity card opens the subagent column; it follows a running subagent live, shows a finished one with thinking, tools and report, and a resumed one runs again with its new messages.');
+  console.log('PASS: the activity card opens the subagent column; it follows a running subagent live, shows a finished one with thinking, tools and report, a resumed one runs again with its new messages, and interim notifications end that run.');
   console.log(`Screenshots: ${path.join(results, 'subagent-column-running.png')}, ${path.join(results, 'subagent-column-finished.png')}`);
 } catch (error) {
   const page = app?.windows()[0];

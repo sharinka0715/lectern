@@ -42,3 +42,12 @@ export function subagentEntries(items: readonly SessionActivity[], files: readon
 export function defaultSubagent(entries: readonly SubagentEntry[]): SubagentEntry | undefined {
   return entries.find(entry => entry.status === 'running' && entry.agentId) ?? entries.find(entry => entry.agentId) ?? entries[0];
 }
+
+/** The entry the column shows: the chosen one, found again by its agent ID when
+ * its key changed (loading older history turns a transcript-only row into the
+ * activity card's, or a reset turns it back); otherwise the default. */
+export function shownSubagent(entries: readonly SubagentEntry[], selected?: string, agentId?: string): SubagentEntry | undefined {
+  return entries.find(entry => entry.key === selected)
+    ?? (agentId ? entries.find(entry => entry.agentId === agentId) : undefined)
+    ?? defaultSubagent(entries);
+}

@@ -6,7 +6,7 @@ import type { ArtifactTarget } from './ArtifactDrawer';
 import { ConversationTranscript } from './ConversationTranscript';
 import type { ReplyDetail } from './desktop-state';
 import { reportActionError } from './diagnostics';
-import { defaultSubagent, subagentEntries, type SubagentEntry } from './subagent-entries';
+import { shownSubagent, subagentEntries, type SubagentEntry } from './subagent-entries';
 import { t } from '../shared/i18n';
 import './subagent-column.css';
 
@@ -92,8 +92,11 @@ export function SubagentColumn(props: Props) {
   const agentsKey = agents.map(item => `${item.id}:${item.taskId ?? ''}:${item.status}:${item.resumes ?? 0}`).join(',');
   const files = useSubagentFiles(workspace.id, sessionId, agentsKey, agents.some(item => item.status === 'running' && !item.taskId));
   const entries = useMemo(() => subagentEntries(agents, files), [agents, files]);
-  const entry = entries.find(item => item.key === props.selected) ?? defaultSubagent(entries);
-  // The one shown stays shown when others start or end.
+  // The one shown stays shown when others start or end, and when loading older
+  // history gives it the activity card's key.
+  const shownAgent = useRef<string | undefined>(undefined);
+  const entry = shownSubagent(entries, props.selected, shownAgent.current);
+  useEffect(() => { shownAgent.current = entry?.agentId; });
   const { onSelect } = props;
   useEffect(() => { if (entry && entry.key !== props.selected) onSelect(entry.key); }, [entry?.key, props.selected, onSelect]); // eslint-disable-line react-hooks/exhaustive-deps
   const [attempt, setAttempt] = useState(0);

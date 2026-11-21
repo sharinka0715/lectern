@@ -172,20 +172,49 @@ test('a subagent stopped when the previous process ended runs again after a resu
   assert.equal(backgroundCounts(store.snapshot(true), undefined, 'busy', restarted).agents, 1);
 });
 
-test('an interim notification while the subagent waits on its own background work keeps it running', () => {
+// Claude Code 2.1.329 writes this when a subagent stops while its own background
+// work still runs. It notifies again only if the subagent goes on by itself.
+const interimNote = 'This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.';
+const interimNotice = (agent: string, tool?: string) => notice(agent, tool, 'completed', `Agent "Fixture ${agent}" is waiting on its own background work`, interimNote);
+
+test('an interim notification ends the run; a later notification of the same subagent replaces it', () => {
   const store = new SessionActivityStore(sid);
-  const interim = notice('a400', 'agent400', 'completed', 'Agent "Fixture a400" is waiting on its own background work',
-    'This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports; the result below may be interim.');
+  const interim = interimNotice('a400', 'agent400');
   store.ingest([...launch('agent400', 'a400', 0), enqueue(interim, 10), delivered(interim, 10)]);
   let item = agentState(store, 'a400');
-  assert.equal(item.status, 'running');
-  assert.equal(item.summary, undefined, 'an interim result is not the report');
+  assert.equal(item.status, 'completed', 'the subagent stopped; Claude Code marks it finished and stops counting it');
+  assert.equal(item.endedAt, at(10));
   assert.deepEqual(item.events.map(event => event.text), ['Agent "Fixture a400" is waiting on its own background work']);
-  const done = notice('a400', undefined, 'completed', 'Agent "Fixture a400" finished');
-  store.ingest([enqueue(done, 15), delivered(done, 15)]);
+  assert.equal(store.endedAgentsSince(at(5)), 1);
+  // Its background work reported and it went on by itself: the next notification wins.
+  const done = notice('a400', undefined, 'completed', 'Agent "Fixture a400" finished', undefined, 5000);
+  store.ingest([enqueue(done, 15), removed(interim, 16), removed(done, 16), absorbed(interim, 10), absorbed(done, 15)]);
   item = agentState(store, 'a400');
   assert.equal(item.status, 'completed');
-  assert.equal(item.endedAt, at(15));
+  assert.equal(item.endedAt, at(15), 'the interim attachment written afterwards is older and changes nothing');
+  assert.equal(item.tokens, 5000);
+  assert.equal(item.resumes, undefined, 'going on by itself is not a resume');
+  assert.equal(runningMs(item, Date.parse(at(59))), 15 * 60_000);
+  // A stale copy of the interim notification cannot reopen it either.
+  store.ingest([enqueue(interim, 12)]);
+  assert.equal(agentState(store, 'a400').endedAt, at(15));
+});
+
+test('a resumed subagent whose last notifications are interim ones ends, and stays ended', () => {
+  // The order Claude Code 2.1.329 wrote in a real session: stopped with the previous
+  // process, resumed, then two interim notifications (the second after it handled
+  // its background work's report) and no final one; its meta file says finished.
+  const store = new SessionActivityStore(sid);
+  const stopped = notice('a410', undefined, 'stopped', 'Background agent "Fixture a410" didn\'t finish before the previous session ended');
+  const first = interimNotice('a410', 'msg41'), second = interimNotice('a410');
+  store.ingest([...launch('agent410', 'a410', 0), enqueue(stopped, 3), delivered(stopped, 3), send('msg41', 'a410', 6), resumed('msg41', 'a410', 6),
+    enqueue(first, 40), enqueue(second, 41), removed(first, 42), removed(second, 42), absorbed(first, 40), absorbed(second, 41)]);
+  const item = agentState(store, 'a410');
+  assert.equal(item.status, 'completed');
+  assert.equal(item.endedAt, at(41));
+  assert.equal(item.resumes, 1);
+  assert.equal(runningMs(item, Date.parse('2026-01-02T00:00:00.000Z')), (3 + 35) * 60_000, 'its time stops with the run, not at "now"');
+  assert.deepEqual(backgroundCounts(store.snapshot(true), undefined, 'idle'), { shells: 0, agents: 0, monitors: 0, workflows: 0 });
 });
 
 test('a message queued for a running subagent changes nothing; failed or unrelated messages resume nothing', () => {

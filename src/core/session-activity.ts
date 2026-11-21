@@ -23,8 +23,10 @@ const xmlValue = (xml: string, tag: string) => {
   return raw?.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').trim();
 };
 
-/** A notification that only says the subagent paused while its own background
- * work runs (Claude Code 2.1.329: status "completed", the result "may be interim"). */
+/** A notification that says the subagent stopped while its own background work
+ * still ran (Claude Code 2.1.329: status "completed", the result "may be interim").
+ * It notifies again only if it goes on by itself; Claude Code marks it finished
+ * (`finished` in its meta file) and no longer counts it as pending. */
 const interimNotice = (summary?: string, note?: string) =>
   /\bwaiting on its own background work\b/i.test(summary ?? '') || /\bmay be interim\b/i.test(note ?? '');
 const parsed = (text: string): JsonRecord => {
@@ -34,7 +36,9 @@ const parsed = (text: string): JsonRecord => {
 
 interface Entry { item: SessionActivity; stamp?: string; settledRead?: boolean; attempts?: number;
   /** Fingerprints of enqueued notifications whose delivery has not been seen yet. */
-  notices?: string[] }
+  notices?: string[];
+  /** Its latest run ended with an interim notification: a later one replaces it. */
+  waiting?: boolean }
 type NoticeSource = 'enqueue' | 'remove' | 'delivery';
 export class SessionActivityStore {
   private entries = new Map<string, Entry>();
@@ -174,11 +178,14 @@ export class SessionActivityStore {
     }
     // The global transcript remains the source for older history. Keep live
     // tasks and a bounded recent activity panel, even in multi-day sessions.
+    // Subagents stay: SendMessage can resume one at any later time, and an
+    // evicted one would miss that depending on how the records were chunked
+    // (live polls ingest many small reads, a page rebuild one large one).
     if (this.entries.size > 128) {
       let excess = this.entries.size - 128;
       for (const [id, entry] of this.entries) {
         if (!excess) break;
-        if (entry.item.status === 'running') continue;
+        if (entry.item.status === 'running' || entry.item.kind === 'agent') continue;
         this.entries.delete(id);
         if (entry.item.taskId && this.byTask.get(entry.item.taskId) === entry) this.byTask.delete(entry.item.taskId);
         excess--;
@@ -202,12 +209,14 @@ export class SessionActivityStore {
     if (at && (!item.updatedAt || at > item.updatedAt)) item.updatedAt = at;
   }
   private finish(entry: Entry, status: ActivityState, at?: string) {
-    if (status === 'running' || entry.item.status !== 'running') return;
+    if (status === 'running' || entry.item.status !== 'running') return false;
     // Observed before the latest resume: it ended the run before that one.
-    if (at && entry.item.resumedAt && at < entry.item.resumedAt) return;
+    if (at && entry.item.resumedAt && at < entry.item.resumedAt) return false;
     entry.item.status = status;
     entry.item.endedAt = at;
     entry.item.updatedAt = at ?? entry.item.updatedAt;
+    entry.waiting = false;
+    return true;
   }
   /** SendMessage to a finished or stopped subagent starts a new run of it. A
    * message queued for a running one ("Message queued for delivery") changes nothing. */
@@ -222,6 +231,7 @@ export class SessionActivityStore {
     }
     item.status = 'running';
     item.endedAt = undefined;
+    entry.waiting = false;
     item.resumes = (item.resumes ?? 0) + 1;
     item.updatedAt = at ?? item.updatedAt;
     // Its transcript grows again: sample it like any running task.
@@ -309,14 +319,20 @@ export class SessionActivityStore {
     if (event) this.event(item, event, 'notice:' + at + ':' + event.slice(0, 1024), at);
     const status = statusFor(xmlValue(raw, 'status'));
     if (!status) return;
-    if (item.kind === 'agent' && interimNotice(summary, xmlValue(raw, 'note'))) {
-      // Paused on its own background work; it notifies again when it really ends.
-      if (summary) this.event(item, summary, 'notice:' + at + ':' + summary.slice(0, 1024), at);
-      return;
-    }
-    // Observed before the latest resume: it reports on an earlier run.
+    const interim = item.kind === 'agent' && interimNotice(summary, xmlValue(raw, 'note'));
+    if (interim && summary) this.event(item, summary, 'notice:' + at + ':' + summary.slice(0, 1024), at);
+    // Observed before the latest resume, or before the end of the latest run:
+    // it reports on an earlier state. The later notification always wins.
     if (at && item.resumedAt && at < item.resumedAt) return;
-    this.finish(entry, status, at);
+    if (at && item.status !== 'running' && item.endedAt && at < item.endedAt) return;
+    if (entry.waiting && item.status !== 'running' && status !== 'running') {
+      // It stopped while its own background work ran and went on by itself:
+      // this notification replaces the interim one (the run lasted until now).
+      item.status = 'running';
+      entry.settledRead = false;
+      entry.attempts = 0;
+    }
+    if (this.finish(entry, status, at)) entry.waiting = interim;
     item.summary = (result || summary)?.slice(0, 3072) ?? item.summary;
     if (summary && item.kind !== 'agent') {
       const code = /\bexit(?:ed with)? code\s+(-?\d+)\)?\s*$/i.exec(summary);

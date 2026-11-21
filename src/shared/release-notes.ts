@@ -46,6 +46,12 @@ export const releaseNotes: ReleaseNote[] = [
         'Wrapped Chinese questions no longer gain stray spaces on the question card.'],
       ['对话滚到底时，右侧滚动条停在输入框上方；现在滚动条一直延伸到窗口底部，消息从输入框下方滚过，在输入框区域滚动滚轮也能翻看对话。',
         'At the end of a chat the scrollbar stopped above the input box; it now reaches the bottom of the window, messages scroll beneath the input area, and the wheel over it scrolls the chat.'],
+      ['往前翻页后，已完成的子代理可能变成「运行中」并一直计时；现在以最后一条通知为准，与读取方式无关。',
+        'Scrolling back could turn a finished subagent into "running" with its time still counting; the latest notification now decides, however the history is loaded.'],
+      ['后续工具调用很多时，较早的子代理会从活动卡片中消失，之后的续接也可能漏掉；现在子代理始终保留。',
+        'After many later tool calls an earlier subagent could drop out of the activity card and miss a later resume; subagents now stay in the card.'],
+      ['子代理栏查看较早的子代理时，往前翻页加载到它的启动记录会跳到别的子代理；现在保持不变。',
+        'Scrolling back to the launch of an earlier subagent shown in the subagent column switched the column to another one; it now stays.'],
     ],
   },
   {
