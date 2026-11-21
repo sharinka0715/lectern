@@ -49,6 +49,7 @@ export const FEATURES = [
   { id: 'session-settings', title: 'Switch model and effort in a running session' },
   { id: 'statusline', title: 'Status line: model, context usage, billing route' },
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
+  { id: 'background-settings', title: 'Model and effort switched from the pickers after the reply while a background subagent still runs' },
   { id: 'subagent-column', title: "Subagent column: the subagent's own JSONL found, its turns shown live" },
   { id: 'subagent-resume', title: 'Subagent column: a SendMessage resume runs again with its new messages' },
   { id: 'subagent-listed', title: 'Subagents listed from their meta files on opening, their launches on a page not loaded (2.1.310+)' },
@@ -68,6 +69,33 @@ export const FEATURES = [
 ];
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const settingTrigger = kind => `.session-settings:not(.draft-settings) [data-setting-kind="${kind}"]`;
+
+/** Pick an option of the composer's model or effort picker that matches `wanted` (patterns in order
+ * of preference) and is not current. */
+async function pickSetting({ page, note }, kind, wanted) {
+  await page.waitForFunction(selector => !document.querySelector(selector)?.disabled, settingTrigger(kind), { timeout: 30_000 });
+  await page.locator(settingTrigger(kind)).click();
+  const menu = page.locator(`.session-settings:not(.draft-settings) [data-setting-menu="${kind}"]`);
+  await menu.locator('.setting-option').first().waitFor({ timeout: 30_000 });
+  const options = await menu.locator('.setting-option').evaluateAll(els => els.map(el => ({ id: el.dataset.optionId, text: el.textContent, current: el.dataset.current === 'true', disabled: el.disabled })));
+  note(`${kind}-options`, options.map(o => o.text.slice(0, 40)));
+  const option = [wanted].flat().map(pattern => options.find(o => !o.current && !o.disabled && pattern.test(o.text))).find(Boolean);
+  assert.ok(option, `no ${wanted} option among ${JSON.stringify(options)}`);
+  await menu.locator(`.setting-option[data-option-id="${option.id}"]`).click();
+  await menu.waitFor({ state: 'detached', timeout: 30_000 }).catch(() => {});
+  return option;
+}
+/** The status in the native record (`<config>/sessions/<pid>.json`) of the process running `sessionId`. */
+async function nativeStatus(sandbox, sessionId) {
+  const dir = path.join(sandbox.config, 'sessions');
+  for (const name of await readdir(dir).catch(() => [])) {
+    try {
+      const record = JSON.parse(await readFile(path.join(dir, name), 'utf8'));
+      if (record?.sessionId === sessionId) return record.status ?? null;
+    } catch {}
+  }
+}
 
 /** A new chat in `folder` whose first message is `prompt`; resolves once Claude
  * Code has the message (it is in the transcript). */
@@ -769,7 +797,6 @@ export const SCENARIOS = [
       await startChat(ctx, folders.main, 'Session settings check ccm:session');
       await ui.waitReply('ccm-session-reply');
       await ui.waitStatus('idle', 30_000);
-      const trigger = kind => page.locator(`.session-settings:not(.draft-settings) [data-setting-kind="${kind}"]`);
       await check('statusline', async () => {
         // The statusLine callback reports model and context; a custom base URL is a gateway route.
         await page.waitForFunction(() => document.querySelector('.session-context-usage')?.getAttribute('data-context-input-tokens'), null, { timeout: 30_000 });
@@ -779,19 +806,7 @@ export const SCENARIOS = [
         assert.ok(await page.locator('.telemetry-billing').count() === 0 || /自定义|custom/i.test(await page.locator('.telemetry-billing').innerText()), 'a custom endpoint is not billed as a subscription');
       });
       await check('session-settings', async () => {
-        const pick = async (kind, wanted) => {
-          await page.waitForFunction(selector => !document.querySelector(selector)?.disabled, `.session-settings:not(.draft-settings) [data-setting-kind="${kind}"]`, { timeout: 30_000 });
-          await trigger(kind).click();
-          const menu = page.locator(`.session-settings:not(.draft-settings) [data-setting-menu="${kind}"]`);
-          await menu.locator('.setting-option').first().waitFor({ timeout: 30_000 });
-          const options = await menu.locator('.setting-option').evaluateAll(els => els.map(el => ({ id: el.dataset.optionId, text: el.textContent, current: el.dataset.current === 'true', disabled: el.disabled })));
-          ctx.note(`${kind}-options`, options.map(o => o.text.slice(0, 40)));
-          const option = options.find(o => !o.current && !o.disabled && wanted.test(o.text));
-          assert.ok(option, `no ${wanted} option among ${JSON.stringify(options)}`);
-          await menu.locator(`.setting-option[data-option-id="${option.id}"]`).click();
-          await menu.waitFor({ state: 'detached', timeout: 30_000 }).catch(() => {});
-          return option;
-        };
+        const pick = (kind, wanted) => pickSetting(ctx, kind, wanted);
         await pick('model', /Sonnet/i);
         await page.waitForFunction(selector => /Sonnet/i.test(document.querySelector(selector)?.textContent ?? ''), '.session-settings:not(.draft-settings) [data-setting-kind="model"]', { timeout: 30_000 });
         await pick('effort', /^\s*low/i);
@@ -821,10 +836,10 @@ export const SCENARIOS = [
   },
   {
     id: 'background',
-    features: ['background'],
+    features: ['background', 'background-settings'],
     timeoutMs: 200_000,
     async run(ctx) {
-      const { ui, page, api, folders, check } = ctx;
+      const { ui, page, api, sandbox, folders, check } = ctx;
       // The main loop starts a background shell and a background subagent; the
       // subagent's own request carries `ccm:bg-agent` and is held until released.
       api.script('bg', ({ step, toolResults }) => {
@@ -845,7 +860,32 @@ export const SCENARIOS = [
         // The reply is over: the composer sends rather than stops.
         await page.locator(sel.send).waitFor({ timeout: 20_000 });
         assert.equal(await page.locator(sel.stop).count(), 0);
-        api.release('bg-agent');
+      });
+      // Claude Code reports busy while the subagent runs, its screen back at the empty prompt.
+      // The pickers switch model and effort there; a reply in progress would not allow it.
+      try {
+        await check('background-settings', async () => {
+          await ui.waitReply('ccm-bg-notified', { timeout: 60_000 });
+          const id = await ui.activeSessionId();
+          await page.locator(`${sel.row(id)}[data-background][data-status="idle"]`).waitFor({ timeout: 30_000 });
+          ctx.note('native-status', await nativeStatus(sandbox, id));
+          const word = (option, pattern) => pattern.exec(option.text)[0].toLowerCase();
+          const shows = (kind, text) => page.waitForFunction(([selector, wanted]) => document.querySelector(selector)?.textContent.toLowerCase().includes(wanted),
+            [settingTrigger(kind), text], { timeout: 30_000 });
+          // Effort first, on the model the chat started with (which has effort levels).
+          const effort = word(await pickSetting(ctx, 'effort', [/^\s*low\b/i, /^\s*high\b/i]), /low|high/i);
+          await shows('effort', effort);
+          await shows('model', word(await pickSetting(ctx, 'model', [/Sonnet/i, /Haiku/i]), /Sonnet|Haiku/i));
+          const screen = await ui.screen();
+          ctx.note('screen', screen.split('\n').filter(line => line.trim()).slice(-12));
+          assert.match(screen, /Set model to /, 'the native receipt of the model switch');
+          assert.match(screen, new RegExp(`Set effort level to ${effort}`, 'i'), 'the native receipt of the effort switch');
+          assert.ok(api.waiting('bg-agent') >= 1 && await page.locator(`${sel.row(id)}[data-background]`).count() === 1, 'the subagent still runs');
+          ctx.note('native-status-after', await nativeStatus(sandbox, id));
+        });
+      } finally { api.release('bg-agent'); }
+      await check('background', async () => {
+        const id = await ui.activeSessionId();
         await page.waitForFunction(selector => !document.querySelector(selector), `${sel.row(id)}[data-background]`, { timeout: 90_000 });
       });
     },

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Backend, quoteShell, runCommand } from '../src/backend';
@@ -65,7 +65,7 @@ test('the receipt of an inline command is read only under that exact typed line'
   assert.equal(readSettingReceipt(frame('/model sonnet', receipt), 'model', ['old line'], '/model haiku'), undefined);
 });
 
-async function withFixture(t: { skip(message: string): void }, aliases: boolean, body: (backend: Backend, workspace: Workspace, capture: (pane: string) => Promise<string>) => Promise<void>) {
+async function withFixture(t: { skip(message: string): void }, aliases: boolean, body: (backend: Backend, workspace: Workspace, capture: (pane: string) => Promise<string>, socket: string) => Promise<void>) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-inline-')));
   const workspace: Workspace = { id: 'inline-' + randomUUID().slice(0, 6), name: 'Inline', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
   const socket = 'inline-' + randomUUID().slice(0, 8);
@@ -74,7 +74,7 @@ async function withFixture(t: { skip(message: string): void }, aliases: boolean,
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const capture = async (pane: string) => (await runCommand(workspace, ['tmux', '-L', socket, 'capture-pane', '-p', '-t', pane].map(quoteShell).join(' '))).stdout.toString();
-    await body(backend, workspace, capture);
+    await body(backend, workspace, capture, socket);
   } finally {
     await backend.dispose();
     await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
@@ -124,4 +124,51 @@ test('two OSC-8 links on screen no longer erase the rows between them (custom mo
   assert.match(plain, /     https:\/\/code\.claude\.com\/docs\/en\/model-config to set the window\./);
   assert.equal(readSettingReceipt(screen, 'model', [], '/model gateway/custom-x'),
     'Set model to gateway/custom-x and saved as your default for new sessions https://code.claude.com/docs/en/model-config to set the window.');
+});
+
+// Claude Code 2.1.329+ lists running subagents below the input box, their timers ticking
+// (tests/fixtures/task-rows-2.1.330/), and adds "↓ to manage" to the idle footer. The mock
+// lists five, or seven ("↓ 2 more"), ticking every 250 ms, or every 40 ms for the stop key.
+const listAgents = (workspace: Workspace, state: string) => mkdir(workspace.claudeDir!, { recursive: true })
+  .then(() => writeFile(join(workspace.claudeDir!, 'screen-state'), state));
+const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+test('with subagents listed and ticking below the input box, inline and menu switches type, verify and read their receipt', { skip: process.platform === 'win32', timeout: 60_000 }, async t => {
+  await withFixture(t, true, async (backend, workspace, capture) => {
+    await listAgents(workspace, 'ready agents:5');
+    const session = await backend.createSession(workspace), paneId = session.paneId!;
+    const rounds = [
+      ['agents:5', /↓ to manage\n\n {2}● main\n(?:.*第 \d 个子代理.*\n){4}.*第 5 个子代理/u, [['effort', 'high', 'inline'], ['model', 'Haiku', 'inline'], ['effort', 'low', 'menu'], ['model', 'Sonnet', 'menu']]],
+      ['agents:7', /● main\n(?:.*\n){5} {2}↓ 2 more/u, [['effort', 'medium', 'inline'], ['model', 'Custom X', 'inline'], ['effort', 'high', 'menu'], ['model', 'Haiku', 'menu']]],
+    ] as const;
+    for (const [agents, listed, switches] of rounds) {
+      await listAgents(workspace, `ready ${agents}`);
+      for (let i = 0; i < 120 && !listed.test(await capture(paneId)); i++) await pause(25);
+      for (const [kind, label, mode] of switches) {
+        const ticket = backend.bindSettingChoices(workspace, session.id, paneId, await listChoices(backend, workspace, kind));
+        const choice = ticket.options.find(option => option.label === label)!;
+        const verified = await backend.setSessionSetting(workspace, session.id, ticket.token, choice.id, undefined, mode);
+        assert.equal(verified.options.find(option => option.current)?.label, label, `${agents} ${mode} ${kind}`);
+      }
+      assert.match(await capture(paneId), listed, `${agents} still listed`);
+    }
+    const screen = await capture(paneId);
+    assert.match(screen, /❯ \/model gateway\/custom-x\n\s+⎿ Set model to gateway\/custom-x and saved as your default/);
+    assert.match(screen, /Set effort level to high \(this session only\)/);
+    assert.match(screen, /Set model to Haiku for this session only/);
+  });
+});
+
+test('with subagents listed and ticking below the input box, the stop key is not refused', { skip: process.platform === 'win32', timeout: 60_000 }, async t => {
+  await withFixture(t, true, async (backend, workspace, capture, socket) => {
+    await listAgents(workspace, 'ready agents:7@40');
+    const session = await backend.createSession(workspace), paneId = session.paneId!;
+    for (let i = 0; i < 120 && !(await capture(paneId)).includes('↓ 2 more'); i++) await pause(25);
+    const pid = Number((await runCommand(workspace, ['tmux', '-L', socket, 'display-message', '-p', '-t', paneId, '#{pane_pid}'].map(quoteShell).join(' '))).stdout.toString());
+    await backend.sendMessage(workspace, session.id, 'a long reply to stop ' + '继续'.repeat(200));
+    for (let i = 0; i < 120 && !(await capture(paneId)).includes('esc to interrupt'); i++) await pause(25);
+    await backend.turnAction(workspace, session.id, paneId, pid, { kind: 'stop' });
+    for (let i = 0; i < 120 && (await capture(paneId)).includes('esc to interrupt'); i++) await pause(25);
+    assert.doesNotMatch(await capture(paneId), /esc to interrupt/, 'the reply stopped');
+  });
 });

@@ -7,13 +7,31 @@ const hint = /\b(?:ctrl\+t|control\+t) to (hide|show) tasks\b/i;
 // workflow ("◯ name  ▱▱▱  0/4 · 11s"), the main thread and its subagents
 // ("⏺ main", "◯ general-purpose  description  2s"). They belong to neither the
 // editor nor its footer, and there can be many of them.
+// The effort label ("◉ xhigh · /effort", right-aligned above the input box) starts like
+// a task row but is never one. With more than fit (2.1.330: main and five subagents),
+// "↓ 7 more" closes the list. The guard on the target (composer-frame-guard.ts,
+// taskRowsGuard) checks the same three forms.
 const taskRow = /^ {2,}[◯○◌◉◎●⏺✓✔✗✘] \S/u;
+const effortLabel = /·\s*\/effort\s*$/u;
+const overflowRow = /^ {2,}[↑↓] \d+ more\s*$/u;
+const isTaskRow = (line: string) => taskRow.test(line) && !effortLabel.test(line);
+const inTaskList = (line: string) => !line.trim() || isTaskRow(line) || overflowRow.test(line);
+/** Where the trailing run of task rows (with blank and "↓ N more" rows) starts, or
+ * `lines.length` when that run has no task row. Only for rows known to sit below an editor. */
+export function trailingTaskRows(lines: string[]): number {
+  let end = lines.length;
+  while (end > 0 && inTaskList(lines[end - 1])) end--;
+  return lines.slice(end).some(isTaskRow) ? end : lines.length;
+}
+/** Where the task rows below the editor start (only right below its rule and footer), or `lines.length`. */
+export function taskRowsStart(lines: string[]): number {
+  const end = trailingTaskRows(lines);
+  return end < lines.length && lines.slice(Math.max(0, end - 4), end).some(line => /^\s*[─━]{8,}/u.test(line)) ? end : lines.length;
+}
 /** The screen without the task rows below the editor (only right below its rule and footer). */
 export function withoutTaskRows(lines: string[]): string[] {
-  let end = lines.length;
-  while (end > 0 && (!lines[end - 1].trim() || taskRow.test(lines[end - 1]))) end--;
-  if (end === lines.length || !lines.slice(end, lines.length).some(line => taskRow.test(line))) return lines;
-  return lines.slice(Math.max(0, end - 4), end).some(line => /^\s*[─━]{8,}/u.test(line)) ? lines.slice(0, end) : lines;
+  const end = taskRowsStart(lines);
+  return end === lines.length ? lines : lines.slice(0, end);
 }
 
 // 独立的页脚快捷键和原生编辑框可将原生任务面板与回复中的同形文本区分开。

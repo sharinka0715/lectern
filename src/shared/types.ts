@@ -334,6 +334,9 @@ export interface SessionSnapshot {
   backgroundWork?: import('./activity').BackgroundCounts;
   /** Fresh, strictly recognized empty native composer; recovery sends recheck before paste. */
   nativeInputReady?: boolean;
+  /** The same empty composer takes /model and /effort: also while the reply is over and
+   * only background subagents or workflows keep Claude Code busy (never during a reply). */
+  settingsInputReady?: boolean;
   turnControls?: import('./turn-controls').TurnControls;
   /** A legacy pane with unknown navigation shows this exact focused slash completion. */
   pendingSettingCommand?: SessionSettingKind;

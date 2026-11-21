@@ -1,0 +1,24 @@
+   ├ Helper 9
+   ├ Helper 10
+   ├ Helper 11
+   └ Helper 12
+
+● Launched helpers (ccm-launched).
+
+
+  ❯ /model                      Switch model (currently Opus 5.5)
+    /auto-mode-setup            Teach auto mode about your environment
+    /code-review                Review the current diff or a PR for bugs
+    /effort                     Set the model's effort level
+    /update-config              Change settings: hooks, permissions, environment variables
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /model
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
+  ● main
+  ◯ general-purpose  Helper 1                                                                                       7s
+  ◯ general-purpose  Helper 2                                                                                       6s
+  ◯ general-purpose  Helper 3                                                                                       6s
+  ◯ general-purpose  Helper 4                                                                                       6s
+  ◯ general-purpose  Helper 5                                                                                       6s

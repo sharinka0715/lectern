@@ -33,7 +33,11 @@ export function parseCacheConfirmationLines(rawLines: readonly string[]): ModelS
   for (let index = start - 1; index >= 0; index--) if (turnDone.test(raw[index])) { done = index; break; }
   // Claude Code 2.1.300 draws the effort indicator into the dialog's top border
   // ("▔▔▔…▔ ◐ medium · /effort ▔"): a short label near the right end is still the border.
-  if (before.length && !/^[─━═▔╌┄-]{5,}(?: [^─━═▔╌┄\s][^─━═▔╌┄]{0,60} [─━═▔╌┄-]{1,8})?$/u.test(before.at(-1)!)) return;
+  // So is its tmux advisory there ("▔▔… tmux detected · scroll with PgUp/PgDn · or add
+  // 'set -g mouse on' to ~/.tmux.conf for wheel scroll ▔", 2.1.300 and 2.1.310 once the
+  // transcript scrolls; tests/fixtures/settings/model-confirmation-tmux-advisory-*.txt).
+  if (before.length && !/^[─━═▔╌┄-]{5,}(?: [^─━═▔╌┄\s][^─━═▔╌┄]{0,60} [─━═▔╌┄-]{1,8})?$/u.test(before.at(-1)!)
+    && !/^[─━═▔╌┄-]{5,} tmux (?:detected|focus-events off) · [^─━═▔╌┄]+ [─━═▔╌┄-]{1,8}$/u.test(before.at(-1)!)) return;
   if (inTranscriptExample(done < 0 ? before : lines.slice(done + 1, start).filter(Boolean))) return;
   const kind = lines[start] === 'Switch model?' ? 'model' as const : 'effort' as const;
   const section = lines.slice(start + 1).filter(Boolean);

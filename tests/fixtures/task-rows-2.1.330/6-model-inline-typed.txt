@@ -1,0 +1,40 @@
+  identifies as risky are blocked and Claude may try a different approach. Ideal for long-running tasks.
+  Sessions are slightly more expensive. Claude can make mistakes that allow harmful commands to run, it's
+  recommended to only use in isolated environments. Shift+Tab to change mode.
+
+❯ Start the helpers ccm:probe
+
+● 6 background agents launched (↓ to manage)
+   ├ Helper 1
+   ├ Helper 2
+   ├ Helper 3
+   ├ Helper 4
+   ├ Helper 5
+   └ Helper 6
+
+● Launched helpers (ccm-launched).
+
+✻ Waiting for 6 background agents to finish
+
+❯ /effort xhigh
+  ⎿  Set effort level to xhigh (saved as your default for new sessions): Deeper reasoning than high, just below maximum
+     (on supported models)
+
+❯ /model
+  ⎿  Kept model as Opus 5.5 (default)
+
+❯ /effort
+  ⎿  Cancelled
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /model haiku
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
+  ● main
+  ◯ general-purpose  Helper 1                                                                                      13s
+  ◯ general-purpose  Helper 2                                                                                      13s
+  ◯ general-purpose  Helper 3                                                                                      13s
+  ◯ general-purpose  Helper 4                                                                                      13s
+  ◯ general-purpose  Helper 5                                                                                      13s
+  ↓ 1 more

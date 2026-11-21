@@ -98,7 +98,17 @@ if (args.includes('--effort')) {
   selectedEffort = index;
 }
 // "<state> agents" also lists background work below the footer, as Claude Code 2.1.329+ does.
-let fixtureState = 'ready', fixtureAgents = false;
+// "<state> agents:N" lists N subagents as 2.1.330 does: "● main", at most five of them with
+// timers that tick, "↓ N more", and "↓ to manage" in the idle footer. "agents:N@ms" ticks
+// every `ms` (default 250; Claude Code itself every second).
+let fixtureState = 'ready', fixtureAgents = false, tickMs = 250;
+const agentsSince = Date.now();
+const agentRows = () => {
+  if (fixtureAgents === true) return ['', '  ⏺ main', '  ◯ general-purpose  检查归档中的版本信息          3m 8s · ↓ 141.6k tokens'];
+  const tick = Math.floor((Date.now() - agentsSince) / tickMs);
+  return ['', '  ● main', ...Array.from({ length: Math.min(fixtureAgents, 5) }, (_, i) => `  ◯ general-purpose  第 ${i + 1} 个子代理`.padEnd(60) + `${tick + i}s`),
+    ...(fixtureAgents > 5 ? [`  ↓ ${fixtureAgents - 5} more`] : [])];
+};
 const stateFile = path.join(config, 'screen-state');
 const draw = () => {
   const lines = ['╭─ Claude Code · offline fixture ─╮', '  Local simulation · no model requests', ''];
@@ -125,8 +135,9 @@ const draw = () => {
       lines.push(`❯ ${input}       Set the session ${input.slice(1)}`);
     }
     lines.push('────────────────────────────────────────────────────────────────', `❯ ${input}`, '────────────────────────────────────────────────────────────────',
-      ['progress', 'compacting'].includes(fixtureState) ? '  ⏸ manual mode on · esc to interrupt' : '  ⏸ manual mode on · ? for shortcuts');
-    if (fixtureAgents) lines.push('', '  ⏺ main', '  ◯ general-purpose  检查归档中的版本信息          3m 8s · ↓ 141.6k tokens');
+      ['progress', 'compacting'].includes(fixtureState) ? '  ⏸ manual mode on · esc to interrupt' : '  ⏸ manual mode on · ? for shortcuts'
+        + (typeof fixtureAgents === 'number' && !input ? ' · ↓ to manage' : ''));
+    if (fixtureAgents) lines.push(...agentRows());
   }
   process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
@@ -233,13 +244,18 @@ process.stdin.on('data', chunk => {
 const readFixtureState = () => {
   let next = 'ready';
   try { next = readFileSync(stateFile, 'utf8').trim(); } catch {}
-  const [state, agents] = next.split(/\s+/);
-  return [['ready', 'waiting', 'error', 'progress', 'compacting'].includes(state) ? state : 'ready', agents === 'agents'];
+  const [state, agents = ''] = next.split(/\s+/);
+  const listed = /^agents:([1-9]\d?)(?:@([1-9]\d{1,3}))?$/.exec(agents);
+  tickMs = listed?.[2] ? Number(listed[2]) : 250;
+  return [['ready', 'waiting', 'error', 'progress', 'compacting'].includes(state) ? state : 'ready', listed ? Number(listed[1]) : agents === 'agents'];
 };
 [fixtureState, fixtureAgents] = readFixtureState();
+let drawnTick = 0;
 setInterval(() => {
   const [next, agents] = readFixtureState();
+  const tick = Math.floor((Date.now() - agentsSince) / tickMs);
   if (next !== fixtureState || agents !== fixtureAgents) { [fixtureState, fixtureAgents] = [next, agents]; draw(); }
-}, 100);
+  else if (typeof fixtureAgents === 'number' && tick !== drawnTick) { drawnTick = tick; draw(); }
+}, 25);
 draw();
 }

@@ -81,12 +81,18 @@ try {
   assert.doesNotMatch(await progress.innerText(), /141\.6k|3m 8s|压缩|Compact/i);
   await writeFile(state, 'ready');
   await page.waitForFunction(()=>!document.querySelector('.turn-progress')?.textContent.includes('15 tokens'));
+  // 2.1.330 lists at most five subagents, timers ticking, then "↓ 2 more" (mock: agents:7).
+  await writeFile(state, 'progress agents:7');
+  await progress.filter({hasText:/15 tokens/}).waitFor();
+  assert.doesNotMatch(await progress.innerText(), /more|子代理/);
+  await writeFile(state, 'ready');
+  await page.waitForFunction(()=>!document.querySelector('.turn-progress')?.textContent.includes('15 tokens'));
   await page.reload();
   await tasks.waitFor();
   assert.deepEqual(await tasks.locator('li').allTextContents(),steps.map(task=>task.subject));
   assert.equal(await page.locator('.tool-group[open]').count(),0);
   assert.deepEqual(errors, []);
-  console.log('PASS: transcript activity, failed call and applied line counts, task states, progress/compact tokens (also with background tasks listed below the input box), reload.');
+  console.log('PASS: transcript activity, failed call and applied line counts, task states, progress/compact tokens (also with background tasks listed below the input box, "↓ N more" too), reload.');
 } finally {
   await app?.close();
   await rm(profile,{recursive:true,force:true});

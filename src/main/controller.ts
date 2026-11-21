@@ -267,7 +267,7 @@ export class Controller extends EventEmitter {
       this.settingsCache.observe(target, sessionId, undefined, false);
       this.turnMemory.delete(this.recoveryKey(watch.workspace, sessionId));
       watch.settingsHandle = undefined;
-      watch.snapshot = { ...watch.snapshot, settings: undefined, statusLine: undefined, statusLineManaged: undefined, executionMode: undefined, nativeInputReady: false };
+      watch.snapshot = { ...watch.snapshot, settings: undefined, statusLine: undefined, statusLineManaged: undefined, executionMode: undefined, nativeInputReady: false, settingsInputReady: false };
     };
     invalidate();
     try { return await this.backend.forkSession(watch.workspace, sessionId, paneId, panePid); }
@@ -521,7 +521,7 @@ export class Controller extends EventEmitter {
     diagnostic.event('controller.snapshot', { watchId: watch.id, sessionId: watch.sessionId, workspaceId: watch.workspace.id,
       reason, inactiveFilter, status: watch.snapshot.status, paneId: watch.snapshot.paneId, notice: watch.snapshot.notice,
       navigationStatus: watch.snapshot.navigationStatus, navigationStatusDetail: watch.snapshot.navigationStatusDetail,
-      settingBusy: watch.snapshot.settingBusy, trustBusy: watch.snapshot.trustBusy, nativeInputReady: watch.snapshot.nativeInputReady, terminalControl: watch.snapshot.terminalControl, manualRecovery: watch.manualRecovery,
+      settingBusy: watch.snapshot.settingBusy, trustBusy: watch.snapshot.trustBusy, nativeInputReady: watch.snapshot.nativeInputReady, settingsInputReady: watch.snapshot.settingsInputReady, terminalControl: watch.snapshot.terminalControl, manualRecovery: watch.manualRecovery,
       settings: watch.snapshot.settings ? { initialization: watch.snapshot.settings.initialization, loading: watch.snapshot.settings.loading,
         error: watch.snapshot.settings.error, model: watch.snapshot.settings.menus.model?.options.find(option => option.current)?.label ?? watch.snapshot.settings.observed?.model?.label,
         effort: watch.snapshot.settings.menus.effort?.options.find(option => option.current)?.label ?? watch.snapshot.settings.observed?.effort?.label } : undefined,
@@ -759,7 +759,15 @@ export class Controller extends EventEmitter {
           watch.display.activity.lastCompact, !turnProgress && showsCompactCompletion(progressFrame, editor));
       }
       const paneCanAcceptInput = result.active && !result.hasMore && result.nativeStatus !== 'waiting' && result.nativeStatus !== 'busy';
-      const nativeInputReady = paneCanAcceptInput && isIdleEmptyComposer(result.viewport ?? result.screen);
+      // Claude Code also reports busy after its reply while background subagents or workflows
+      // run; the screen then shows the empty prompt again (session-status.ts makes that idle with
+      // background). /model and /effort are typed into that box like into an idle one; a reply
+      // still in progress (spinner or "esc to interrupt" at the box) never qualifies. Forking and
+      // rewinding (nativeInputReady) still wait for the background work.
+      const busyInBackground = result.nativeStatus === 'busy' && result.session.status === 'idle' && !!result.session.background;
+      const settingsPaneReady = paneCanAcceptInput || (result.active && !result.hasMore && busyInBackground && !editor?.running);
+      const settingsInputReady = settingsPaneReady && isIdleEmptyComposer(result.viewport ?? result.screen);
+      const nativeInputReady = paneCanAcceptInput && settingsInputReady;
       // The machine answered: read its model list once (cached until the app quits).
       this.catalogs.warm(watch.workspace);
       const cliVersion = statusLine?.version ?? watch.display.cliVersion ?? watch.snapshot.cliVersion;
@@ -771,7 +779,7 @@ export class Controller extends EventEmitter {
       const delegated = (!!pendingBackground && current(pendingBackground.at)) ||
         (listed ? runningSubagents(activity) > 0 : activity.some(item => item.kind === 'agent' && item.background === true && item.status === 'running' && current(runStart(item)))) ||
         // No transcript record, but busy with the empty prompt on screen (session-status.ts).
-        (result.nativeStatus === 'busy' && result.session.status === 'idle' && !!result.session.background);
+        busyInBackground;
       const status: SessionStatus = result.hasMore ? 'connecting' : result.active
         ? observedSessionStatus(observedStatus && observedStatus !== 'unknown' ? observedStatus : watch.display.status,
           result.nativeStatus, result.session.status === 'error', delegated) : 'idle';
@@ -791,7 +799,7 @@ export class Controller extends EventEmitter {
         // While the fast link runs, its captures are newer than this poll's.
         terminalFrame: watch.terminalLink && !watch.terminalLink.closed ? watch.snapshot.terminalFrame : result.terminalFrame, screenCapturedAt: result.screen ? result.screenCapturedAt ?? new Date().toISOString() : undefined,
         navigationStatus: result.session.status, navigationStatusDetail: result.session.statusDetail,
-        nativeInputReady: !question && nativeInputReady,
+        nativeInputReady: !question && nativeInputReady, settingsInputReady: !question && settingsInputReady,
         question, questionBusy: !!watch.question?.consumed && !watch.question.unconfirmed, questionUnconfirmed: watch.question?.unconfirmed,
         permission, permissionBusy: !!watch.permission?.consumed && !watch.permission.unconfirmed, permissionUnconfirmed: watch.permission?.unconfirmed,
         turnControls: result.active && !result.directoryTrust && !question ? {
@@ -804,7 +812,7 @@ export class Controller extends EventEmitter {
           compacting: !!turnProgress?.compactPhase || undefined,
         } : undefined,
         // Registered Claude can report idle while its composer contains the slash draft.
-        pendingSettingCommand: paneCanAcceptInput && !nativeInputReady && !settingsOverlap && !result.directoryTrust &&
+        pendingSettingCommand: settingsPaneReady && !settingsInputReady && !settingsOverlap && !result.directoryTrust &&
           (result.session.status === 'unknown' || result.session.status === 'idle') && result.viewport ?
           (['model', 'effort'] as const).find(kind => focusedSettingCommandHistory(result.viewport!, `/${kind}`) !== undefined) : undefined,
         settingBusy,
@@ -840,7 +848,7 @@ export class Controller extends EventEmitter {
             watch.settingsHandle = undefined;
           }
           watch.snapshot = { ...watch.snapshot, paneId: undefined, panePid: undefined,
-            settings: undefined, executionMode: undefined, statusLine: undefined, statusLineManaged: undefined, nativeInputReady: false,
+            settings: undefined, executionMode: undefined, statusLine: undefined, statusLineManaged: undefined, nativeInputReady: false, settingsInputReady: false,
             directoryTrust: undefined, ...(mapping ? { navigationStatus: 'error' as const, navigationStatusDetail: (error as Error).message } : {}) };
         }
         watch.permission = undefined;
@@ -1140,7 +1148,7 @@ export class Controller extends EventEmitter {
   setSessionSetting(workspaceId: string, sessionId: string, token: string, optionId: string, mode: SettingSwitchMode = 'inline') {
     const watch = this.watch, handle = watch?.settingsHandle;
     return this.withSessionSetting(workspaceId, sessionId, async () => {
-      if (!watch || !handle || watch.failures || watch.snapshot.directoryTrust || !watch.snapshot.nativeInputReady)
+      if (!watch || !handle || watch.failures || watch.snapshot.directoryTrust || !watch.snapshot.settingsInputReady)
         throw new Error(t('controller.confirmIdleEmpty'));
       const catalog = this.catalogs.get(watch.workspace);
       const menus = this.settingsCache.state(handle, catalog, watch.snapshot.statusLine)?.menus;
@@ -1172,7 +1180,7 @@ export class Controller extends EventEmitter {
   setUltracode(workspaceId: string, sessionId: string, on: boolean) {
     const watch = this.watch, handle = watch?.settingsHandle;
     return this.withSessionSetting(workspaceId, sessionId, async () => {
-      if (!watch || !handle || watch.failures || watch.snapshot.directoryTrust || !watch.snapshot.nativeInputReady)
+      if (!watch || !handle || watch.failures || watch.snapshot.directoryTrust || !watch.snapshot.settingsInputReady)
         throw new Error(t('controller.confirmIdleEmpty'));
       try {
         const result = await this.backend.setUltracode(watch.workspace, sessionId, on, { panePid: handle.panePid, instanceId: handle.instanceId });

@@ -1,0 +1,24 @@
+   ├ Helper 5
+   ├ Helper 6
+   ├ Helper 7
+   ├ Helper 8
+   ├ Helper 9
+   ├ Helper 10
+   ├ Helper 11
+   └ Helper 12
+
+● Launched helpers (ccm-launched).
+
+✻ Waiting for 12 background agents to finish
+                                                                                                    ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents · ↓ to manage
+
+  ● main
+  ◯ general-purpose  Helper 1                                                                                       2s
+  ◯ general-purpose  Helper 2                                                                                       1s
+  ◯ general-purpose  Helper 3                                                                                       1s
+  ◯ general-purpose  Helper 4                                                                                       1s
+  ◯ general-purpose  Helper 5                                                                                       1s

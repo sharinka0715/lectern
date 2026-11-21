@@ -427,3 +427,34 @@ test('a new chat asking while a retry of a failed list is in flight waits for it
     assert.equal(h.probes.length, 2);
   } finally { pending.resolve(); }
 });
+
+// Claude Code reports busy after its reply while background subagents run; its screen
+// shows the empty prompt again, "Waiting for …" above it and the subagents below
+// (tests/fixtures/task-rows-2.1.330/), and session-status.ts reads that as idle with
+// background work.
+test('with only background subagents keeping Claude Code busy, model and effort switch; never during a reply', async t => {
+  const h = await harness(t);
+  await h.watch();
+  const box = composer.replace('? for shortcuts', '⏵⏵ auto mode on (shift+tab to cycle) · ← for agents · ↓ to manage');
+  const listed = '\n\n  ● main\n  ◯ general-purpose  Helper 1' + ' '.repeat(60) + '12s\n';
+  const busy = (screen: string, status: 'idle' | 'working', background?: string): ReadResult =>
+    ({ ...idle('chat'), nativeStatus: 'busy', screen, viewport: screen, session: { ...idle('chat').session, status, background } });
+  h.states.set('chat', busy('✻ Waiting for 1 background agent to finish\n\n' + box + listed, 'idle', '后台子代理运行中'));
+  await h.poll();
+  await h.apply(await h.read('model'), 1);
+  await h.apply(await h.read('effort'), 1);
+  assert.deepEqual(h.writes, ['set:chat', 'set:chat']);
+  assert.deepEqual([h.latest().status, h.latest().settingsInputReady, h.latest().nativeInputReady], ['idle', true, false],
+    'settings only: forking and rewinding still wait for the background work');
+  // A reply in progress: the spinner right above the box, "esc to interrupt" in the footer.
+  for (const screen of ['✻ Thinking… (3s · ↓ 12 tokens)\n' + box + listed,
+    '✻ Thinking…\n' + box.replace('↓ to manage', 'esc to interrupt') + listed]) {
+    for (const [status, background] of [['working', undefined], ['idle', '后台子代理运行中']] as const) {
+      h.states.set('chat', busy(screen, status, background));
+      await h.poll();
+      assert.equal(h.latest().settingsInputReady, false, `${status} ${screen.split('\n')[0]}`);
+      await assert.rejects(h.apply(await h.read('model'), 0));
+    }
+  }
+  assert.equal(h.writes.length, 2);
+});

@@ -38,7 +38,7 @@ import { effortFrameGuard, keysNotSent, NativeSettings, NavigationKeyNotSent, Se
 import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
-import { composerFrameGuard, animatedLabelGuard, animatedLabelText } from './composer-frame-guard';
+import { composerFrameGuard, animatedLabelText, guardWindow } from './composer-frame-guard';
 import { performTurnAction, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
@@ -1574,14 +1574,12 @@ lectern_frame`;
       const expected = [pane.id, pane.pid, pane.nativeTarget, pane.boundSessionId, pane.boundCwd, pane.boundClaudeDir, '0', ...(pane.serverInstance ? [pane.serverInstance] : [])].join(SEP);
       const frameGuard = frameKind === 'setting-paste' ? composerFrameGuard(viewport, tailLines)
         : { tailLines, ...(frameKind === 'effort' ? effortFrameGuard(viewport, tailLines) : { viewport, filter: '' }) };
-      const tail = frameGuard.tailLines ? ` | tail -n ${frameGuard.tailLines}` : '';
-      // An animated composer-border label (Ultracode) must not fail every guard.
-      const border = animatedLabelGuard(frameGuard.viewport);
-      const expectedViewport = frameGuard.tailLines ? border.viewport.split('\n').slice(-frameGuard.tailLines - 1).join('\n') : border.viewport;
+      // The rows the digest covers, on the target and here (task rows, animated labels).
+      const framed = guardWindow(viewport, frameGuard);
       return `[ "$(${this.tmux('display-message', '-p', '-t', paneId, format)})" = ${q(expected)} ] || { echo ${q(t('backend.settingPaneChangedNoInput'))} >&2; exit 1; }
 ps -p ${pane.claudePid} -o pgid=,tpgid= | awk 'NF == 2 && $1 > 0 && $1 == $2 { found=1 } END { exit !found }' || { echo ${q(t('backend.claudeLeftNoInput'))} >&2; exit 1; }
-${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_digest=$(${capture(paneId)}${tail}${frameGuard.filter}${border.filter} | head -c 16385 | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; })
-[ "\${lectern_digest%% *}" = ${q(createHash('sha256').update(expectedViewport).digest('hex'))} ] || { ${rejectedNavigation ? `printf '%s' ${q(rejectedNavigation)}; exit 0` : `echo ${q(t('native.screenChangedNoKeys'))} >&2; exit 1`}; }
+${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_digest=$(${capture(paneId)}${framed.filter} | head -c 16385 | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; })
+[ "\${lectern_digest%% *}" = ${q(createHash('sha256').update(framed.expected).digest('hex'))} ] || { ${rejectedNavigation ? `printf '%s' ${q(rejectedNavigation)}; exit 0` : `echo ${q(t('native.screenChangedNoKeys'))} >&2; exit 1`}; }
 `;
     };
     // Foreground discovery also rejects a second active pane claiming this

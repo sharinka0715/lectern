@@ -1734,7 +1734,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             <div className="composer-settings" ref={composerContext}>
               {isDraft ? <DraftSettings key={workspaceId} workspaceId={workspaceId} choices={draftChoices} onChange={setDraftChoices}
                 disabled={!!launch || busy} /> : <SessionSettings key={settingScope} workspaceId={workspaceId} sessionId={sessionId} paneId={paneId} status={activeStatus}
-                navigationStatus={snapshot?.navigationStatus} nativeInputReady={snapshot?.nativeInputReady}
+                navigationStatus={snapshot?.navigationStatus} nativeInputReady={snapshot?.settingsInputReady}
                 pendingSettingCommand={snapshot?.pendingSettingCommand} settings={snapshot?.settings}
                 statusLineManaged={statusLineManaged} statusLine={statusLine}
                 settingBusy={!!question || questionBusy || sending || busy || snapshot?.settingBusy || snapshot?.trustBusy || terminalLocked}

@@ -1,6 +1,7 @@
 import { inTranscriptExample } from './dialog-boundary';
 import { parseExecutionMode } from './session-telemetry';
-import { classifySessionScreen, stripTerminalEscapes, withoutRightNotice, withoutTaskRows } from './screen';
+import { classifySessionScreen, stripTerminalEscapes, withoutRightNotice } from './screen';
+import { trailingTaskRows, withoutTaskRows } from './native-task-screen';
 import { parseCacheConfirmationLines, type ModelSwitchConfirmation } from './model-switch-confirmation';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 export type { ModelSwitchConfirmation } from './model-switch-confirmation';
@@ -50,10 +51,13 @@ export type SettingScreen = SettingMenuScreen
 const separator = /^\s*[─━═▔╌┄-]{5,}(?: \S(?:.*\S)? [─━═▔╌┄-]+)?\s*$/u;
 export const TMUX_FOCUS_HINT = "tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking";
 const footerPattern = /\b(?:Enter to (?:set as default|confirm)|Esc to cancel)\b/i;
+// Claude Code 2.1.329+ lists background agents and workflows below the input box's
+// footer; their timers tick every second. Every count from the bottom (footer rows,
+// "within the last 12 rows") starts above them. Rows above keep their index.
 function linesOf(screen: string): string[] {
   const lines = stripTerminalEscapes(screen).replace(/\u00a0/g, ' ').split('\n');
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
-  return lines;
+  return withoutTaskRows(lines);
 }
 function lastIndex(lines: string[], test: (line: string, index: number) => boolean): number {
   for (let index = lines.length - 1; index >= 0; index--) if (test(lines[index], index)) return index;
@@ -263,7 +267,7 @@ export function newSettingViewport(viewport: string, previous: string[]): string
 
 /** True only for a ready empty composer, including a recoverable native API error. */
 export function isIdleEmptyComposer(viewport: string): boolean {
-  const lines = withoutTaskRows(linesOf(viewport));
+  const lines = linesOf(viewport);
   if (menuBounds(lines, 'model') || menuBounds(lines, 'effort')) return false;
   const status = classifySessionScreen(viewport).status;
   if (status === 'working' || status === 'waiting') return false;
@@ -323,6 +327,12 @@ function completionBlocks(lines: string[]): CompletionBlock[] {
   return blocks;
 }
 
+/** The footer rows under a boxed editor (and its completion list): task rows listed below
+ * them dropped even where a completion list keeps them from `linesOf`'s rule check. */
+function footerRows(rows: string[]): string[] {
+  return rows.slice(0, trailingTaskRows(rows)).map(line => withoutRightNotice(line).trim()).filter(Boolean);
+}
+
 function commandEntry(lines: string[], prompt: number, command: SettingCommand) {
   if (prompt < 0 || lines[prompt].trim().slice(1).trim() !== command) return;
   const above = lines.slice(0, prompt - 1), below = lines.slice(prompt + 2);
@@ -331,7 +341,7 @@ function commandEntry(lines: string[], prompt: number, command: SettingCommand) 
   if (upper && lower) return;
   const choices = upper ?? lower;
   if (choices && (choices.focused.length !== 1 || choices.focused[0].command !== command)) return;
-  const footer = below.slice(lower?.end ?? 0).map(line => withoutRightNotice(line).trim()).filter(Boolean);
+  const footer = footerRows(below.slice(lower?.end ?? 0));
   const historyEnd = upper?.start ?? prompt - 1;
   const screen = [...lines.slice(0, historyEnd), ...lines.slice(prompt - 1, prompt + 2), ...footer].join('\n');
   const state = classifySessionScreen(screen).status;
@@ -350,7 +360,7 @@ export function focusedSettingCommandHistory(viewport: string, command: SettingC
     // Reject new controls or arbitrary status text when there is no idle frame
     // from this transaction to compare against.
     const [badge, ...hints] = footer.split(/\s*·\s*/u);
-    if (hints.some(hint => hint !== '? for shortcuts' && hint !== '← for agents')) return;
+    if (hints.some(hint => hint !== '? for shortcuts' && !idleOnlyHint.test(hint))) return;
     if (!parseExecutionMode([...lines.slice(prompt - 1, prompt + 2), badge].join('\n'))) return;
   }
   return historyAbove(lines, entry.historyEnd);
@@ -372,13 +382,22 @@ export function hasPendingSettingCommand(viewport: string, command: SettingComma
   if (previous < 0) return false;
   const entry = commandEntry(lines, prompt, command);
   if (!entry) return false;
-  const previousFooter = idle.slice(previous + 2).map(line => withoutRightNotice(line).trim()).filter(Boolean);
-  // Claude removes its idle-only agent shortcut as soon as a draft is typed.
+  const previousFooter = footerRows(idle.slice(previous + 2));
   return !entry.footer.length || (entry.footer.length === previousFooter.length && entry.footer.every((line, i) =>
-    previousFooter[i] === line || previousFooter[i] === line + ' · ← for agents'));
+    sameFooterRow(line, previousFooter[i])));
 }
 
-/** An idle footer is a fresh observation; a welcome banner is deliberately ignored. */
+// Claude removes its idle-only hints as soon as a draft is typed: the agent shortcut and,
+// while background tasks are listed (2.1.329+), "↓ to manage".
+const idleOnlyHint = /^(?:← for agents|↓ to manage)$/u;
+function sameFooterRow(typed: string, idle: string): boolean {
+  if (idle === typed) return true;
+  return idle.startsWith(typed + ' · ') && idle.slice(typed.length + 3).split(' · ').every(hint => idleOnlyHint.test(hint));
+}
+
+/** An idle footer is a fresh observation; a welcome banner is deliberately ignored.
+ * The label sits right above the input box (2.1.300–2.1.330); the last 12 rows count
+ * from the footer up, never from background task rows listed below it. */
 export function observeEffortFooter(viewport: string): { value: string; source: 'composer-footer' } | undefined {
   if (!isIdleEmptyComposer(viewport)) return;
   const footer = linesOf(viewport).slice(-12);

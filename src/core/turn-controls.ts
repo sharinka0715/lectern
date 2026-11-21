@@ -82,7 +82,8 @@ export function turnComposer(view: string) {
     }
   }
   // `top` (the upper border) is the same row here and in the pane. `tailLines` counts from
-  // it to the end of the capture, task rows included, for the input guard's `tail -n`.
+  // it to the end of the capture, task rows included, for the input guard's `tail -n`; the
+  // guard then compares only the rows down to the footer (composer-frame-guard.ts, taskRowsGuard).
   return { text, empty: !text || placeholder.test(text), running, queued, top, tailLines: linesOf(view).length - top };
 }
 

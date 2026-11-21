@@ -28,8 +28,9 @@ test('the input box is found with background work listed below it, however many 
 });
 
 // A turn action (stop, queue, steer) binds its key to the rows from the input box down:
-// the backend hashes `capture-pane … | tail -n <tailLines - 1>` against the same rows of
-// the read. Counted on the parsed rows (tasks dropped), that tail missed the input box.
+// the backend cuts `capture-pane … | tail -n <tailLines - 1>` and hashes the rows down to the
+// footer (the task rows only by shape, tests/task-rows-settings.test.ts). Counted on the
+// parsed rows (tasks dropped), that tail missed the input box.
 test('a turn action guards the pane from the input box down, background task rows and all', { skip: process.platform === 'win32' ? 'POSIX tail' : false }, () => {
   const before = running.replace(/\n\n  ◯ demo-map[^\n]*/u, '');
   assert.ok(!before.includes('demo-map') && before.endsWith('(shift+tab to cycle)\n'));

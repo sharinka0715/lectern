@@ -567,3 +567,15 @@ test('a named session border and right-aligned notices do not hide the typed set
   assert.deepEqual(priorComposerHistory(idle), ['  上一轮回复']);
   assert.equal(hasPendingSettingCommand(typed.replace('/effort\n', '/effort extra\n'), '/effort', idle), false);
 });
+
+test('a "Switch model?" dialog with the tmux advisory in its top border (2.1.300, 2.1.310) is still the confirmation', () => {
+  for (const version of ['2.1.300', '2.1.310']) {
+    // Captured in the matrix sandbox: an inline /model sonnet while a background subagent ran.
+    const screen = readFileSync(new URL(`./fixtures/settings/model-confirmation-tmux-advisory-${version}.txt`, import.meta.url), 'utf8');
+    assert.match(screen, /▔ tmux detected · scroll with PgUp\/PgDn · or add 'set -g mouse on' to ~\/\.tmux\.conf for wheel scroll ▔/u);
+    const parsed = parseSettingScreen(screen, 'model');
+    assert.deepEqual(parsed.state === 'model-confirmation' ? [parsed.targetLabel, parsed.focused, parsed.footerObserved] : parsed, ['Sonnet 5.5', 'confirm', false], version);
+    // Only that advisory: any other long text there is not the dialog's border.
+    assert.equal(parseSettingScreen(screen.replace('tmux detected', 'see the docs'), 'model').state, 'unrecognized');
+  }
+});

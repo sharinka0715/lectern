@@ -1,0 +1,24 @@
+   ├ Helper 9
+   ├ Helper 10
+   ├ Helper 11
+   └ Helper 12
+
+● Launched helpers (ccm-launched).
+
+✻ Waiting for 12 background agents to finish
+
+❯ /effort xhigh
+  ⎿  Set effort level to xhigh (saved as your default for new sessions): Deeper reasoning than high, just below maximum
+     (on supported models)
+                  tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents · ↓ to manage
+
+  ● main
+  ◯ general-purpose  Helper 1                                                                                       7s
+  ◯ general-purpose  Helper 2                                                                                       6s
+  ◯ general-purpose  Helper 3                                                                                       6s
+  ◯ general-purpose  Helper 4                                                                                       6s
+  ◯ general-purpose  Helper 5                                                                                       6s

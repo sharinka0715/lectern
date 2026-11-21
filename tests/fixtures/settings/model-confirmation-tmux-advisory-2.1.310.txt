@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.310
+▝▜██████▀  Opus 5.5 with low effort · API Usage Billing
+ ▝▝   ▝▝   /home/dev/project
+
+
+● Auto mode lets Claude handle permission prompts automatically — Claude checks each tool call for risky actions
+  and prompt injection before executing. Actions Claude identifies as safe are executed, while actions Claude
+  identifies as risky are blocked and Claude may try a different approach. Ideal for long-running tasks.
+  Sessions are slightly more expensive. Claude can make mistakes that allow harmful commands to run, it's
+  recommended to only use in isolated environments. Shift+Tab to change mode.
+
+❯ Start background work ccm:bg
+
+  Ran 1 shell command
+
+● Agent(Background helper)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+● Started in the background (ccm-bg-started).
+
+✻ Waiting for 1 background agent to finish
+
+● Background command "Wait in the background" completed (exit code 0)
+
+● Background result received (ccm-bg-notified).
+
+❯ /effort low
+  ⎿  Set effort level to low (saved as your default for new sessions): Quick, straightforward implementation with
+     minimal overhead
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ tmux detected · scroll with PgUp/PgDn · or add 'set -g mouse on' to ~/.tmux.conf for wheel scroll ▔
+   Switch model?
+   Your next response will be slower and use more tokens
+
+   This conversation is cached for the current model. Switching to Sonnet 5.5 means the full history gets re-read on
+   your next message.
+
+   ❯ 1. Yes, switch to Sonnet 5.5
+     2. No, go back
+
