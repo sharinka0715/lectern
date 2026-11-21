@@ -5,6 +5,9 @@ test-results/
 .DS_Store
 *.log
 
+# Notes for Claude Code in this checkout; kept locally, not published.
+/CLAUDE.md
+
 # Local credentials and per-developer Claude state; keep shared project config.
 .env
 .env.*
