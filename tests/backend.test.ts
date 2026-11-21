@@ -201,7 +201,8 @@ setInterval(() => { const trigger=path.join(process.env.CLAUDE_CONFIG_DIR,'move-
     await writeFile(join(claudeDir, 'move-cwd'), childCwd);
     await new Promise(r => setTimeout(r, 80));
     const moved = await backend.discover(target);
-    assert.equal(moved.panes.find(p => p.id === live.paneId)?.cwd, childCwd);
+    const seen = () => JSON.stringify(moved.panes.map(({ id, cwd, sessionId, active, command }) => ({ id, cwd, sessionId, active, command })));
+    assert.equal(moved.panes.find(p => p.id === live.paneId)?.cwd, childCwd, `pane ${live.paneId} after its process changed directory; panes seen: ${seen()}`);
     assert.equal(moved.sessions.find(s => s.id === historyId)?.paneId, live.paneId, 'initial project metadata survives live cwd changes');
     await rm(join(claudeDir, 'move-cwd'));
 

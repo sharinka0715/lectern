@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync,
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ANNOTATIONS_PER_STEP, annotation, inGitHubActions, tailSummary } from './gh-annotations.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
@@ -149,12 +150,19 @@ function runStep(step, attempt) {
     });
     current = child;
     let tail = '';
+    let partial = '';
     const notes = new Set();
+    const annotations = [];
     const keep = chunk => {
       out.write(chunk);
-      tail = (tail + chunk).slice(-4000);
+      // Long enough to reach the header of an uncaught error whose properties Node prints after it.
+      tail = (tail + chunk).slice(-20000);
       // Scripts print "NOTE: …" when the machine lacks an optional tool and a fallback was checked.
       for (const match of String(chunk).matchAll(/^NOTE: (.+)$/gm)) notes.add(match[1].trim());
+      // GitHub error annotations a step prints (the unit test reporter) are repeated on our own output.
+      const lines = (partial + chunk).split('\n');
+      partial = lines.pop();
+      for (const line of lines) if (line.startsWith('::error')) annotations.push(line.trimEnd());
     };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
@@ -168,7 +176,8 @@ function runStep(step, attempt) {
       if (process.platform !== 'win32') { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }
       const seconds = (Date.now() - started) / 1000;
       out.end(`\n[test-all] exit ${code} after ${seconds.toFixed(1)} s\n`);
-      resolve({ ok: code === 0 && !timedOut, code, seconds, timedOut, tail, log, notes: [...notes] });
+      if (partial.startsWith('::error')) annotations.push(partial.trimEnd());
+      resolve({ ok: code === 0 && !timedOut, code, seconds, timedOut, tail, log, notes: [...notes], annotations });
     });
   });
 }
@@ -181,6 +190,9 @@ function unitSummary(tail) {
 
 const claudeAvailable = spawnSync(process.platform === 'win32' ? 'where' : 'sh', process.platform === 'win32' ? ['claude'] : ['-c', 'command -v claude'], { stdio: 'ignore' }).status === 0;
 const summary = [];
+// GitHub annotations per failed step (see emitAnnotations) and for steps that passed only on retry.
+const failureAnnotations = new Map();
+const retryWarnings = [];
 const began = Date.now();
 console.log(`test-all: ${steps.length} steps, logs in ${path.relative(root, logs)}/ (tmux in ${tmuxRoot})`);
 try {
@@ -188,16 +200,21 @@ try {
     if (needsClaude.has(step.name) && !claudeAvailable) {
       console.log(`✖ ${step.name}  needs Claude Code on PATH (npm install -g @anthropic-ai/claude-code)`);
       summary.push({ name: step.name, ok: false, seconds: 0, note: 'claude not installed' });
+      failureAnnotations.set(step.name, [annotation('error', { title: `${step.name} not run` }, 'Claude Code is not on PATH')]);
       continue;
     }
     process.stdout.write(`… ${step.name}\r`);
     let result = await runStep(step, 0);
+    const first = result;
     let attempts = 1;
     while (!result.ok && step.e2e && attempts <= (step.retries ?? 0)) {
       console.log(`↻ ${step.name} failed (exit ${result.code}), retry ${attempts}`);
       result = await runStep(step, attempts++);
     }
     const flaky = result.ok && attempts > 1;
+    if (!result.ok) failureAnnotations.set(step.name, result.annotations.length ? result.annotations
+      : [annotation('error', { title: `${step.name} failed${result.timedOut ? ' (timed out)' : ` (exit ${result.code})`}` }, tailSummary(result.tail))]);
+    if (flaky) retryWarnings.push(annotation('warning', { title: `${step.name} passed only on retry` }, tailSummary(first.tail)));
     const note = step.name === 'unit' ? unitSummary(result.tail) : result.notes.join(' ');
     summary.push({ name: step.name, ok: result.ok, flaky, seconds: Math.round(result.seconds), note, log: path.relative(root, result.log), timedOut: result.timedOut });
     console.log(`${result.ok ? (flaky ? '⚠' : '✔') : '✖'} ${step.name}  ${result.seconds.toFixed(1)} s${flaky ? '  (passed on retry)' : ''}${note ? `  ${note}` : ''}`);
@@ -221,9 +238,24 @@ const lines = [
 writeFileSync(path.join(logs, 'summary.txt'), lines.join('\n') + '\n');
 writeFileSync(path.join(logs, 'summary.json'), JSON.stringify({ ok: !failed.length, minutes: Number(minutes), steps: summary }, null, 2));
 console.log('\n' + lines.join('\n'));
+if (inGitHubActions) emitAnnotations();
 if (process.env.GITHUB_STEP_SUMMARY && existsSync(path.dirname(process.env.GITHUB_STEP_SUMMARY))) {
   const table = ['| Step | Result | Seconds | Note |', '| --- | --- | ---: | --- |',
     ...summary.map(s => `| ${s.name} | ${s.ok ? (s.flaky ? '⚠ flaky' : '✅') : '❌'} | ${s.seconds} | ${s.note ?? ''} |`)];
   writeFileSync(process.env.GITHUB_STEP_SUMMARY, `### ${lines[0]}\n\n${table.join('\n')}\n`, { flag: 'a' });
 }
 process.exit(failed.length ? 1 : 0);
+
+/** GitHub keeps about 10 error annotations per step: the first annotation of every
+ * failed step comes first, then the remaining ones in step order, then one naming
+ * whatever did not fit. Steps that needed a retry get a warning with the first failure. */
+function emitAnnotations() {
+  const lists = [...failureAnnotations.values()];
+  const ordered = [...lists.map(list => list[0]), ...lists.flatMap(list => list.slice(1))];
+  const shown = ordered.length > ANNOTATIONS_PER_STEP + 1 ? ordered.slice(0, ANNOTATIONS_PER_STEP) : ordered;
+  for (const line of shown) console.log(line);
+  if (shown.length < ordered.length) {
+    console.log(annotation('error', { title: `${ordered.length - shown.length} more failures` }, `Failed steps: ${failed.map(s => s.name).join(', ')}`));
+  }
+  for (const line of retryWarnings) console.log(line);
+}

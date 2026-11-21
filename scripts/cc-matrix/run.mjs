@@ -18,6 +18,7 @@ import { createSandbox, descendants, reap } from './sandbox.mjs';
 import { launchApp, ui, writeWorkspaces, observeNativeNudges } from './app.mjs';
 import { FEATURES, SCENARIOS, prepareFolders } from './scenarios.mjs';
 import { writeReport } from './report.mjs';
+import { errorSummary, failureAnnotations, inGitHubActions, meaningfulLines } from '../gh-annotations.mjs';
 
 const args = process.argv.slice(2);
 const option = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -49,6 +50,8 @@ const appVersion = JSON.parse(await readFile('package.json', 'utf8')).version;
 const report = { generatedAt: new Date().toISOString(), platform: `${process.platform}-${process.arch}`, appVersion, distTags,
   features: Object.fromEntries(FEATURES.map(feature => [feature.id, feature.title])), runs: [] };
 let failed = 0;
+// GitHub annotations for CI, most telling first: failed scenarios, aborted runs, then isolation and cleanup.
+const annotations = [];
 // Ctrl+C or a CI cancel: close the app and the sandbox's private tmux server first.
 let active;
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
@@ -117,6 +120,9 @@ for (const version of versions) {
         await writeFile(path.join(dir, `${scenario.id}.failure.json`), JSON.stringify(evidence, null, 2));
         await launched.page.screenshot({ path: path.join(dir, `${scenario.id}.failure.png`) }).catch(() => {});
         log(`${version} · ${scenario.id} FAILED: ${String(error?.message ?? error).split('\n')[0]}`);
+        const screen = meaningfulLines(evidence.screen.join('\n'), Infinity).slice(-6).map(line => `| ${line}`);
+        annotations.push({ title: `claude-code ${version} · ${scenario.id}: ${scenario.features.filter(f => results[f]?.status !== 'pass').join(', ')}`,
+          message: [errorSummary(error), ...(screen.length ? ['screen (last lines):', ...screen] : [])].join('\n') });
       }
       // Rows the scenario never reached fail with it; rows it finished keep their result.
       for (const feature of scenario.features) run.features[feature] = results[feature] ?? (error ? { status: 'fail', error: `not reached: ${String(error?.message ?? error).split('\n')[0]}` } : { status: 'pass' });
@@ -129,6 +135,7 @@ for (const version of versions) {
   } catch (error) {
     run.error = String(error?.stack ?? error);
     log(`${version} aborted: ${error?.message ?? error}`);
+    annotations.push({ title: `claude-code ${version} aborted`, message: errorSummary(error) });
     for (const [id, item] of Object.entries(run.features)) if (item.status === 'not-covered') run.features[id] = { status: 'fail', error: `run aborted: ${error?.message ?? error}` };
   } finally {
     // Everything the app started (its own shells, the model-list probe) is tracked by PID.
@@ -155,6 +162,11 @@ for (const version of versions) {
     run.leftovers = leftovers;
     run.features.cleanup = leftovers.length ? { status: 'fail', error: `still running after the run: ${leftovers.map(item => `${item.pid} ${item.command}`).join('; ')}` } : { status: 'pass' };
     if (leftovers.length) failed += anyFailed ? 0 : 1;
+    for (const id of ['isolation', 'cleanup']) {
+      if (run.features[id]?.status === 'fail') annotations.push({ title: `claude-code ${version} · ${id}`, message: String(run.features[id].error ?? '').slice(0, 1200) });
+    }
+    const unrun = Object.entries(run.features).filter(([, item]) => item.status === 'fail' && /^not run: /.test(item.error ?? '')).map(([id]) => id);
+    if (unrun.length) annotations.push({ title: `claude-code ${version}: ${unrun.length} features not run (time budget)`, message: unrun.join(', ') });
     run.durationMs = Date.now() - started;
     if (anyFailed) failed++;
     report.runs.push(run);
@@ -164,4 +176,5 @@ for (const version of versions) {
   }
 }
 log(`report: ${path.join(output, 'report.md')}`);
+if (inGitHubActions) for (const line of failureAnnotations(annotations, { what: 'matrix failures' })) console.log(line);
 process.exit(failed ? 1 : 0);

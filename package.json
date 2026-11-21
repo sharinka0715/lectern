@@ -15,7 +15,7 @@
     "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",
     "start": "electron .",
     "demo": "npm run build && electron . --demo",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/test-reporter-annotations.mjs --test-reporter-destination=stdout tests/*.test.ts",
     "test:all": "node scripts/test-all.mjs",
     "test:artifacts": "node scripts/artifacts-ui-e2e.mjs",
     "test:file-index": "node scripts/file-index-e2e.mjs",
