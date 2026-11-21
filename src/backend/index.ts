@@ -832,6 +832,9 @@ exit 0`;
         // This also works during dialogs without typing text into their controls.
         const identity = '#{pane_id}|#{pane_pid}|#{@lectern_session_id}';
         const expected = `${expectedPane}|${expectedPid}|${pane.boundSessionId ?? ''}`;
+        // tmux 3.8 and later report an empty #{pane_pid} once the pane's process has
+        // exited (remain-on-exit); pane IDs are never reused within a server.
+        const exited = `${expectedPane}||${pane.boundSessionId ?? ''}`;
         const getIdentity = this.tmux('display-message', '-p', '-t', expectedPane, identity);
         const proc = pane.claudePid;
         const script = `set -eu
@@ -855,9 +858,10 @@ list_target() {
 }
 remaining=$(list_target)
 expected=${q(expected)}
+exited=${q(exited)}
 case "$remaining" in
  '') exit 0;;
- "$expected|1|"*|"$expected|0|sh"|"$expected|0|bash"|"$expected|0|zsh"|"$expected|0|dash"|"$expected|0|fish"|"$expected|0|ksh")
+ "$expected|1|"*|"$exited|1|"*|"$expected|0|sh"|"$expected|0|bash"|"$expected|0|zsh"|"$expected|0|dash"|"$expected|0|fish"|"$expected|0|ksh")
    if ! error=$(${this.tmux('kill-pane', '-t', expectedPane)} 2>&1); then
      remaining=$(list_target)
      [ -z "$remaining" ] || { echo "$error" >&2; exit 1; }
