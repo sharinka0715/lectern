@@ -16,7 +16,7 @@
 // Check every picture by eye before committing it.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,8 +48,10 @@ const toggleSidebar = (page, locale, show) => page.getByRole('button',
 // temporary folder, tmux socket and live mock session, and removes them on exit.
 async function launch(locale) {
   const profile = await mkdtemp(path.join(tmpdir(), 'lectern-shots-'));
+  // Claude Code keeps background task output in <CLAUDE_CODE_TMPDIR>/claude-<uid>/…; a private one here.
+  const taskTmp = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-shots-tasks-')));
   const env = { ...process.env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath,
-    LECTERN_LOG_DIR: path.join(profile, 'logs'), LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_SHOW_TEST_WINDOWS: '1',
+    LECTERN_LOG_DIR: path.join(profile, 'logs'), LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_SHOW_TEST_WINDOWS: '1', CLAUDE_CODE_TMPDIR: taskTmp,
     TZ: 'UTC' }; // quota reset times show a time zone; keep the machine's own out of the pictures
   for (const name of ['ELECTRON_RUN_AS_NODE', 'LECTERN_DEV_URL', 'TMUX', 'TMUX_PANE']) delete env[name];
   const app = await _electron.launch({ args: [root, '--demo'], cwd: root, env, timeout: 60_000 });
@@ -66,8 +68,11 @@ async function launch(locale) {
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
   const project = path.join(workspace.claudeDir, 'projects', workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
   return {
-    app, page, errors, sessionId, workspace, project,
-    async close() { await app.close().catch(() => {}); await rm(profile, { recursive: true, force: true }); },
+    app, page, errors, sessionId, workspace, project, taskTmp,
+    async close() {
+      await app.close().catch(() => {});
+      for (const folder of [profile, taskTmp]) await rm(folder, { recursive: true, force: true });
+    },
   };
 }
 
@@ -210,9 +215,16 @@ function story(locale) {
         answer: pick('索引现在每次按键都整体重建。改成增量更新后，1 万条笔记的搜索从 180 ms 降到 9 ms。',
           'The index was rebuilt on every keystroke. Updating it incrementally brings search over 10,000 notes from 180 ms to 9 ms.') },
     ],
-    review: pick('让两个子代理分头检查新的设置页：一个看无障碍，一个看测试覆盖。',
-      'Have two agents review the new settings page: one for accessibility, one for test coverage.'),
-    reviewStarted: pick('两个检查已在后台运行，有结果后我来汇总。', "Both reviews are running in the background. I'll sum up when they report back."),
+    review: pick('让两个子代理分头检查新的设置页，一个看无障碍，一个看测试覆盖；再在后台盯着测试和开发服务器。',
+      'Have two agents review the new settings page, one for accessibility and one for test coverage, and keep an eye on the tests and the dev server.'),
+    reviewStarted: pick('两个检查、测试监听和开发服务器日志都已在后台运行，检查有结果后我来汇总。',
+      "The two reviews, the test watcher and the dev server log are all running in the background. I'll sum up when the reviews report back."),
+    shell: { description: pick('持续运行测试', 'Watch the tests'), command: 'npx vitest --watch',
+      output: [' ✓ tests/theme.test.ts (6 tests) 38ms', ' ✓ tests/settings.test.tsx (4 tests) 112ms', '',
+        ' Test Files  2 passed (2)', '      Tests  10 passed (10)', '   Duration  1.21s', '',
+        ' PASS  Waiting for file changes...', '       press h to show help, press q to quit', ''].join('\n') },
+    monitor: { description: pick('监听开发服务器日志', 'Watch the dev server log'), command: 'tail -f logs/dev.log',
+      output: '  VITE v7.1.3  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n' },
     a11y: { description: pick('检查主题开关的无障碍', 'Check theme toggle accessibility'),
       prompt: pick('检查 src/settings/SettingsPage.tsx 里的主题开关：标签、键盘操作和对比度。',
         'Review the theme toggle in src/settings/SettingsPage.tsx for labels, keyboard use and contrast.'),
@@ -300,17 +312,27 @@ async function writeMainTurn({ workspace, project, sessionId }, s) {
   return chat;
 }
 
-// A second turn in the live conversation starts two background subagents, each with
-// its own transcript under <session>/subagents/ as Claude Code writes them: one has
-// finished with a report, the other is still working.
-async function writeSubagentTurn({ workspace, project, sessionId }, s, main) {
-  const done = 'a4c1e9b27d03f6a8', live = 'b7f2d06c19e4a351';
+// A second turn in the live conversation starts background work, laid out as Claude
+// Code writes it: two subagents, each with its own transcript under
+// <session>/subagents/ (one finished with a report, one still working), a shell and a
+// monitor, whose output files are under <CLAUDE_CODE_TMPDIR>/claude-<uid>/<slug>/<session>/tasks/.
+async function writeTaskTurn({ workspace, project, sessionId, taskTmp }, s, main) {
+  const done = 'a4c1e9b27d03f6a8', live = 'b7f2d06c19e4a351', shell = 'b3k9tests', monitor = 'b7m2devlog';
+  const tasks = path.join(taskTmp, `claude-${process.getuid()}`, workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), sessionId, 'tasks');
+  await mkdir(tasks, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(tasks, `${shell}.output`), s.shell.output, { mode: 0o600 });
+  await writeFile(path.join(tasks, `${monitor}.output`), s.monitor.output, { mode: 0o600 });
   const chat = transcript(sessionId, workspace.cwd, { parent: main.rows.filter(row => row.uuid).at(-1).uuid, minutesAgo: 3 });
   chat.ask(s.review);
   chat.say([tool('t-agent-1', 'Agent', { description: s.a11y.description, prompt: s.a11y.prompt, subagent_type: 'general-purpose', run_in_background: true }),
-    tool('t-agent-2', 'Agent', { description: s.coverage.description, prompt: s.coverage.prompt, subagent_type: 'Explore', run_in_background: true })], 'tool_use');
+    tool('t-agent-2', 'Agent', { description: s.coverage.description, prompt: s.coverage.prompt, subagent_type: 'Explore', run_in_background: true }),
+    tool('t-shell', 'Bash', { command: s.shell.command, description: s.shell.description, run_in_background: true }),
+    tool('t-monitor', 'Monitor', { command: s.monitor.command, description: s.monitor.description, timeout_ms: 0 })], 'tool_use');
   for (const [id, agent, description] of [['t-agent-1', done, s.a11y.description], ['t-agent-2', live, s.coverage.description]])
     chat.result(id, `Async agent launched successfully.\nagentId: ${agent}`, { toolUseResult: { isAsync: true, status: 'async_launched', agentId: agent, description } });
+  chat.result('t-shell', `Command running in background with ID: ${shell}.`,
+    { toolUseResult: { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: shell } });
+  chat.result('t-monitor', `Monitor started (task ${monitor}).`, { toolUseResult: { taskId: monitor, timeoutMs: 0, persistent: true } });
   chat.say(s.reviewStarted);
   const notice = `<task-notification>\n<task-id>${done}</task-id>\n<tool-use-id>t-agent-1</tool-use-id>\n<status>completed</status>\n`
     + `<summary>Agent "${s.a11y.description}" completed</summary>\n<result>${s.a11y.report}</result>\n</task-notification>`;
@@ -353,7 +375,6 @@ async function writeSubagentTurn({ workspace, project, sessionId }, s, main) {
     assistant(b, 'b3', [text(s.coverage.progress)]),
     assistant(b, 'b3', [tool('b-read-2', 'Read', { file_path: 'src/settings/useTheme.ts' })]),
   ]));
-  return { done, live };
 }
 
 // The mock Claude has no status line callback, so the status bar would read
@@ -445,27 +466,26 @@ async function previewShot(demo, s, locale) {
   await drawer.getByRole('button', { name: tr(locale, '关闭文件预览', 'Close file preview'), exact: true }).click();
 }
 
-// The activity card lists the subagents; "View conversation" opens the subagent
-// column beside the chat with the finished one's thinking, tool call and report.
-async function subagentShot(demo, s, locale, agents) {
+// The activity card lists the subagents, shells and monitors; "View details" opens
+// the background task column beside the chat, here on the test watcher's command and output.
+async function tasksShot(demo, s, locale) {
   const { page } = demo;
   await primary(page).locator('.message-assistant').filter({ hasText: s.reviewStarted }).waitFor();
   await toggleSidebar(page, locale, false);
   const card = page.locator('.activity-float');
   if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
-  const section = card.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: tr(locale, '子代理', 'Subagents') }) });
-  await section.waitFor();
-  await page.waitForFunction(() => document.querySelectorAll('.activity-float-dots i[data-state]').length >= 2);
-  await section.locator('.activity-float-toggle').click();
-  await page.locator('article.activity-card[data-activity-id="t-agent-1"] .activity-open-conversation').click();
+  const section = name => card.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: new RegExp(`^${name}$`) }) });
+  await section(tr(locale, '子代理', 'Subagents')).waitFor();
+  await section(tr(locale, '监控', 'Monitors')).waitFor();
+  await section(tr(locale, '终端', 'Background shells')).locator('.activity-float-toggle').click();
+  await page.locator('article.activity-card[data-activity-id="t-shell"] .activity-open-conversation').click();
   const column = page.locator('[data-task-column]');
   await column.waitFor();
-  await column.locator(`.task-column-list button[data-agent-id="${agents.done}"]`).click();
-  const detail = column.locator(`[data-subagent-detail="${agents.done}"]`);
-  await detail.locator('article.message-assistant').filter({ hasText: s.a11y.report.split('\n')[0] }).waitFor();
-  await detail.locator('details.thought-row[data-thought]').waitFor({ state: 'attached' });
+  await column.locator('.task-column-list button[data-task-key="t-agent-1"]').waitFor();
+  const detail = column.locator('[data-task-detail="t-shell"]');
+  await detail.locator('.task-output', { hasText: 'Waiting for file changes' }).waitFor();
   await settle(page);
-  await shoot(page, 'subagents', locale);
+  await shoot(page, 'tasks', locale);
   await page.getByRole('button', { name: tr(locale, '收起会话活动', 'Hide conversation activity'), exact: true }).first().click();
   await column.locator('.task-column-bar button').first().click();
   await column.waitFor({ state: 'detached' });
@@ -486,8 +506,8 @@ for (const locale of locales) {
     log(`${locale}: sample project and conversations written`);
     await chatShot(demo, s, locale);
     await previewShot(demo, s, locale);
-    const agents = await writeSubagentTurn(demo, s, main);
-    await subagentShot(demo, s, locale, agents);
+    await writeTaskTurn(demo, s, main);
+    await tasksShot(demo, s, locale);
     await splitShot(demo, s, locale);
     if (demo.errors.length) throw new Error(`Renderer errors: ${demo.errors.join('; ')}`);
   } catch (error) {

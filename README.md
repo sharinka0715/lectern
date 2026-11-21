@@ -31,7 +31,7 @@ Nothing extra is installed on the remote machine. Claude Code there keeps its ow
 - **A chat view of the real Claude Code.** Replies appear while Claude writes them, with Markdown, code, tables, edit diffs and a one-line summary of each run of tool calls. The raw terminal is one click away, and you can take it over when you need to.
 - **Split view.** Drag a conversation to an edge of the window to work on two side by side, each with its own input box, file preview and activity card.
 - **History and resume.** Browse past conversations, scroll back through long ones and resume any of them on the machine where it ran. Rename, archive, rewind to an earlier message, `/compact` and `/fork` work as they do in Claude Code.
-- **Subagents and background work.** An activity card shows repository changes, subagents, background shells and monitors. Open a subagent to follow its own conversation beside the chat, or a shell or monitor to see its full command and live output (or the file it redirected its output to).
+- **Background tasks.** An activity card shows repository changes, subagents, background shells and monitors. Any of them opens in the background tasks column beside the chat, grouped by kind: a subagent shows its own conversation, a shell or monitor its full command and live output (or the file it redirected its output to).
 - **File preview.** File names in replies become links. Preview code with syntax highlighting, Markdown, images, PDFs, audio, video and Office documents, or browse folders, locally or over SSH.
 - **Comfortable input.** Type `@` to mention project files and `/` for commands and skills. Drag in, paste or pick files and screenshots; they show as cards in the input box and in the sent message, and are uploaded to the SSH machine when needed. Queue a message or steer a reply that is still running.
 - **Permission and question cards.** Allow or deny tool calls, trust a folder and answer Claude's questions without leaving the chat.
@@ -48,9 +48,9 @@ Nothing extra is installed on the remote machine. Claude Code there keeps its ow
 
 ![Two conversations in a split view](docs/images/split-en.png)
 
-**Subagents**: the activity card, and a subagent's own conversation beside the chat.
+**Background tasks**: the activity card, and the background tasks column with a shell's command and output.
 
-![The activity card and the subagent column](docs/images/subagents-en.png)
+![The activity card and the background tasks column](docs/images/tasks-en.png)
 
 **File preview**: open a file named in a reply.
 
