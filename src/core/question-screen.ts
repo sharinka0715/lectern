@@ -4,10 +4,13 @@ import { stripTerminalEscapes, terminalCells } from './screen';
 
 const ruler = /^─{8,}$/u;
 // Claude Code wraps by terminal cells. A break between two wide (CJK) characters
-// had no space in the original; a break next to anything else was at a space.
+// had no space in the original, nor one beside fullwidth punctuation (a long run
+// like "对比（ImageGrid" is cut at the edge); a break elsewhere was at a space.
 const wide = (char: string | undefined) => !!char && terminalCells(char) === 2;
+const cjkPunctuation = /^[　-〿！-／：-＠［-｀｛-･]$/u;
+const glued = (a = '', b = '') => wide(a) && wide(b) || cjkPunctuation.test(a) || cjkPunctuation.test(b);
 function joinWrapped(parts: string[]) {
-  return parts.reduce((text, part) => !text ? part : text + (wide(Array.from(text).at(-1)) && wide(Array.from(part)[0]) ? '' : ' ') + part, '');
+  return parts.reduce((text, part) => !text ? part : text + (glued(Array.from(text).at(-1), Array.from(part)[0]) ? '' : ' ') + part, '');
 }
 // A named session (2.1.329) closes the dialog with its name in a rule below the footer.
 const namedRule = /^─{3,} \S(?:.*\S)? ─+$/u;

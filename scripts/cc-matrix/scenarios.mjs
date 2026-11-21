@@ -37,6 +37,7 @@ export const FEATURES = [
   { id: 'permission-deny', title: 'Permission card: deny (reply marked interrupted)' },
   { id: 'question-single', title: 'AskUserQuestion: single question' },
   { id: 'question-multi', title: 'AskUserQuestion: multi-question form with review' },
+  { id: 'question-single-long', title: 'AskUserQuestion: one long wrapped CJK question after a long preamble, wrapped option descriptions, named session' },
   { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
   { id: 'thinking', title: 'Thinking folded into a thought row' },
   { id: 'tasks', title: 'Task list tool (TodoWrite / TaskCreate)' },
@@ -505,8 +506,8 @@ export const SCENARIOS = [
   },
   {
     id: 'question',
-    features: ['question-single', 'question-multi', 'question-review-long'],
-    timeoutMs: 240_000,
+    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long'],
+    timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
       const drink = { header: 'Drink', question: 'Which drink should we serve?', multiSelect: false, options: [
@@ -514,8 +515,8 @@ export const SCENARIOS = [
       const snacks = { header: 'Snacks', question: 'Which snacks should we pack?', multiSelect: true, options: [
         { label: 'Fruit', description: 'Fresh fruit.' }, { label: 'Bread', description: 'Fresh bread.' }] };
       const answers = {};
-      const ask = (name, questions) => api.script(name, ({ step, toolResults }) => {
-        if (step === 0) return { blocks: [{ type: 'text', text: 'One question first.' }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions } }] };
+      const ask = (name, questions, preamble = 'One question first.') => api.script(name, ({ step, toolResults }) => {
+        if (step === 0) return { blocks: [{ type: 'text', text: preamble }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions } }] };
         answers[name] = toolResults.map(result => result.text).join('\n');
         return { text: `Thanks (ccm-${name}-done).` };
       });
@@ -531,9 +532,28 @@ export const SCENARIOS = [
         options: [{ label: '生成索引页', description: '列出全部相册。' }, { label: '清理临时文件', description: '删除中间产物。' }] };
       ask('ask-long', [cleanup, extras]);
       ask('ask-long-cancel', [cleanup, extras]);
+      // One question under a long reply: a wrapped CJK title, wrapped option descriptions.
+      const album = { header: '方案', multiSelect: false,
+        question: '相册页（示例应用用 ImageGrid 组件显示的缩略图墙）在后台补齐元数据时会立刻重新生成缩略图，如果恰好这时滚动就会闪一下、需要等半秒才稳定（不会丢图）。详情页今天已经改成「同一张图还在屏幕上时缩略图不变，只在尺寸变化时重新生成」。相册页要不要也改成这种做法？',
+        options: [{ label: '统一成详情页做法 (Recommended)', description: '改动小：同一张图在屏幕上时缩略图不变，滚动时不会因为补齐元数据而闪烁；尺寸或内容变化时仍然重新生成，画质检查不放松。和 CI 修复一起做，再跑一轮完整 CI。' },
+          { label: '保持现状', description: '偶尔会闪一下，但逻辑最保守，不再改动。' }] };
+      ask('ask-single-long', [album], '好，我把这个问题说清楚，再问你一次。\n\n背景：示例应用的相册页用 ImageGrid 组件显示缩略图。每张缩略图都记着它是根据哪一份元数据生成的，元数据一变就重新生成。\n\n两个页面现在的做法不一样：\n\n- 详情页（今天刚改过）：只要屏幕上还是同一张图，缩略图就保持不变。\n- 相册页（没改）：元数据只要一变就立刻重新生成，恰好在滚动时会闪一下。\n\n影响：不会丢图，也不会卡住，最坏的情况是偶尔闪一下。');
       const squash = text => text.replace(/\s+/g, '');
       const card = page.locator(sel.question);
       const option = number => card.locator(`button.question-option[data-question-number="${number}"]`);
+      const heading = text => page.waitForFunction(([selector, wanted]) => document.querySelector(selector)?.textContent.replace(/\s+/g, '') === wanted,
+        [`${sel.question} h3`, squash(text)], { timeout: 20_000 });
+      // A named session closes the native dialog with a rule carrying its name.
+      const rename = async name => {
+        const id = await ui.activeSessionId();
+        await page.locator(sel.row(id)).hover();
+        await page.locator(`.session-row-wrap:has(${sel.row(id)}) .session-rename`).click();
+        const dialog = page.locator('dialog.session-rename-dialog');
+        await dialog.locator('input').fill(name);
+        await dialog.locator('button[type="submit"]').click();
+        await dialog.waitFor({ state: 'hidden', timeout: 40_000 });
+        return id;
+      };
       await check('question-single', async () => {
         await startChat(ctx, folders.main, 'Ask me one question ccm:ask-single');
         await card.waitFor({ timeout: 60_000 });
@@ -560,18 +580,27 @@ export const SCENARIOS = [
         assert.match(answers['ask-multi'], /Tea/);
         assert.match(answers['ask-multi'], /Fruit, Bread/);
       });
+      await check('question-single-long', async () => {
+        await ui.waitStatus('idle', 30_000);
+        await rename('Demo 示例开发');
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('Ask me one long question ccm:ask-single-long');
+        await card.waitFor({ timeout: 60_000 });
+        await heading(album.question);
+        // Wrapped descriptions come back whole, in order; Type something and Chat stay as designed.
+        assert.deepEqual((await card.locator('button.question-option small').allInnerTexts()).map(squash), album.options.map(o => squash(o.description)));
+        assert.equal(await card.locator('button.question-option').count(), 3);
+        const screen = await ui.screen();
+        ctx.note('single-layout', { quoteBar: /^│ /mu.test(screen), nameRule: /─ Demo 示例开发 ─+\s*$/u.test(screen.trimEnd()) });
+        await writeFile(path.join(ctx.dir, 'question-single-long.txt'), screen);
+        await page.screenshot({ path: path.join(ctx.dir, 'question-single-long.png') });
+        await option(1).click();
+        await ui.waitReply('ccm-ask-single-long-done');
+        assert.match(answers['ask-single-long'], /统一成详情页做法/);
+      });
       await check('question-review-long', async () => {
         await ui.waitStatus('idle', 30_000);
-        // A named session closes the native dialog with a rule carrying its name.
-        const id = await ui.activeSessionId();
-        await page.locator(sel.row(id)).hover();
-        await page.locator(`.session-row-wrap:has(${sel.row(id)}) .session-rename`).click();
-        const dialog = page.locator('dialog.session-rename-dialog');
-        await dialog.locator('input').fill('示例问答');
-        await dialog.locator('button[type="submit"]').click();
-        await dialog.waitFor({ state: 'hidden', timeout: 40_000 });
-        const heading = text => page.waitForFunction(([selector, wanted]) => document.querySelector(selector)?.textContent.replace(/\s+/g, '') === wanted,
-          [`${sel.question} h3`, squash(text)], { timeout: 20_000 });
+        const id = await rename('示例问答');
         const reviewed = async () => {
           await card.locator('dl.question-review').waitFor({ timeout: 20_000 });
           return card.locator('dl.question-review dt').allInnerTexts();

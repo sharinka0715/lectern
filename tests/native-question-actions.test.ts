@@ -206,3 +206,19 @@ test('the barred review of long questions submits, cancels, and goes back to cha
   d = drive(f('multi-answer'), [['Left', f('back-to-question').replace('☒ 附加项', '☐ 附加项')]]);
   await assert.rejects(d.act({kind:'previous'}));
 });
+
+test('one wrapped question under a reply: choosing a row walks to it and submits once', async () => {
+  const f = (dir: string, name: string) => readFileSync(new URL(`./fixtures/${dir}/${name}.txt`, import.meta.url), 'utf8');
+  const start = f('question-single-2.1.330', 'wrapped-named-120'), down = f('question-single-2.1.330', 'wrapped-named-120-down');
+  const composer = f('question-review-2.1.330', 'after-submit');
+  // The reply above the dialog needs the pending tool call; the waiting native state supplies it here.
+  const expected = parseQuestionScreen(start, { pendingToolUse: true })!;
+  assert.ok(expected);
+  let d = drive(start, [['Down', down], ['Enter', composer]]);
+  await d.act({kind:'activate', number:2}, expected); assert.deepEqual(d.sent, ['Down', 'Enter']);
+  d = drive(start, [['Enter', composer]]);
+  await d.act({kind:'activate', number:1}, expected); assert.deepEqual(d.sent, ['Enter']);
+  // Without the waiting state the same frame is not actionable: nothing is sent.
+  d = drive(start, []); d.state.nativeStatus = 'busy';
+  await assert.rejects(d.act({kind:'activate', number:1}, expected)); assert.deepEqual(d.sent, []);
+});

@@ -188,3 +188,57 @@ test('review page: the partial-answer warning reworded in 2.1.329, styling, and 
   // Session names wider than ASCII close the dialog too, and nothing else may follow the rule.
   assert.equal(parse(review330('cjk-name-80').trimEnd() + '\nSomething else', { pendingToolUse: true }), undefined);
 });
+
+// One question under a reply, sampled from Claude Code 2.1.330 (synthetic text, loopback model).
+const single330 = (name: string) => readFileSync(new URL(`./fixtures/question-single-2.1.330/${name}.txt`, import.meta.url), 'utf8');
+const ALBUM = '相册页（示例应用用 ImageGrid 组件显示的缩略图墙）在后台补齐元数据时会立刻重新生成缩略图，如果恰好这时滚动就会闪一下、需要等半秒才稳定（不会丢图）。详情页今天已经改成「同一张图还在屏幕上时缩略图不变，只在尺寸变化时重新生成」。相册页要不要也改成这种做法？';
+const UNIFY = '改动小：同一张图在屏幕上时缩略图不变，滚动时不会因为补齐元数据而闪烁；尺寸或内容变化时仍然重新生成，画质检查不放松。和 CI 修复一起做，再跑一轮完整 CI。';
+const KEEP = '偶尔会闪一下，但逻辑最保守，不再改动。';
+
+test('one wrapped CJK question under a reply: full title and descriptions at 80, 120 and 160 columns', () => {
+  for (const name of ['wrapped-named-120', 'wrapped-named-80', 'wrapped-named-160', 'wrapped-unnamed-120', 'no-preamble']) {
+    const s = parse(single330(name), { pendingToolUse: true });
+    assert.equal(s?.kind, 'question', name);
+    assert.deepEqual(s.tabs, [{ label: '方案', answered: false }]);
+    assert.equal(s.activeTab, 0); assert.equal(s.multiSelect, false);
+    // Breaks between wide characters, beside fullwidth punctuation or at a space rejoin to the original.
+    assert.equal(s.question, ALBUM, name);
+    assert.deepEqual(s.options.map(o => [o.number, o.kind, o.label, o.description, o.focused]), [
+      [1, 'choice', '统一成详情页做法 (Recommended)', UNIFY, true], [2, 'choice', '保持现状', KEEP, false],
+      [3, 'other', 'Type something.', undefined, false], [4, 'chat', 'Chat about this', undefined, false]], name);
+    assert.deepEqual(s.input, { kind: 'other', number: 3, value: '', focused: false });
+    assert.equal(s.footer, 'Enter to select · ↑/↓ to navigate · Esc to cancel');
+    const styled = single330(name).split('\n').map(line => '\x1b[0m' + line.replace('❯', '\x1b[36m❯\x1b[39m').replace(/^│/u, '\x1b[2m│\x1b[22m') + '   ').join('\n');
+    assert.deepEqual(parse(styled + '\n\n', { pendingToolUse: true }), s, `${name} under SGR and tmux padding`);
+  }
+  assert.deepEqual(parse(single330('wrapped-named-120-down'), { pendingToolUse: true })?.options.map(o => o.focused), [false, true, false, false]);
+  // Reply text above the dialog: only a pending AskUserQuestion on the active branch vouches for it.
+  for (const name of ['wrapped-named-120', 'wrapped-named-80', 'wrapped-named-160', 'wrapped-unnamed-120']) assert.equal(parse(single330(name)), undefined, name);
+  assert.equal(parse(single330('no-preamble'))?.question, ALBUM);
+});
+
+test('one question, other shapes: unwrapped title, single multi-select with wrapped descriptions, previews', () => {
+  const short = parse(single330('short-named'), { pendingToolUse: true })!;
+  assert.equal(short.question, '相册页要不要也改成详情页的做法？');
+  assert.deepEqual(short.options.map(o => o.description), [UNIFY, KEEP, undefined, undefined]);
+  const multi = parse(single330('multi-named'), { pendingToolUse: true })!;
+  assert.equal(multi.question, '改完之后还需要顺手做哪些收尾工作？这些都可以放在同一批改动里完成，但每多选一项整体时间大约会增加半小时左右，请按实际需要勾选（ImageGrid 和 DetailView 都会受影响）。');
+  assert.equal(multi.multiSelect, true);
+  assert.deepEqual(multi.tabs, [{ label: '收尾', answered: false }]);
+  assert.deepEqual(multi.options.map(o => [o.number, o.kind, o.description ?? null, o.checked ?? null]), [
+    [1, 'choice', '为相册页和详情页各加一组截图比对，覆盖滚动、缩放和切换深色模式三种情况，失败时把差异图上传到 CI 产物里方便排查。', false],
+    [2, 'choice', '在开发说明里写清楚缩略图何时重新生成。', false], [3, 'other', null, false], [5, 'submit', null, null], [4, 'chat', null, null]]);
+  const preview = parse(single330('preview-named'), { pendingToolUse: true })!;
+  // "对比（" ends a full row and "ImageGrid" starts the next: no space beside fullwidth punctuation.
+  assert.equal(preview.question, '首页相册墙的版式你更喜欢哪一种？左边是按时间排列的瀑布流，右边是按地点分组的网格，两种都已经做好了示例，可以直接对比（ImageGrid 组件同时支持两种布局）。');
+  assert.deepEqual(preview.options.map(o => [o.kind, o.label]), [['choice', '瀑布流'], ['choice', '分组网格'], ['chat', 'Chat about this']]);
+  assert.equal(preview.preview, '┌──┐┌────┐\n│  ││    │\n└──┘└────┘');
+  // Malformed variants still reject.
+  const frame = single330('wrapped-named-120');
+  for (const broken of [
+    frame.replace('│ 组件显示的缩略图墙', '  组件显示的缩略图墙'), // a title line lost its bar
+    frame.replace('     。和 CI 修复', '。和 CI 修复'), // a description lost its indent
+    frame.replace('  3. Type something.\n', ''),
+    frame.replace(/\n─+ Demo 示例开发 ─\n?$/u, '\n❯ Returned composer\n'),
+  ]) assert.equal(parse(broken, { pendingToolUse: true }), undefined, broken);
+});
