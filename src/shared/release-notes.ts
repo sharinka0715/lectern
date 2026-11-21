@@ -67,6 +67,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Clicking a web link in a message did nothing; it now opens in the system browser.'],
       ['多题问答有题目折行、或只答了部分题目（Claude Code 2.1.329 起）时，最后的「核对回答」页没有卡片，现在可在卡片里提交、取消或返回改答。',
         'The final "Review your answers" page of a multi-question prompt showed no card when a question wrapped or (Claude Code 2.1.329+) some were unanswered; it now has one.'],
+      ['Claude Code 往会话记录里追加说明时，点权限卡或问答卡会被拒、要再点一次（权限卡还可能卡在「未确认」）；现在一次生效。',
+        'When Claude Code added a note to the transcript, a click on a permission or question card was refused (a permission card could stay "unconfirmed"); it now works the first time.'],
       ['折行的中文题目在问答卡上不再多出空格。',
         'Wrapped Chinese questions no longer gain stray spaces on the question card.'],
       ['对话滚到底时，右侧滚动条停在输入框上方；现在滚动条一直延伸到窗口底部，消息从输入框下方滚过，在输入框区域滚动滚轮也能翻看对话。',

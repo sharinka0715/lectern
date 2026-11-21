@@ -27,11 +27,18 @@ export function pendingQuestionId(messages: ChatMessage[]): string | undefined {
   }
 }
 
+/** Keep the token while the same question screen (question, page, focus, edits, review) is shown
+ * for the same call; any change there, or another call, issues a new one. Records appended
+ * meanwhile without changing the pending call (Claude Code's notices) move the card to the newer
+ * transcript position, like the permission card: answering checks that position, so a click on
+ * the unchanged screen is not refused, and anything else the guard still refuses. */
 export function observeQuestion(previous: WatchedQuestion | undefined, screen: NativeQuestionScreen, handle: SessionSettingsHandle,
   owner: string, position?: TranscriptPosition): WatchedQuestion {
   const same = previous?.handle === handle && previous.owner === owner;
-  if (same && (!previous.consumed || previous.unconfirmed) && previous.position?.inode === position?.inode && previous.position?.offset === position?.offset &&
-      JSON.stringify(previous.screen) === JSON.stringify(screen)) return previous;
+  if (same && (!previous.consumed || previous.unconfirmed) && JSON.stringify(previous.screen) === JSON.stringify(screen)) {
+    previous.position = position;
+    return previous;
+  }
   return { screen, handle, position, owner, consumed: false, snapshot: { ...screen,
     interactionId: same ? previous.snapshot.interactionId : randomUUID(), token: randomUUID() } };
 }

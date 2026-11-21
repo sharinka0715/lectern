@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { performQuestionAction, QuestionInputUnconfirmed, type QuestionDriver, type QuestionKey } from '../src/backend/native-question-actions';
 import { parseQuestionScreen } from '../src/core/question-screen';
-import { NavigationKeyNotSent } from '../src/backend/native-settings';
+import { NavigationKeyNotSent, TranscriptChangedNoKeys } from '../src/backend/native-settings';
 import type { QuestionAction } from '../src/shared/question-action';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/native-contracts/question-2.1.326.json', import.meta.url), 'utf8')).scenarios as Record<string, {screens: Record<string,string>; ansiViewport?: string}>;
@@ -173,6 +173,22 @@ test('after a submit, transport failure or an unknown non-composer is not report
   await assert.rejects(moved.act({kind:'activate',number:1}), /已变化/);
   const replaced = drive(single,[['Enter','Do you trust this directory?\n❯ 1. Yes']]);
   await assert.rejects(replaced.act({kind:'activate',number:1}),QuestionInputUnconfirmed); assert.deepEqual(replaced.sent,['Enter']);
+});
+
+test('a transcript that changed after the card was read stops the answer as "not sent": tried once, never unconfirmed', async () => {
+  // The record guard runs before any key (14ce288): the same guard would refuse a retry, too.
+  for (const [action, key] of [[{kind:'activate',number:1}, 'Enter'], [{kind:'activate',number:2}, 'Down']] as [QuestionAction, string][]) {
+    const d = drive(single,[]); const tried: string[] = [];
+    d.driver.questionKey = async value => { tried.push(value); throw new TranscriptChangedNoKeys(); };
+    await assert.rejects(d.act(action), (error: unknown) => error instanceof TranscriptChangedNoKeys && !(error instanceof QuestionInputUnconfirmed) && /未发送按键/.test((error as Error).message));
+    assert.deepEqual(tried, [key]);
+  }
+  // Typing an answer (clearing, then pasting) stops at its first refused input too.
+  const typed = drive(custom,[]); const inputs: string[] = [];
+  typed.driver.questionKey = async value => { inputs.push(value); throw new TranscriptChangedNoKeys(); };
+  typed.driver.pasteQuestion = async text => { inputs.push(`paste:${text}`); throw new TranscriptChangedNoKeys(); };
+  await assert.rejects(typed.act({kind:'text',number:3,text:'Water'} as QuestionAction, parsed(custom)), TranscriptChangedNoKeys);
+  assert.equal(inputs.length, 1, JSON.stringify(inputs));
 });
 
 test('the barred review of long questions submits, cancels, and goes back to change answers', async () => {

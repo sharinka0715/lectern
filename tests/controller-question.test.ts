@@ -80,3 +80,39 @@ test('输入送达后未能核实后继，同一原屏不会重新开放提交',
     assert.notEqual(next.question.token,s.question?.token);
   } finally {await t.controller.dispose();}
 });
+
+test('同一道题追加说明后令牌不变、回答带新位置；换焦点、换题才换令牌', async()=>{
+  // Claude Code may append notices (system/informational) while a question is on screen; the card
+  // follows the newer record instead of refusing the click. Any change of the screen is a new card.
+  const {multi} = JSON.parse(readFileSync(new URL('./fixtures/native-contracts/question-2.1.326.json', import.meta.url),'utf8')).scenarios;
+  const record = {type:'assistant', uuid:'assistant', sessionId:session, message:{id:'message-q', role:'assistant',
+    content:[{type:'tool_use', id:'question-m', name:'AskUserQuestion', input:{questions:[{header:'Drink',question:'Which drink should we serve?'}]}}]}};
+  const notice = {parentUuid:'assistant', isSidechain:false, type:'system', subtype:'informational', level:'warning', uuid:'notice', sessionId:session, content:'A notice.'};
+  let viewport: string = multi.screens.start, offset = 900, jsonl = Buffer.from(JSON.stringify(record)+'\n');
+  const positions: unknown[] = [];
+  const backend = {
+    resetRead(){}, dispose(){}, readSession: async (): Promise<ReadResult> => {
+      const chunk = jsonl; jsonl = Buffer.alloc(0);
+      return {session:{id:session,title:'Question',mapping:'exact',paneId:'%5'},panePid:42, viewport, screen:viewport, nativeStatus:'waiting', active:true,
+        jsonl:chunk, reset:false, hasMore:false, transcriptPosition:{inode:'7', offset}};
+    },
+    answerQuestion:async(...args:unknown[])=>{positions.push(args[7]);},
+  } as unknown as Backend;
+  const controller=new Controller({get:()=>workspace} as unknown as WorkspaceStore, backend);
+  const next=async()=> (await once(controller,'snapshot'))[0] as SessionSnapshot;
+  const appendNotice=()=>{ jsonl = Buffer.from(JSON.stringify({...notice, uuid:`notice-${offset}`})+'\n'); offset += 120; };
+  try {
+    const first=(await controller.watchSession(workspace.id,session)).question!; assert.ok(first);
+    appendNotice();
+    const same=(await next()).question!; assert.equal(same.token,first.token,'a notice keeps the card');
+    viewport=multi.screens.other;
+    const focus=(await next()).question!; assert.notEqual(focus.token,first.token,'another focus is another card');
+    assert.equal(focus.interactionId,first.interactionId);
+    viewport=multi.screens.afterEnter;
+    const second=(await next()).question!; assert.notEqual(second.token,focus.token,'the next question is another card');
+    appendNotice();
+    assert.equal((await next()).question!.token,second.token);
+    await controller.answerQuestion(workspace.id,session,'%5',42,second.token,{kind:'activate',number:1});
+    assert.deepEqual(positions,[{inode:'7', offset}],'answered at the record the backend has read');
+  } finally {await controller.dispose();}
+});
