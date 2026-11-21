@@ -55,7 +55,8 @@ try {
   paneId=launched.stdout.trim();
   const executablePath = process.argv[2];
   app=await _electron.launch({args:executablePath?[]:['.'], ...(executablePath && {executablePath:path.resolve(executablePath)}),
-    env:{...env,LECTERN_LOCALE:'zh-CN',LECTERN_USER_DATA:profile,LECTERN_DIAGNOSTIC_CONTENT:'0',LECTERN_LOG_DIR:path.join(root,'diagnostics')}});
+    // Linux: the display that xvfb-run provides (the probe's environment starts empty).
+    env:{...env,...Object.fromEntries(['DISPLAY','XAUTHORITY'].filter(k=>process.env[k]).map(k=>[k,process.env[k]])),LECTERN_LOCALE:'zh-CN',LECTERN_USER_DATA:profile,LECTERN_DIAGNOSTIC_CONTENT:'0',LECTERN_LOG_DIR:path.join(root,'diagnostics')}});
   page=await app.firstWindow(); page.setDefaultTimeout(20000);
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1280,900));
   await page.locator(`.session-row[data-session-id="${session}"]`).click();

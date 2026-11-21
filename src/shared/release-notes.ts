@@ -40,6 +40,10 @@ export const releaseNotes: ReleaseNote[] = [
     fixes: [
       ['点击消息里的网址链接没有反应，现在会在系统浏览器中打开。',
         'Clicking a web link in a message did nothing; it now opens in the system browser.'],
+      ['多题问答有题目折行、或只答了部分题目（Claude Code 2.1.329 起）时，最后的「核对回答」页没有卡片，现在可在卡片里提交、取消或返回改答。',
+        'The final "Review your answers" page of a multi-question prompt showed no card when a question wrapped or (Claude Code 2.1.329+) some were unanswered; it now has one.'],
+      ['折行的中文题目在问答卡上不再多出空格。',
+        'Wrapped Chinese questions no longer gain stray spaces on the question card.'],
     ],
   },
   {

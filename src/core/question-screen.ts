@@ -1,8 +1,14 @@
 import type { NativeQuestionOption, NativeQuestionScreen } from '../shared/native-question';
 import { inTranscriptExample } from './dialog-boundary';
-import { stripTerminalEscapes } from './screen';
+import { stripTerminalEscapes, terminalCells } from './screen';
 
 const ruler = /^─{8,}$/u;
+// Claude Code wraps by terminal cells. A break between two wide (CJK) characters
+// had no space in the original; a break next to anything else was at a space.
+const wide = (char: string | undefined) => !!char && terminalCells(char) === 2;
+function joinWrapped(parts: string[]) {
+  return parts.reduce((text, part) => !text ? part : text + (wide(Array.from(text).at(-1)) && wide(Array.from(part)[0]) ? '' : ' ') + part, '');
+}
 // A named session (2.1.329) closes the dialog with its name in a rule below the footer.
 const namedRule = /^─{3,} \S(?:.*\S)? ─+$/u;
 const numberRow = /^(❯ |  )([1-9]\d*)\. (.+)$/u;
@@ -33,17 +39,23 @@ function review(lines: string[], tabs: NativeQuestionScreen['tabs']): NativeQues
   }
   if (options.filter(o=>o.focused).length!==1) return;
   let i = 1;
-  const incomplete = /^⚠\s+You have not answered all questions$/u.test(rows[i]);
+  // 2.1.329 reworded the warning above a partial set of answers.
+  const incomplete = /^⚠\s+(?:You have not answered all questions|Some questions are unanswered)$/u.test(rows[i]);
   if (incomplete) i++;
+  // Once any question wraps, every question carries a quote bar (" │ ● …",
+  // continued by " │   …"; 2.1.300 to 2.1.330); answers stay unbarred ("   → …").
+  const barred = rows[i]?.startsWith(' │ ');
+  const head = barred ? /^ │ [●⏺] (.+)$/u : /^ [●⏺] (.+)$/u;
+  const more = barred ? /^ │ {3}(\S.*)$/u : /^ {3,}(?!→)(\S.*)$/u;
   const answers: NonNullable<NativeQuestionScreen['review']> = [];
   for (; i<end;) {
-    const q = /^ [●⏺] (.+)$/u.exec(rows[i++]); if (!q) return;
+    const q = head.exec(rows[i++]); if (!q) return;
     const question = [q[1]];
-    while (i<end && /^ {3,}(?!→)\S/u.test(rows[i])) question.push(rows[i++].trim());
+    for (let m; i<end && (m = more.exec(rows[i])); i++) question.push(m[1]);
     const a = /^ {3}→ (.+)$/u.exec(rows[i++] ?? ''); if(!a) return;
     const answer = [a[1]];
     while (i<end && /^ {3,}\S/u.test(rows[i])) answer.push(rows[i++].trim());
-    answers.push({question:question.join(' '),answer:answer.join(' ')});
+    answers.push({question:joinWrapped(question),answer:joinWrapped(answer)});
   }
   if (answers.length!==tabs.filter(t=>t.answered).length || incomplete!==tabs.some(t=>!t.answered)) return;
   return {kind:'review',tabs,activeTab:tabs.length,options,review:answers,footer:''};
@@ -68,7 +80,7 @@ function standardRows(lines:string[], chat:string, hasAnswer:boolean): Pick<Nati
       } else {
         const last = options.at(-1);
         if (action || !last || !/^ {5,}\S/u.test(line)) return;
-        last.description = [last.description,line.trim()].filter(Boolean).join(' ');
+        last.description = joinWrapped([last.description ?? '',line.trim()].filter(Boolean));
       }
     }
   }
@@ -149,5 +161,5 @@ export function parseQuestionScreen(viewport:string, evidence?:{pendingToolUse:t
   const rows = trimBlank(section.slice(first,divider));
   const data = footer.includes('n to add notes') ? previewRows(rows,chat,footer) : standardRows(rows,chat,tabs.some(t=>t.answered));
   if (!data || data.options.filter(o=>o.focused).length!==1 || hasReview!==(tabs.length>1 || data.multiSelect)) return;
-  return {kind:'question',tabs,...(tabs.length===1?{activeTab:0}:{}),question:title.map(l=>l.trim()).join(' '),...data,footer};
+  return {kind:'question',tabs,...(tabs.length===1?{activeTab:0}:{}),question:joinWrapped(title.map(l=>l.trim())),...data,footer};
 }

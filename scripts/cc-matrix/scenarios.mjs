@@ -33,6 +33,7 @@ export const FEATURES = [
   { id: 'permission-deny', title: 'Permission card: deny (reply marked interrupted)' },
   { id: 'question-single', title: 'AskUserQuestion: single question' },
   { id: 'question-multi', title: 'AskUserQuestion: multi-question form with review' },
+  { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
   { id: 'thinking', title: 'Thinking folded into a thought row' },
   { id: 'tasks', title: 'Task list tool (TodoWrite / TaskCreate)' },
   { id: 'queue', title: 'Queue a message during a reply' },
@@ -359,10 +360,10 @@ export const SCENARIOS = [
   },
   {
     id: 'question',
-    features: ['question-single', 'question-multi'],
-    timeoutMs: 180_000,
+    features: ['question-single', 'question-multi', 'question-review-long'],
+    timeoutMs: 240_000,
     async run(ctx) {
-      const { ui, page, api, folders, check } = ctx;
+      const { ui, page, api, sandbox, folders, check } = ctx;
       const drink = { header: 'Drink', question: 'Which drink should we serve?', multiSelect: false, options: [
         { label: 'Tea', description: 'A warm infusion.' }, { label: 'Juice', description: 'A cold drink.' }] };
       const snacks = { header: 'Snacks', question: 'Which snacks should we pack?', multiSelect: true, options: [
@@ -375,6 +376,17 @@ export const SCENARIOS = [
       });
       ask('ask-single', [drink]);
       ask('ask-multi', [drink, snacks]);
+      // Long CJK questions wrap in the 120-column pane: the review page then quotes
+      // every question with a bar (2.1.300 to 2.1.330).
+      const cleanup = { header: '旧脚本', multiSelect: false,
+        question: '示例相册服务在上午维护时重启了一次，我已经重新提交了缩略图任务。两台测试机（192.0.2.10、192.0.2.11，任务 demo-20260101-abcd）上还在运行的旧版同步脚本 sync_demo.sh（只包括我启动的那些，不包括你自己开的压测进程），能不能由我登录上去停掉？停掉之后我会把没跑完的批次重新排队，等新服务就绪再继续。',
+        options: [{ label: '可以停', description: '停掉旧脚本并重新排队。' }, { label: '先别停', description: '保留现状，稍后再说。' }] };
+      const extras = { header: '收尾', multiSelect: true,
+        question: '处理完成之后还需要顺手做哪些收尾工作？这些都可以在同一批任务里完成，但每多选一项整体时间大约会增加半小时左右，请按实际需要勾选。',
+        options: [{ label: '生成索引页', description: '列出全部相册。' }, { label: '清理临时文件', description: '删除中间产物。' }] };
+      ask('ask-long', [cleanup, extras]);
+      ask('ask-long-cancel', [cleanup, extras]);
+      const squash = text => text.replace(/\s+/g, '');
       const card = page.locator(sel.question);
       const option = number => card.locator(`button.question-option[data-question-number="${number}"]`);
       await check('question-single', async () => {
@@ -402,6 +414,59 @@ export const SCENARIOS = [
         await ui.waitReply('ccm-ask-multi-done');
         assert.match(answers['ask-multi'], /Tea/);
         assert.match(answers['ask-multi'], /Fruit, Bread/);
+      });
+      await check('question-review-long', async () => {
+        await ui.waitStatus('idle', 30_000);
+        // A named session closes the native dialog with a rule carrying its name.
+        const id = await ui.activeSessionId();
+        await page.locator(sel.row(id)).hover();
+        await page.locator(`.session-row-wrap:has(${sel.row(id)}) .session-rename`).click();
+        const dialog = page.locator('dialog.session-rename-dialog');
+        await dialog.locator('input').fill('示例问答');
+        await dialog.locator('button[type="submit"]').click();
+        await dialog.waitFor({ state: 'hidden', timeout: 40_000 });
+        const heading = text => page.waitForFunction(([selector, wanted]) => document.querySelector(selector)?.textContent.replace(/\s+/g, '') === wanted,
+          [`${sel.question} h3`, squash(text)], { timeout: 20_000 });
+        const reviewed = async () => {
+          await card.locator('dl.question-review').waitFor({ timeout: 20_000 });
+          return card.locator('dl.question-review dt').allInnerTexts();
+        };
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('Ask me two long questions ccm:ask-long');
+        await card.waitFor({ timeout: 60_000 });
+        await heading(cleanup.question);
+        await option(1).click();
+        await heading(extras.question);
+        await option(1).click();
+        await page.waitForFunction(selector => document.querySelector(selector)?.getAttribute('aria-pressed') === 'true', `${sel.question} button.question-option[data-question-number="1"]`, { timeout: 15_000 });
+        await option(2).click();
+        await page.waitForFunction(selector => document.querySelector(selector)?.getAttribute('aria-pressed') === 'true', `${sel.question} button.question-option[data-question-number="2"]`, { timeout: 15_000 });
+        await card.locator('nav.question-nav button').last().click();
+        assert.deepEqual((await reviewed()).map(squash), [cleanup.question, extras.question].map(squash));
+        const screen = await ui.screen();
+        ctx.note('review-layout', { quoteBars: /^ │ [●⏺] /mu.test(screen), nameRule: /─ 示例问答 ─+\s*$/u.test(screen.trimEnd()) });
+        await card.locator('footer.question-actions button.primary-button').first().click();
+        await ui.waitReply('ccm-ask-long-done');
+        assert.match(answers['ask-long'], /可以停/);
+        assert.match(answers['ask-long'], /生成索引页, 清理临时文件/);
+        // Answer one question, skip the other, then cancel on the review page.
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('Ask me again, I will cancel ccm:ask-long-cancel');
+        await card.waitFor({ timeout: 60_000 });
+        await heading(cleanup.question);
+        await option(2).click();
+        await heading(extras.question);
+        await card.locator('nav.question-nav button').last().click();
+        assert.deepEqual((await reviewed()).map(squash), [squash(cleanup.question)]);
+        await card.locator('footer.question-actions button[data-question-number="2"]').click();
+        await card.waitFor({ state: 'detached', timeout: 30_000 });
+        let result;
+        for (let i = 0; i < 50 && !result; i++, await delay(200)) {
+          const records = await readJsonl((await sandbox.projectFiles()).find(file => file.includes(id)));
+          const asked = records.flatMap(r => Array.isArray(r.message?.content) ? r.message.content : []).filter(b => b.type === 'tool_use' && b.name === 'AskUserQuestion').at(-1);
+          result = records.find(r => Array.isArray(r.message?.content) && r.message.content.some(b => b.type === 'tool_result' && b.tool_use_id === asked?.id));
+        }
+        assert.equal(result?.toolUseResult, 'User rejected tool use', 'the cancelled review rejected the question');
       });
     },
   },

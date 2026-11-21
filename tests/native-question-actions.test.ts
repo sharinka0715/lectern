@@ -174,3 +174,19 @@ test('after a submit, transport failure or an unknown non-composer is not report
   const replaced = drive(single,[['Enter','Do you trust this directory?\n❯ 1. Yes']]);
   await assert.rejects(replaced.act({kind:'activate',number:1}),QuestionInputUnconfirmed); assert.deepEqual(replaced.sent,['Enter']);
 });
+
+test('the barred review of long questions submits, cancels, and goes back to change answers', async () => {
+  const f = (name: string) => readFileSync(new URL(`./fixtures/question-review-2.1.330/${name}.txt`, import.meta.url), 'utf8');
+  const review = f('wrapped-named'), composer = f('after-submit');
+  let d = drive(review, [['Enter', composer]]);
+  await d.act({kind:'activate', number:1}); assert.deepEqual(d.sent, ['Enter']);
+  d = drive(review, [['Down', f('wrapped-named-cancel')], ['Enter', composer]]);
+  await d.act({kind:'activate', number:2}); assert.deepEqual(d.sent, ['Down', 'Enter']);
+  d = drive(review, [['Escape', composer]]); await d.act({kind:'cancel'});
+  // Left returns to the last question page (multi-select, wrapped title) without changing any answer.
+  d = drive(f('multi-answer'), [['Left', f('back-to-question')]]); await d.act({kind:'previous'});
+  d = drive(f('multi-answer'), []); await assert.rejects(d.act({kind:'next'}), /不支持/);
+  // A page whose answered marker changed is not accepted as the result of Left.
+  d = drive(f('multi-answer'), [['Left', f('back-to-question').replace('☒ 附加项', '☐ 附加项')]]);
+  await assert.rejects(d.act({kind:'previous'}));
+});

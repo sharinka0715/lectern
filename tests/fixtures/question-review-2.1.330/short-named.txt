@@ -1,0 +1,42 @@
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Run the question probe.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Drink  ☒ Snacks  ✔ Submit  →
+
+Review your answers
+
+ ● Which drink should we serve?
+   → Tea
+ ● Which snacks should we pack?
+   → Fruit
+
+❯ 1. Submit answers
+  2. Cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────── demo-review ─

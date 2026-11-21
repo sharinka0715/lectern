@@ -129,3 +129,62 @@ test('Claude Code 2.1.329: the review page no longer asks "Ready to submit your 
   assert.equal(parse(screen.replace('   → Tea\n', ''), { pendingToolUse: true }), undefined);
   assert.equal(parse(screen.replace('  2. Cancel', '  2. Cancel\n  3. Something else'), { pendingToolUse: true }), undefined);
 });
+
+// Sampled from Claude Code 2.1.330 with a loopback fake model (synthetic questions).
+// 2.1.300 to 2.1.329 draw the same bars (compatibility matrix, question-review-long).
+const review330 = (name: string) => readFileSync(new URL(`./fixtures/question-review-2.1.330/${name}.txt`, import.meta.url), 'utf8');
+const CLEANUP = '示例相册服务在上午维护时重启了一次，我已经重新提交了缩略图任务。两台测试机（192.0.2.10、192.0.2.11，任务 demo-20260101-abcd）上还在运行的旧版同步脚本 sync_demo.sh（只包括我启动的那些，不包括你自己开的压测进程），能不能由我登录上去停掉？停掉之后我会把没跑完的批次重新排队，等新服务就绪再继续。';
+const SPEED = '新版服务比旧版慢了将近一倍，照现在的速度两个批次各要一整天才能处理完全部图片。要不要加机器提速？';
+const EXTRAS = '处理完成之后还需要顺手做哪些收尾工作？这些都可以在同一批任务里完成，但每多选一项整体时间大约会增加半小时左右，请按实际需要勾选。';
+const LONG_OTHER = '另外把处理日志打包成一个压缩文件发到 ops@example.com，方便以后排查问题时直接下载查看';
+
+test('review page: once a question wraps, every question carries a quote bar (named sessions too)', () => {
+  const review = parse(review330('wrapped-named'), { pendingToolUse: true })!;
+  assert.equal(review?.kind, 'review');
+  assert.deepEqual(review.tabs, [{ label: '旧脚本', answered: true }, { label: '加速', answered: true }]);
+  assert.equal(review.activeTab, 2);
+  // Wide characters split across lines rejoin without a space; breaks at a space keep one.
+  assert.deepEqual(review.review, [{ question: CLEANUP, answer: '可以停 (Recommended)' }, { question: SPEED, answer: '每个批次加一台机器' }]);
+  assert.deepEqual(review.options.map(o => [o.number, o.kind, o.label, o.focused]), [[1, 'submit', 'Submit answers', true], [2, 'cancel', 'Cancel', false]]);
+  const cancel = parse(review330('wrapped-named-cancel'), { pendingToolUse: true })!;
+  assert.deepEqual(cancel.options.map(o => o.focused), [false, true]);
+  assert.deepEqual(cancel.review, review.review);
+  // 80 columns and a CJK session name: other break points, the same text.
+  assert.deepEqual(parse(review330('cjk-name-80'), { pendingToolUse: true })?.review, [{ question: CLEANUP, answer: '可以停 (Recommended)' }, { question: SPEED, answer: '保持现状' }]);
+  // A multi-select answer with a long custom entry, on one line and wrapped (no bar, three spaces).
+  assert.deepEqual(parse(review330('multi-answer'), { pendingToolUse: true })?.review?.[1], { question: EXTRAS, answer: `生成索引页, 清理临时文件, ${LONG_OTHER}` });
+  assert.deepEqual(parse(review330('answer-wrapped'), { pendingToolUse: true })?.review?.[1], { question: EXTRAS, answer: `生成索引页, ${LONG_OTHER}` });
+  // Nothing wraps: no bars, as before.
+  assert.deepEqual(parse(review330('short-named'), { pendingToolUse: true })?.review, [{ question: 'Which drink should we serve?', answer: 'Tea' }, { question: 'Which snacks should we pack?', answer: 'Fruit' }]);
+  // The question page reached with Left from the review rejoins its wrapped title the same way.
+  const back = parse(review330('back-to-question'), { pendingToolUse: true })!;
+  assert.equal(back.kind, 'question'); assert.equal(back.question, EXTRAS); assert.equal(back.multiSelect, true);
+});
+
+test('review page: the partial-answer warning reworded in 2.1.329, styling, and malformed barred reviews', () => {
+  const partial = review330('incomplete');
+  const incomplete = parse(partial, { pendingToolUse: true })!;
+  assert.equal(incomplete?.kind, 'review');
+  assert.deepEqual(incomplete.tabs, [{ label: '旧脚本', answered: true }, { label: '加速', answered: false }]);
+  assert.deepEqual(incomplete.review, [{ question: CLEANUP, answer: '可以停 (Recommended)' }]);
+  // The 2.1.326 wording still parses; an unknown warning does not.
+  assert.deepEqual(parse(partial.replace('Some questions are unanswered', 'You have not answered all questions'), { pendingToolUse: true }), incomplete);
+  assert.equal(parse(partial.replace('Some questions are unanswered', 'Something else'), { pendingToolUse: true }), undefined);
+  for (const name of ['wrapped-named', 'wrapped-named-cancel', 'cjk-name-80', 'multi-answer', 'answer-wrapped', 'incomplete', 'short-named', 'back-to-question']) {
+    const frame = review330(name), native = parse(frame, { pendingToolUse: true });
+    assert.ok(native, name);
+    const styled = frame.split('\n').map(line => '\x1b[0m' + line.replace('❯', '\x1b[31m❯\x1b[39m').replace('│', '\x1b[2m│\x1b[22m') + '   ').join('\n');
+    assert.deepEqual(parse(styled + '\n\n', { pendingToolUse: true }), native, `${name} under SGR and tmux padding`);
+  }
+  const frame = review330('wrapped-named');
+  for (const broken of [
+    frame.replace(' │ ● 新版服务', ' ● 新版服务'), // bars on some questions only
+    frame.replace(' │   我登录上去', '     我登录上去'), // a continuation line lost its bar
+    frame.replace('   → 可以停 (Recommended)\n', ''), // a question without an answer
+    frame.replace('   → 每个批次加一台机器', ' │ → 每个批次加一台机器'), // a barred answer
+    frame.replace('Review your answers\n', 'Review your answers\n\nSome assistant text\n'),
+    frame.replace(/\n─+ demo-review ─\n?$/u, '\n❯ Returned composer\n'),
+  ]) assert.equal(parse(broken, { pendingToolUse: true }), undefined, broken);
+  // Session names wider than ASCII close the dialog too, and nothing else may follow the rule.
+  assert.equal(parse(review330('cjk-name-80').trimEnd() + '\nSomething else', { pendingToolUse: true }), undefined);
+});
