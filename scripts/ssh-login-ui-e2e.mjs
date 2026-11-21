@@ -1,0 +1,167 @@
+// In-app SSH login: password, one-time code and a new host key are asked in the
+// dialog, relayed through the real askpass helper (Electron as Node) to a scripted
+// OpenSSH, and never written to diagnostics. No real machine is contacted.
+import assert from 'node:assert/strict';
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { _electron as electron } from 'playwright';
+
+const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-login-ui-'));
+const profile = path.join(root, 'profile'), state = path.join(root, 'ssh');
+await mkdir(state, { recursive: true });
+const results = path.resolve('test-results');
+await mkdir(results, { recursive: true });
+const password = 'pa ss"word', code = '482913';
+// -G prints config, -O check reports the master, -f -N authenticates through
+// $SSH_ASKPASS. Other commands need a master, as BatchMode=yes would.
+await writeFile(path.join(state, 'ssh'), `#!/bin/sh
+state=${JSON.stringify(state)}
+printf '%s\\n' "$*" >> "$state/calls"
+case " $* " in *" -o ControlPath="*) socket=private;; *) socket=;; esac
+case " $* " in
+  *" -G "*) printf 'hostname lab\\ncontrolpath none\\n'; exit 0;;
+  *" -O check "*) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && exit 0; exit 255;;
+  *" -f -N "*)
+    printf 'Welcome to the lab cluster\\n' >&2
+    if [ -f "$state/hostkey" ]; then
+      reply=$("$SSH_ASKPASS" "The authenticity of host 'lab (192.0.2.2)' can't be established.
+ED25519 key fingerprint is SHA256:Q2xhdWRlIFRldGhlciBsb2dpbiB0ZXN0.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? ") || exit 255
+      [ "$reply" = yes ] || { printf 'Host key verification failed.\\n' >&2; exit 255; }
+      rm -f "$state/hostkey"
+    fi
+    secret=$("$SSH_ASKPASS" "dev@lab's password: ") || { printf 'Permission denied (keyboard-interactive).\\n' >&2; exit 255; }
+    printf 'Duo two-factor login required\\n' >&2
+    otp=$("$SSH_ASKPASS" "Verification code: ") || { printf 'Permission denied (keyboard-interactive).\\n' >&2; exit 255; }
+    if [ "$secret" = ${JSON.stringify(password)} ] && [ "$otp" = ${code} ]; then : > "$state/master-$socket"; exit 0; fi
+    printf 'Permission denied (keyboard-interactive).\\n' >&2; exit 255;;
+  *) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && exec sh -s
+     printf 'dev@lab: Permission denied (keyboard-interactive).\\n' >&2; exit 255;;
+esac
+`, { mode: 0o700 });
+
+const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', PATH: `${state}:${process.env.PATH}`, LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath };
+delete env.ELECTRON_RUN_AS_NODE;
+delete env.LECTERN_DEV_URL;
+const exists = file => access(file).then(() => true, () => false);
+let app;
+try {
+  const executablePath = process.argv[2];
+  app = await electron.launch({ ...(executablePath && { executablePath: path.resolve(executablePath) }), args: executablePath ? [] : ['.'], env, timeout: 60000 });
+  const page = await app.firstWindow();
+  page.setDefaultTimeout(15000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const login = page.getByRole('dialog', { name: '登录 SSH' });
+
+  // Saving a machine does not connect; login is the user's explicit step.
+  await page.getByRole('button', { name: '添加 SSH 机器', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置', exact: true });
+  await settings.getByLabel('连接名称').fill('实验集群');
+  await settings.getByLabel('SSH 主机', { exact: true }).fill('lab-alias');
+  // A stray keystroke into the focused test window would change the host and reach the real ssh.
+  assert.equal(await settings.getByLabel('SSH 主机', { exact: true }).inputValue(), 'lab-alias');
+  await settings.getByRole('button', { name: '保存连接' }).click();
+  await settings.waitFor({ state: 'detached' });
+  assert.equal(await exists(path.join(state, 'calls')), false, 'saving a machine runs no ssh');
+  const machine = page.getByRole('region', { name: '实验集群', exact: true });
+  await machine.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await login.waitFor();
+  assert.match(await login.innerText(), /实验集群（lab-alias）/);
+  const field = login.locator('#ssh-login-input');
+  await login.getByText("dev@lab's password:", { exact: true }).waitFor();
+  assert.equal(await field.getAttribute('type'), 'password');
+  await field.fill(password);
+  await field.press('Enter');
+  await login.getByText('Verification code:', { exact: true }).waitFor();
+  assert.equal(await field.getAttribute('type'), 'text', 'a one-time code is visible while typed');
+  assert.match(await login.getByLabel('服务器消息').innerText(), /Duo two-factor login required/);
+  await page.screenshot({ path: path.join(results, 'ssh-login-code.png') });
+  await field.fill(code);
+  await login.getByRole('button', { name: '继续', exact: true }).click();
+  await login.getByText('已登录', { exact: false }).waitFor();
+  await login.waitFor({ state: 'detached' });
+  assert.ok(await exists(path.join(state, 'master-private')), 'the master is left running for later commands');
+  const loginCall = (await readFile(path.join(state, 'calls'), 'utf8')).split('\n').find(line => line.includes('-f -N'));
+  assert.match(loginCall, /BatchMode=no .*StrictHostKeyChecking=ask .*ControlMaster=yes .*ControlPath=\/tmp\/lectern-ssh-/);
+
+  // Settings offers login per connection too; an existing master needs no prompt.
+  await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();
+  await settings.getByRole('button', { name: 'SSH 连接', exact: true }).click();
+  await settings.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await login.getByText('这台机器已有可复用的连接', { exact: false }).waitFor();
+  await login.waitFor({ state: 'detached' });
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+
+  // A new host key shows its fingerprint and needs an explicit choice; a wrong code can be retried.
+  await rm(path.join(state, 'master-private'));
+  await writeFile(path.join(state, 'hostkey'), '');
+  await machine.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await login.getByText('SHA256:Q2xhdWRlIFRldGhlciBsb2dpbiB0ZXN0', { exact: false }).waitFor();
+  await page.screenshot({ path: path.join(results, 'ssh-login-hostkey.png') });
+  await login.getByRole('button', { name: '信任并继续', exact: true }).click();
+  await field.fill(password); await field.press('Enter');
+  await login.getByText('Verification code:', { exact: true }).waitFor();
+  await field.fill('000000'); await field.press('Enter');
+  await login.getByRole('alert').getByText('Permission denied', { exact: false }).waitFor();
+  await login.getByRole('button', { name: '重新登录', exact: true }).click();
+  await login.getByText("dev@lab's password:", { exact: true }).waitFor();
+  await field.fill(password); await field.press('Enter');
+  await login.getByText('Verification code:', { exact: true }).waitFor();
+  await field.fill(code); await field.press('Enter');
+  await login.waitFor({ state: 'detached' });
+  assert.ok(await exists(path.join(state, 'master-private')));
+
+  // Cancelling stops OpenSSH; no master is left behind.
+  await rm(path.join(state, 'master-private'));
+  await machine.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await login.getByText("dev@lab's password:", { exact: true }).waitFor();
+  await login.getByRole('button', { name: '取消', exact: true }).click();
+  await login.waitFor({ state: 'detached' });
+  assert.equal(await exists(path.join(state, 'master-private')), false);
+
+  // A folder on a machine that is not logged in offers login from the error, then reads the folder.
+  const remote = path.join(root, 'remote project');
+  await mkdir(remote);
+  await machine.getByRole('button', { name: '在 实验集群 添加项目文件夹' }).click();
+  const folder = page.getByRole('dialog', { name: '添加项目文件夹' });
+  await folder.getByLabel('工作目录', { exact: true }).fill(remote);
+  await folder.getByRole('button', { name: '添加目录', exact: true }).click();
+  const banner = page.locator('.error-banner');
+  await banner.getByText('Permission denied', { exact: false }).waitFor();
+  // The login button names the machine the failure came from.
+  await banner.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await field.fill(password); await field.press('Enter');
+  await login.getByText('Verification code:', { exact: true }).waitFor();
+  await field.fill(code); await field.press('Enter');
+  await login.waitFor({ state: 'detached' });
+  await page.locator('.error-banner').waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: '新建对话', exact: false }).first().waitFor();
+
+  // Replies stay out of the diagnostics and the profile.
+  async function files(directory) {
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    return (await Promise.all(entries.map(entry => entry.isDirectory() ? files(path.join(directory, entry.name)) : [path.join(directory, entry.name)]))).flat();
+  }
+  // Marking an incident flushes the diagnostic log to disk first.
+  await page.evaluate(() => window.desktop.markDiagnosticIncident('ssh login e2e'));
+  const logged = await files(profile);
+  assert.ok(logged.some(file => /diagnostic/i.test(file)), 'diagnostics were written and scanned');
+  for (const file of logged) {
+    // Electron replaces some profile files atomically: one may vanish while scanning.
+    const info = await lstat(file).catch(() => undefined);
+    if (!info?.isFile() || info.size > 64 * 1024 * 1024) continue;
+    const text = await readFile(file, 'latin1').catch(() => '');
+    assert.ok(!text.includes(password) && !text.includes(code), `a login reply was written to ${file}`);
+  }
+  assert.deepEqual(errors, []);
+  console.log('PASS: in-app SSH login with password, one-time code and new host key through the askpass relay; existing master reuse; wrong code retry; cancel; login from a connection error; replies kept out of diagnostics.');
+} catch (error) {
+  console.error(error);
+  console.error('ssh calls:\n' + await readFile(path.join(state, 'calls'), 'utf8').catch(() => '(none)'));
+  process.exitCode = 1;
+} finally {
+  await app?.close();
+  await rm(root, { recursive: true, force: true });
+}

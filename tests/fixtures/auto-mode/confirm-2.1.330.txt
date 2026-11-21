@@ -1,0 +1,29 @@
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Sonnet 5.5 with low effort · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ First long turn ccm:big-one
+
+⏺ Printing a long list 3
+  ⎿  2 actions not run · auto mode's check had no usable answer
+  ⎿  $ seq -w 1 1000 | sed 's/$/ ccm-history-line-2/'
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Print a long list 3
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ seq -w 1 1000 | sed 's/$/ ccm-history-line-2/'
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Auto mode needs your confirmation for this command.
+ │ 3 consecutive actions were blocked. Please review the transcript before continuing.
+ │
+ │ Latest blocked action: Auto mode could not evaluate this action and is blocking it for safety — run with --debug for
+ │ details
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

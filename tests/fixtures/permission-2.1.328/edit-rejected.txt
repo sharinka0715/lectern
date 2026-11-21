@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.328
+▝▜██████▀  Haiku 4.5 · API Usage Billing
+ ▝▝   ▝▝   /private/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/lectern-perm-xkZWhs/work
+
+
+❯ edit the notes
+
+  Read 1 file
+
+⏺ Update(notes.txt)
+  ⎿  Rejected update to notes.txt
+      1  alpha
+      2 -beta
+      2 +BETA
+      3  gamma
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                  tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

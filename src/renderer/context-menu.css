@@ -1,0 +1,19 @@
+/* Shared right-click menu, confirmation and toast (ContextMenu.tsx). */
+.context-menu { position: fixed; inset: auto; margin: 0; min-width: 196px; max-width: min(360px, calc(100vw - 8px)); padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-pop); }
+.context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: var(--text-ui); text-align: left; }
+.context-menu button:hover:not(:disabled), .context-menu button:focus-visible { background: var(--hover); outline: none; }
+.context-menu button:disabled { color: var(--muted); cursor: default; }
+.context-menu button[data-danger] { color: var(--danger); }
+.context-menu-icon { display: inline-flex; flex: none; width: 15px; justify-content: center; color: var(--secondary-text); }
+.context-menu button[data-danger] .context-menu-icon { color: var(--danger); }
+.context-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-menu-hint { flex: none; margin-left: 12px; color: var(--muted); font-size: var(--text-caption); }
+.context-menu-separator { height: 1px; margin: 4px 6px; background: var(--line); }
+.context-toast { position: fixed; left: 50%; bottom: 28px; z-index: 50; max-width: min(520px, calc(100vw - 32px)); padding: 8px 14px; border-radius: 9px; background: var(--text); color: var(--surface); font-size: var(--text-label); line-height: 1.5; transform: translateX(-50%); box-shadow: var(--shadow-pop); pointer-events: none; animation: context-toast-in 140ms ease-out; }
+@keyframes context-toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+.confirm-action.modal { width: min(460px, calc(100vw - 32px)); }
+.confirm-action h2 { margin: 0 0 4px; font-size: var(--text-body); }
+.danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 15px; border-radius: 9px; background: var(--danger); color: #fff; font-size: var(--text-label); font-weight: 560; white-space: nowrap; }
+.danger-button:hover { filter: brightness(1.06); }
+.confirm-action .modal-description:has(+ .confirm-action-detail) { margin-bottom: 0; }
+.confirm-action .confirm-action-detail { margin-top: 8px; color: var(--warning); }

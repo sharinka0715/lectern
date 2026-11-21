@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" width="1254" height="1254">
+  <!-- Lectern icon for 32 px and below: the book of lectern-light.png simplified so it still reads
+       at 16 px (no bow, cover frame lines or page texture; a larger star). Same tile and colours.
+       Like lectern-light.png the outside corners are black; scripts/render-icons.mjs masks them. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fce3c7"/><stop offset="1" stop-color="#fed1a6"/></linearGradient>
+  </defs>
+  <rect width="1254" height="1254" fill="#000"/>
+  <rect width="1254" height="1254" rx="310" fill="url(#tile)"/>
+  <ellipse cx="620" cy="1070" rx="420" ry="34" fill="#5a3a20" opacity=".35"/>
+  <rect x="270" y="150" width="740" height="925" rx="22" fill="#dedede"/>
+  <rect x="230" y="120" width="740" height="900" rx="26" fill="#2b2725"/>
+  <rect x="230" y="120" width="56" height="900" rx="20" fill="#1c1917"/>
+  <path id="star" fill="#e5692a" d="M600 230 L648 470 L760 290 L690 520 L900 470 L715 590 L900 650 L690 650 L760 860 L648 670 L600 900 L552 670 L440 860 L510 650 L300 650 L485 590 L300 470 L510 520 L440 290 L552 470 Z"/>
+  <circle cx="600" cy="560" r="62" fill="#c98a66"/>
+</svg>

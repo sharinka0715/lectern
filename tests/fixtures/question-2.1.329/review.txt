@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.329
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Ask me one question ccm:ask-single
+
+● One question first.
+
+● Answered Claude's questions:
+  ⎿  · Which drink should we serve? → Juice
+
+● Thanks (ccm-ask-single-done).
+
+✻ Crunched for 0s · done 5:02 PM
+
+❯ Ask me two questions ccm:ask-multi
+
+● One question first.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Drink  ☒ Snacks  ✔ Submit  →
+
+Review your answers
+
+ ● Which drink should we serve?
+   → Tea
+ ● Which snacks should we pack?
+   → Fruit, Bread
+
+❯ 1. Submit answers
+  2. Cancel
+
+
+
+
+
+
+

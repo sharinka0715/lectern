@@ -1,0 +1,107 @@
+/* The chat's activity card, floating at the top right of its conversation. */
+.activity-float-anchor { position: absolute; top: 12px; right: 14px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end;
+  max-width: calc(100% - 28px); max-height: calc(100% - 24px); pointer-events: none; }
+.activity-float, .activity-float-pill {
+  /* Cream, like the user's bubbles: a shade warmer than the page, not white. */
+  --float-bg: color-mix(in srgb, var(--bubble) 50%, var(--surface));
+  --hover: color-mix(in srgb, var(--bubble) 78%, var(--line-strong));
+  pointer-events: auto;
+}
+.activity-float {
+  display: flex; flex-direction: column; width: 288px; max-width: 100%; max-height: 100%; overflow: auto;
+  border: 1px solid var(--line-strong); border-radius: 14px; background: var(--float-bg); color: var(--text);
+  box-shadow: 0 1px 2px rgb(60 44 22 / 6%), 0 8px 24px rgb(60 44 22 / 9%); font-size: var(--text-label);
+}
+/* Repository name and the fold button, then the branch and the Claude Code version. */
+.activity-float > header { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; min-height: 36px; padding: 6px 6px 6px 14px; }
+.activity-float-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: var(--text-label); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.activity-float-meta { display: flex; flex-basis: 100%; align-items: center; gap: 6px; min-width: 0; padding-right: 8px; }
+.activity-float-branch { display: inline-flex; align-items: center; gap: 3px; min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--text-caption); white-space: nowrap; text-overflow: ellipsis; }
+.activity-float-version { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--bubble) 70%, var(--line)); color: var(--muted);
+  font-size: var(--text-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.activity-float > header .icon-button { width: 26px; height: 26px; margin-left: auto; color: var(--muted); }
+/* The machine beside the folder name: 本地 or the SSH machine's name. */
+.activity-float-machine { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 55%; overflow: hidden; padding: 1px 7px;
+  border: 1px solid var(--line-strong); border-radius: 999px; color: var(--secondary-text); font-size: var(--text-caption); white-space: nowrap; }
+.activity-float-machine > svg { flex: none; color: var(--muted); }
+.activity-float-machine > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.activity-float-section { padding: 2px 6px; }
+.activity-float-section + .activity-float-section { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 4px; }
+.activity-float-section:last-of-type { padding-bottom: 6px; }
+.activity-float-row { display: flex; align-items: center; gap: 2px; }
+.activity-float-toggle {
+  display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 0 8px; border-radius: 8px;
+  background: transparent; color: var(--text); text-align: left;
+}
+.activity-float-toggle:not(:disabled):hover { background: var(--hover); }
+.activity-float-toggle:disabled { cursor: default; opacity: 1; }
+.activity-float-icon { display: inline-flex; flex: none; color: var(--muted); }
+.activity-float-title { flex: none; font-weight: 560; }
+.activity-float-summary { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; overflow: hidden; color: var(--muted);
+  font-size: var(--text-meta); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; }
+.activity-float-chevron { flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform .15s ease; }
+.activity-float-section[data-open] .activity-float-chevron { transform: none; }
+.activity-float-refresh { flex: none; width: 26px; height: 26px; color: var(--muted); }
+.activity-float-link { flex: none; padding: 2px 8px; border-radius: 6px; background: transparent; color: var(--accent); font-size: var(--text-meta); }
+.activity-float-link:hover { background: var(--hover); }
+.activity-float-body { display: grid; gap: 6px; max-height: 320px; overflow: auto; padding: 4px 2px 6px; }
+.activity-float-body .activity-card { margin: 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 55%, transparent); }
+.activity-float-body .activity-card-heading { align-items: center; gap: 8px; }
+.activity-float-body .activity-type-icon { width: 22px; height: 22px; border-radius: 6px; }
+.activity-float-body .activity-type-icon svg { width: 13px; height: 13px; }
+/* The section already names the kind. */
+.activity-float-body .activity-title small { display: none; }
+.activity-float-body .activity-title strong { font-size: var(--text-meta); }
+.activity-float-body .activity-card-subhead { margin-top: 5px; gap: 7px; }
+/* Details stay smaller than the task's title. */
+.activity-float-body :is(.activity-card-subhead, .activity-state, .activity-facts, .activity-events time, .activity-output h4) { font-size: var(--text-caption); }
+.activity-float-body .activity-detail { margin-top: 8px; padding-top: 8px; font-size: var(--text-caption); line-height: 1.5; }
+.activity-float-body .activity-detail pre { font: .625rem/1.5 var(--font-mono); padding: 6px 8px; max-height: 120px; }
+.activity-float-body .activity-facts { gap: 2px 8px; margin-top: 7px; }
+.activity-float-body :is(.activity-prompt, .activity-result) { line-height: 1.5; max-height: 160px; }
+
+/* Subagent and task states as a row of dots, like the native task list. */
+.activity-float-dots { display: inline-flex; align-items: center; gap: 3px; }
+.activity-float-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+.activity-float-dots i[data-state="running"] { background: var(--accent); animation: activity-dot-pulse 1.6s ease-in-out infinite; }
+@keyframes activity-dot-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .activity-float-dots i { animation: none !important; } }
+.activity-float-dots i[data-state="completed"] { background: var(--live); }
+.activity-float-dots i[data-state="failed"] { background: var(--danger-dot); }
+.activity-float-dots small { color: var(--muted); font-size: var(--text-caption); }
+
+.activity-float-files, .activity-float-attachments { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.activity-float-files button, .activity-float-attachments button {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 0 8px; border-radius: 7px;
+  background: transparent; color: var(--text); font-size: var(--text-meta); text-align: left;
+}
+.activity-float-files button:not(:disabled):hover, .activity-float-attachments button:hover { background: var(--hover); }
+.activity-float-files button:disabled { opacity: .6; cursor: default; }
+.activity-float-mark { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border-radius: 4px; font: 600 10px/1 var(--font-mono);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.activity-float-mark:is([data-status="added"], [data-status="untracked"]) { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+.activity-float-mark[data-status="deleted"] { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
+.activity-float-mark[data-status="conflict"] { background: color-mix(in srgb, var(--signal) 18%, transparent); color: var(--warning); }
+.activity-float-file { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.activity-float-file small { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.activity-float-files .activity-changes { font-size: var(--text-caption); }
+.activity-float-more { padding: 4px 8px; color: var(--muted); font-size: var(--text-caption); }
+.activity-float-attachments button svg { flex: none; color: var(--muted); }
+/* Each attachment's slot: an image's own thumbnail, center-cropped to a square; other files and loading images keep the icon. */
+.activity-float-thumb { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center;
+  width: 24px; height: 24px; overflow: hidden; border-radius: 5px; }
+/* Out of flow, so a tall image cannot stretch the slot: the box stays the square and cover crops the long side. */
+.activity-float-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.activity-float-thumb:has(img) { outline: 1px solid var(--line); outline-offset: -1px; }
+.activity-float-error, .activity-float-empty { margin: 4px 14px 12px; color: var(--muted); font-size: var(--text-meta); line-height: 1.55; }
+.activity-float-error { color: var(--danger); }
+
+/* Folded: a small pill in the same corner. */
+.activity-float-pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--float-bg); color: var(--secondary-text); font-size: var(--text-meta); box-shadow: 0 1px 2px rgb(60 44 22 / 6%), 0 4px 14px rgb(60 44 22 / 7%);
+}
+.activity-float-pill:hover { color: var(--text); }
+.activity-float-pill b { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: var(--text-caption); }
+.activity-float-pill small { color: var(--muted); font-size: var(--text-caption); }
+@container chatpane (max-width: 520px) { .activity-float { width: min(264px, 100%); } }

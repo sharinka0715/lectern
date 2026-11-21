@@ -1,0 +1,40 @@
+
+[38;5;147m ▐[48;5;16m▛███▛█[49m▄[1m[38;5;180m╱[0m[38;5;222m✦[39m  [1mClaude Code[0m [38;5;246mv2.1.328
+[38;5;147m▝▜[48;5;16m█████[49m█▘[39m    [38;5;246mOpus 5.5 · API Usage Billing
+[38;5;147m ▝▝   ▝▝ [39m    [38;5;246m/private/tmp/lectern-uc-work
+
+[38;5;174m▎[39m [1mAuto mode is now Claude Code's default permission mode.
+[0m[38;5;174m▎[39m [38;5;246mAuto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and 
+[38;5;174m▎[39m [38;5;246mprompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.
+[38;5;174m▎[39m [38;5;246m]8;id=awvmy8;https://code.claude.com/docs/en/permission-modes\https://code.claude.com/docs/en/permission-modes]8;;\
+
+[48;5;237m❯[39m [38;5;231m/effort ultracode on[39m                                                                                                  
+[38;5;246m[49m  ⎿  [39mUltracode on (this session only): dynamic workflows on every task. Effort stays medium.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                  [38;5;246mtmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m [38;5;147multracode[39m [38;5;244m─
+[39m❯ [7m [0m                    
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [38;5;220m⏵⏵ auto mode on[38;5;246m (shift+tab to cycle) · ← for agents

@@ -1,0 +1,117 @@
+name: claude-code-compat
+# Lectern against real Claude Code releases (one job per release) with a
+# loopback fake Anthropic API: no model requests, no secrets. The release list is
+# computed from the npm registry at run time (scripts/cc-matrix/versions.mjs), so
+# every run picks up new releases and the current latest and stable dist-tags.
+#
+# It runs when release.yml calls it for a pushed v* tag (the release only
+# publishes if every version passes) or by hand from the Actions tab.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Tag, branch or commit to test (empty for the triggering ref)
+        type: string
+        default: ''
+      versions:
+        description: Comma-separated releases or dist-tags (empty for the computed matrix)
+        type: string
+        default: ''
+      scenarios:
+        description: Comma-separated scenario ids (empty for all)
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag, branch or commit to test (empty for the selected branch)
+        type: string
+        default: ''
+      versions:
+        description: Comma-separated releases or dist-tags (empty for the computed matrix)
+        type: string
+        default: ''
+      scenarios:
+        description: Comma-separated scenario ids (empty for all)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: pick
+        env:
+          CC_MATRIX_VERSIONS: ${{ inputs.versions }}
+        run: echo "matrix=$(node scripts/cc-matrix/versions.mjs --json)" >> "$GITHUB_OUTPUT"
+
+  compat:
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    name: claude-code ${{ matrix.version }}
+    env:
+      CC_MATRIX_CACHE: ${{ github.workspace }}/../cc-versions
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y tmux xvfb
+      # Ubuntu 24.04 confines unprivileged user namespaces, which Chromium's sandbox needs.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: npm ci
+      - uses: actions/cache@v6
+        with:
+          path: ${{ env.CC_MATRIX_CACHE }}/${{ matrix.version }}
+          key: claude-code-${{ runner.os }}-${{ runner.arch }}-${{ matrix.version }}
+      - run: npm run build
+      - name: Compatibility matrix
+        env:
+          CC_MATRIX_SCENARIOS: ${{ inputs.scenarios }}
+        run: xvfb-run -a -s '-screen 0 1600x1000x24' npm run test:cc-matrix -- --versions ${{ matrix.version }} --output test-results/cc-matrix
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cc-matrix-${{ matrix.version }}
+          path: test-results/cc-matrix/
+          retention-days: 14
+
+  report:
+    needs: compat
+    if: always() && needs.compat.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cc-matrix-*
+          path: artifacts
+      - run: node scripts/cc-matrix/report.mjs merge test-results/cc-matrix artifacts/*/report.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cc-matrix-report
+          path: test-results/cc-matrix/

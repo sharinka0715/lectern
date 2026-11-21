@@ -1,0 +1,183 @@
+{
+  "name": "lectern",
+  "productName": "Lectern",
+  "version": "0.2.0",
+  "description": "A desktop lectern for terminal coding agents' TUI sessions managed through tmux, locally or over SSH (currently Claude Code)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sharinka0715/lectern.git"
+  },
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",
+    "start": "electron .",
+    "demo": "npm run build && electron . --demo",
+    "test": "tsx --test tests/*.test.ts",
+    "test:all": "node scripts/test-all.mjs",
+    "test:artifacts": "node scripts/artifacts-ui-e2e.mjs",
+    "test:file-index": "node scripts/file-index-e2e.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "test:terminal": "node scripts/manual-ui-e2e.mjs",
+    "test:question:ui": "node scripts/question-ui-e2e.mjs",
+    "test:native:question": "node scripts/native-question-probe.mjs",
+    "test:question:desktop": "node scripts/native-question-desktop.mjs",
+    "test:native:terminal": "node scripts/native-manual.mjs",
+    "typecheck": "tsc --noEmit",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && node scripts/package-desktop.mjs",
+    "dist:all": "bash scripts/release-all.sh",
+    "setup:mac-signing": "bash scripts/setup-mac-signing.sh",
+    "test:native": "node scripts/native-e2e.mjs",
+    "test:history": "node scripts/history-e2e.mjs",
+    "test:history:resume-bar": "node scripts/history-resume-bar-e2e.mjs",
+    "test:native:rename": "node --import tsx scripts/native-rename.mjs",
+    "test:native:resume": "node scripts/native-resume.mjs",
+    "test:settings": "node scripts/settings-e2e.mjs",
+    "test:i18n": "node scripts/i18n-ui-e2e.mjs",
+    "test:native:model-list": "node --import tsx scripts/native-model-probe.mjs",
+    "test:native:settings": "node scripts/native-settings.mjs",
+    "test:native:statusline": "node scripts/native-statusline.mjs",
+    "test:native:trust": "node scripts/native-trust.mjs",
+    "test:native:ssh": "node scripts/native-ssh.mjs",
+    "test:native:ssh:tools": "node scripts/native-ssh-tools.mjs",
+    "diagnostics:replay": "tsx scripts/replay-diagnostics.ts",
+    "audit:native": "node scripts/audit-native-contracts.mjs",
+    "audit:transcript": "tsx scripts/probe-native-transcript-contracts.ts",
+    "test:native:modes": "node --import tsx scripts/native-mode-matrix.mjs",
+    "test:layout": "node scripts/sidebar-layout-e2e.mjs",
+    "test:sidebar:notifications": "node scripts/sidebar-notifications-e2e.mjs",
+    "test:ssh:ui": "node scripts/ssh-ui-e2e.mjs",
+    "test:ssh:status": "node scripts/ssh-status-ui-e2e.mjs",
+    "test:host-check": "node scripts/host-check-e2e.mjs",
+    "test:ssh:import": "node scripts/ssh-config-import-e2e.mjs",
+    "test:context-menu": "node scripts/context-menu-e2e.mjs",
+    "test:archive": "node scripts/archive-ui-e2e.mjs",
+    "test:foreground-shell": "node scripts/foreground-shell-e2e.mjs",
+    "test:background-work": "node scripts/background-work-e2e.mjs",
+    "test:subagents": "node scripts/subagent-column-e2e.mjs",
+    "test:permission": "node scripts/permission-ui-e2e.mjs",
+    "test:transcript:render": "node scripts/transcript-render-e2e.mjs",
+    "test:workbench": "node scripts/workbench-ui-e2e.mjs",
+    "test:session-rename": "node scripts/session-rename-ui-e2e.mjs",
+    "test:native:split": "node --import tsx scripts/native-split-conversations.mjs",
+    "test:titlebar": "node scripts/titlebar-ui-e2e.mjs",
+    "test:history:paging": "node scripts/history-pagination-e2e.mjs",
+    "test:native:history:paging": "node --import tsx scripts/native-history-paging.mjs",
+    "test:cc-matrix": "node scripts/cc-matrix/run.mjs"
+  },
+  "dependencies": {
+    "@xterm/xterm": "6.0.0",
+    "diff": "^9.0.0",
+    "lowlight": "^3.3.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "saxes": "^6.0.0",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
+    "@vitejs/plugin-react": "^6.0.0",
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.58.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.8",
+    "yazl": "^3.3.1"
+  },
+  "build": {
+    "appId": "dev.lectern.desktop",
+    "productName": "Lectern",
+    "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
+    "publish": null,
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "test-results/package"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "sign": "./scripts/mac-sign.cjs",
+      "icon": "build/lectern.icns",
+      "extendInfo": {
+        "CFBundleDevelopmentRegion": "zh_CN",
+        "CFBundleLocalizations": [
+          "zh_CN"
+        ]
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/lectern.ico",
+      "extraResources": [
+        {
+          "from": "build/lectern.ico",
+          "to": "lectern.ico"
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "Lectern contributors",
+      "icon": "build/icons",
+      "syncDesktopName": true,
+      "description": "在桌面上阅读和操作经 tmux 管理的终端编程代理 TUI 会话（目前支持 Claude Code）。"
+    },
+    "extraResources": [
+      {
+        "from": "scripts/mock-claude.mjs",
+        "to": "demo/mock-claude.mjs"
+      },
+      {
+        "from": "build/icons/512x512.png",
+        "to": "lectern.png"
+      }
+    ],
+    "nsis": {
+      "installerLanguages": [
+        "zh_CN"
+      ],
+      "language": "2052"
+    },
+    "electronLanguages": [
+      "zh-CN"
+    ],
+    "deb": {
+      "fpm": [
+        "README.md=/usr/share/doc/lectern/README.md"
+      ]
+    }
+  },
+  "overrides": {
+    "minimatch": "^11.0.9"
+  },
+  "author": "Lectern contributors",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "desktopName": "dev.lectern.desktop"
+}

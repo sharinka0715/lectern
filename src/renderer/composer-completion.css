@@ -1,0 +1,26 @@
+.composer-completion {
+  position: absolute;
+  z-index: 6;
+  inset-inline: 0;
+  bottom: calc(100% + 6px);
+  max-width: 42rem;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+.composer-completion-options { max-height: min(14rem, 29vh); overflow-y: auto; overscroll-behavior: contain; }
+.composer-completion [role=option] {
+  display: flex; align-items: center; gap: 9px; padding: 6px 9px;
+  cursor: pointer; border-radius: 7px; font-size: var(--text-label);
+}
+.composer-completion [role=option] > svg { flex: none; color: var(--muted); }
+.composer-completion [role=option] > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: pre; font-family: var(--font-mono); font-size: .95em; }
+.composer-completion [role=option] > small { flex: none; font-size: var(--text-caption); color: var(--muted); }
+.composer-completion [role=option]:hover { background: var(--surface-muted); }
+.composer-completion [aria-selected=true] { background: var(--selected); }
+.composer-completion [aria-selected=true] > svg { color: var(--accent); }
+.composer-completion-loading { padding: 8px 12px; color: var(--muted); font-size: var(--text-meta); }
+.composer-completion-hint { border-top: 1px solid var(--line); margin-top: 3px; padding: 5px 8px 2px; color: var(--muted); font-size: var(--text-caption); }

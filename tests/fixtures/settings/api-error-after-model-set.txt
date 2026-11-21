@@ -1,0 +1,20 @@
+❯ Connectivity check
+
+● API Error: 400 Unsupported model: claude-sonnet-5.5
+
+❯ /model
+  ⎿  Kept model as Sonnet 5.5
+
+❯ /model
+  ⎿  Kept model as Sonnet 5.5
+
+❯ /effort
+  ⎿  Cancelled
+
+❯ /model
+  ⎿  Set model to Haiku 5.5 for this session only
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Once fixed, resend your message
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts

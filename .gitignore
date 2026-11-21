@@ -1,0 +1,45 @@
+node_modules/
+dist/
+release/
+test-results/
+.DS_Store
+*.log
+
+# Local credentials and per-developer Claude state; keep shared project config.
+.env
+.env.*
+# Personal terms for scripts/check-private-info.mjs; never commit them.
+.private-info-denylist
+!.env.example
+.claude/settings.local.json
+/.claude/worktrees/
+/.claude/projects/
+/.claude.json
+/.credentials.json
+/.claude/.credentials.json
+/.ssh/
+*.p12
+*.pfx
+
+# Local Electron profiles and diagnostic/replay exports, not test fixtures.
+/userData/
+/profile/
+/diagnostics/
+/workspaces.json
+/diagnostics-settings.json
+/history-index/
+*.jsonl
+# Test fixtures are recorded samples (scrubbed of private data), not local logs.
+!tests/fixtures/**/*.jsonl
+/report.json
+/replay.json
+
+# electron-builder inputs are source assets. Leave other build outputs out.
+/build/*
+!/build/icon-source/
+!/build/lectern.icns
+!/build/lectern.ico
+!/build/lectern-mark-small.png
+!/build/icons/
+/build/icons/*
+!/build/icons/*.png

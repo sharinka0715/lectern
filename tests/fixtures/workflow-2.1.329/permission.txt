@@ -1,0 +1,34 @@
+
+ ▐▛███▛█   Claude Code v2.1.329
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ 运行工作流
+
+● Workflow(Map two folders)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Run a dynamic workflow?
+
+  Map two folders
+
+  This dynamic workflow will spin up multiple subagents across the following phases:
+    1. Map
+       · "工作流子任务"
+
+  Dynamic workflows can use a lot of tokens quickly by running many subagents in parallel — which counts against your
+  usage limit. Stop a running workflow at any time with /workflows, or disable dynamic workflows in /config.
+
+  ❯ 1. Yes, run it
+    2. View raw script
+    3. No
+
+  Esc to cancel · Tab to amend
+  ctrl+g to edit script in $EDITOR
+
+
+
+
+
+

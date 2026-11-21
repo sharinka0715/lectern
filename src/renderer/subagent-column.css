@@ -1,0 +1,46 @@
+/* The subagent column: on the right of its pane, beside the chat (and left of
+   the file preview). A narrow pane shows it over the chat, like the preview. */
+.subagent-column { position: relative; width: clamp(340px, 34cqw, 520px); max-width: max(300px, calc(100% - 500px)); flex-shrink: 0; display: flex;
+  flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface); border-left: 1px solid var(--line); color: var(--text); }
+@container chatpane (max-width: 899px) {
+  .subagent-column { position: absolute; inset: 0 0 0 auto; width: min(440px, 86cqw); z-index: 44; box-shadow: var(--shadow-pop); }
+}
+.subagent-column-bar { display: flex; align-items: center; gap: 7px; height: 48px; flex-shrink: 0; padding: 0 10px 0 16px; border-bottom: 1px solid var(--line);
+  font-size: var(--text-ui); font-weight: 600; }
+.subagent-column-bar > svg { color: var(--secondary-text); }
+.subagent-column-bar small { color: var(--muted); font-size: var(--text-meta); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subagent-column-bar button { margin-left: auto; -webkit-app-region: no-drag; }
+
+.subagent-list { list-style: none; margin: 0; padding: 6px; max-height: min(34%, 260px); overflow-y: auto; flex-shrink: 0; border-bottom: 1px solid var(--line); }
+.subagent-list button { width: 100%; display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 5px 9px; border-radius: 7px;
+  background: transparent; color: var(--text); text-align: left; font-size: var(--text-label); }
+.subagent-list button:hover { background: var(--hover); }
+.subagent-list button[aria-current="true"] { background: var(--selected, var(--hover)); box-shadow: inset 2px 0 var(--accent); }
+.subagent-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+.subagent-dot[data-state="running"] { background: var(--accent); animation: activity-dot-pulse 1.6s ease-in-out infinite; }
+.subagent-dot[data-state="completed"] { background: var(--live); }
+.subagent-dot[data-state="failed"] { background: var(--danger-dot); }
+@media (prefers-reduced-motion: reduce) { .subagent-dot { animation: none !important; } }
+.subagent-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
+.subagent-name, .subagent-name small { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.subagent-name small { flex-shrink: 1; color: var(--muted); font-size: var(--text-caption); }
+.subagent-state { flex: none; color: var(--muted); font-size: var(--text-caption); }
+.subagent-list button[data-state="running"] .subagent-state { color: var(--accent); }
+
+.subagent-detail { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.subagent-detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 9px; padding: 10px 16px 9px; border-bottom: 1px solid var(--line); }
+.subagent-detail-head strong { flex: 1 1 60%; min-width: 0; font-size: var(--text-ui); font-weight: 620; overflow-wrap: anywhere; }
+.subagent-detail-head small { flex-basis: 100%; color: var(--muted); font-size: var(--text-meta); }
+.subagent-detail-state { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--text-meta); white-space: nowrap; }
+.subagent-detail-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.subagent-detail-state[data-state="running"] { color: var(--accent); }
+.subagent-detail-state[data-state="completed"] { color: var(--success); }
+.subagent-detail-state[data-state="failed"] { color: var(--danger); }
+.subagent-notice { margin: 8px 16px 0; color: var(--secondary-text); font-size: var(--text-meta); }
+.subagent-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 18px 16px; color: var(--muted); font-size: var(--text-label); }
+
+/* The main transcript's components, sized for the narrower column. */
+.subagent-detail .transcript-area { min-width: 0; container-type: inline-size; }
+.subagent-detail .conversation { width: calc(100% - 28px); padding-top: 14px; }
+.subagent-detail .conversation-intro { display: none; }
+.subagent-detail .message { margin-bottom: 20px; }

@@ -1,0 +1,189 @@
+/* The lectern line map: machine → project folder → sessions hung on one line.
+   Knots are structural (filled = a running pane, hollow = saved history, ice =
+   the session this pane is attached to). Activity state stays in the trailing
+   dot column that folders and sessions share. */
+.machine-section + .machine-section { margin-top: 14px; }
+.machine-heading { display: flex; align-items: center; min-height: 30px; padding-right: 2px; }
+/* The chevron expands or collapses; the name opens a new chat on the machine. */
+.machine-toggle { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 20px; height: 28px; padding: 0; border-radius: 7px; background: transparent; color: var(--rail-muted); }
+.machine-toggle:hover { background: var(--rail-hover); color: var(--rail-text); }
+.machine-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 6px 0 2px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--rail-secondary);
+  text-align: left;
+}
+.machine-open:hover { background: var(--rail-hover); color: var(--rail-text); }
+.machine-open svg { flex-shrink: 0; color: var(--rail-muted); }
+.machine-open strong { overflow: hidden; font-size: var(--text-meta); font-weight: 650; white-space: nowrap; text-overflow: ellipsis; letter-spacing: .01em; }
+.machine-add { flex-shrink: 0; width: 26px; height: 26px; padding: 0; opacity: .7; }
+.machine-heading:hover .machine-add, .machine-add:focus-visible { opacity: 1; }
+.machine-folders { margin-inline-start: 4px; }
+.machine-empty { display: block; padding: 3px 0 6px 24px; color: var(--rail-muted); font-size: var(--text-caption); }
+.machine-endpoint { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; color: var(--secondary-text); overflow-wrap: anywhere; }
+
+/* Folder row */
+.workspace-tree-group { margin-bottom: 2px; }
+.sidebar-tree .workspace-row { position: relative; display: flex; align-items: center; height: 30px; min-height: 30px; margin: 0; padding: 0; border-radius: 7px; }
+.sidebar-tree .workspace-row:hover { background: var(--rail-hover); }
+.sidebar-tree .workspace-toggle { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 18px; height: 30px; padding: 0 0 0 3px; background: transparent; }
+.sidebar-tree .workspace-select { display: flex; align-items: center; flex: 1; gap: 6px; height: 30px; min-width: 0; padding: 0 5px 0 2px; background: transparent; text-align: left; }
+.sidebar-tree .workspace-select[aria-current="page"] .workspace-name { color: var(--rail-ice); }
+.sidebar-tree .workspace-chevron { flex-shrink: 0; color: var(--rail-muted); }
+.sidebar-tree .workspace-folder-icon { flex-shrink: 0; color: var(--rail-secondary); }
+.sidebar-tree .workspace-row.active .workspace-folder-icon { color: var(--rail-ice); }
+.sidebar-tree .workspace-name { overflow: hidden; color: var(--rail-text); font-size: var(--text-label); font-weight: 580; line-height: 30px; white-space: nowrap; text-overflow: ellipsis; }
+.sidebar-tree .workspace-select > .session-status-dot { margin-left: auto; flex-shrink: 0; }
+.workspace-row-actions { display: flex; align-items: center; flex-shrink: 0; padding-right: 2px; opacity: 0; transition: opacity .12s ease; }
+.workspace-row:hover .workspace-row-actions, .workspace-row:focus-within .workspace-row-actions { opacity: 1; }
+.sidebar-tree .workspace-row-actions .icon-button { width: 20px; height: 22px; padding: 3px; color: var(--rail-muted); }
+.sidebar-tree .workspace-row-actions .icon-button:hover:not(:disabled) { color: var(--rail-text); background: var(--rail-selected); }
+.workspace-row[data-drag-over] { box-shadow: inset 0 -2px var(--rail-ice); }
+
+/* The line. Each row draws its own segment so the line ends at the last knot. */
+.workspace-children { position: relative; margin: 1px 0 4px 24px; padding-left: 14px; }
+.session-row-wrap { position: relative; }
+.session-row-wrap::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  border-radius: 1px;
+  background: var(--rail-line);
+}
+.session-row-wrap:first-child::before { top: -3px; }
+.session-row-wrap:not(:has(~ .session-row-wrap))::before { bottom: 50%; }
+.sidebar-tree .session-row::before {
+  content: "";
+  position: absolute;
+  left: -12.5px;
+  top: calc(50% - 4px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 1.5px solid var(--rail-muted);
+  background: var(--rail);
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.sidebar-tree .session-row[data-session-live="true"]::before { border-color: var(--rail-secondary); background: var(--rail-secondary); }
+.sidebar-tree .session-row.active::before {
+  border-color: var(--rail-ice);
+  background: var(--rail-ice);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rail-ice) 22%, transparent);
+}
+/* Being read: the knot turns into a small spinning ring; the state text stays. */
+.sidebar-tree .session-row[data-loading]::before {
+  left: -14px;
+  top: calc(50% - 5.5px);
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid color-mix(in srgb, var(--rail-ice) 25%, transparent);
+  border-top-color: var(--rail-ice);
+  background: var(--rail);
+  box-shadow: none;
+  animation: session-knot-spin .7s linear infinite;
+}
+@keyframes session-knot-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sidebar-tree .session-row[data-loading]::before { animation-duration: 2s; } }
+
+/* Session row */
+.sidebar-tree .session-row {
+  --row-accent: var(--rail-muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 30px;
+  min-height: 30px;
+  margin: 0;
+  padding: 0 47px 0 8px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--rail-secondary);
+  font-size: var(--text-label);
+  line-height: 30px;
+  text-align: left;
+  transition: background-color .12s ease, color .12s ease;
+}
+.sidebar-tree .session-row:hover { background: var(--rail-hover); color: var(--rail-text); }
+.sidebar-tree .session-row.active {
+  background: color-mix(in srgb, var(--row-accent) 8%, var(--rail-raised));
+  box-shadow: 0 0 0 1px var(--rail-line), 0 1px 2px rgb(60 44 22 / 6%);
+  color: var(--rail-text);
+  font-weight: 560;
+}
+.sidebar-tree .session-row[data-status="idle"] { --row-accent: var(--live); }
+.sidebar-tree .session-row[data-status="working"] { --row-accent: var(--rail-ice); }
+.sidebar-tree .session-row:has(.state-unread) { --row-accent: var(--rail-ice); color: var(--rail-text); font-weight: 600; }
+.sidebar-tree .session-row[data-status="waiting"] { --row-accent: var(--signal); color: var(--rail-text); }
+.sidebar-tree .session-row[data-status="error"] { --row-accent: var(--danger-dot); }
+.sidebar-tree .session-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sidebar-tree .session-row > small { flex: none; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 400; }
+.sidebar-tree .session-state-label { flex: 0 0 auto; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 500; }
+/* Quiet states speak through the knot and dot alone. */
+.sidebar-tree .session-row[data-status="history"] .session-state-label,
+.sidebar-tree .session-row[data-status="idle"]:not(:has(.state-unread, .state-background)) .session-state-label { display: none; }
+.sidebar-tree .session-row[data-background] { --row-accent: var(--live); }
+.sidebar-tree .session-row[data-background] .session-state-label { color: var(--live); }
+.sidebar-tree .session-row[data-status="working"] .session-state-label { color: var(--rail-ice); }
+.sidebar-tree .session-row:has(.state-unread) .session-state-label { color: var(--rail-ice); }
+.sidebar-tree .session-row[data-status="waiting"] .session-state-label { color: var(--signal); }
+.sidebar-tree .session-row[data-status="error"] .session-state-label { color: var(--danger-dot); }
+.session-row-wrap .session-rename {
+  position: absolute;
+  inset: 3px 3px auto auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--rail-muted);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.session-row-wrap:hover .session-rename, .session-row-wrap:focus-within .session-rename { opacity: 1; }
+.session-row-wrap .session-rename:hover { color: var(--rail-text); background: var(--rail-selected); }
+
+/* Activity dots: one trailing column for folders and sessions. */
+.sidebar-tree .session-status-dot { flex-shrink: 0; width: 7px; min-width: 7px; height: 7px; border-radius: 50%; }
+.sidebar-tree .state-idle, .sidebar-tree .state-working { background: var(--live); }
+.sidebar-tree .state-working { animation: sidebar-reply-pulse 1.4s ease-in-out infinite; }
+@keyframes sidebar-reply-pulse { 50% { opacity: .3; } }
+/* Reply done, background work still running: a hollow ring that keeps breathing. */
+.sidebar-tree .state-background { background: transparent; box-shadow: inset 0 0 0 1.5px var(--live); animation: sidebar-reply-pulse 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .sidebar-tree .state-working, .sidebar-tree .state-background { animation: none; } }
+.sidebar-tree .state-unread { background: light-dark(#3d6fd8, #7aa5f5); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.sidebar-tree .state-waiting { background: var(--signal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 22%, transparent); }
+.sidebar-tree .state-error { background: var(--danger-dot); }
+
+/* Notes under a folder */
+.tree-note { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 8px; color: var(--rail-muted); font-size: var(--text-meta); }
+.tree-note > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tree-note > button { margin-left: auto; }
+.tree-note .icon-button { width: 22px; height: 22px; padding: 3px; }
+.tree-note-error { color: var(--rail-muted); }
+.tree-note-action { padding: 3px 7px; border-radius: 6px; background: transparent; color: var(--rail-ice); font-size: var(--text-meta); }
+.tree-note-action:hover:not(:disabled) { background: var(--rail-hover); }
+.tree-more { display: flex; align-items: baseline; justify-content: flex-start; gap: 6px; width: 100%; margin: 2px 0 4px; padding: 4px 9px; border-radius: 7px; background: transparent; color: var(--secondary-text); font-size: var(--text-label); text-align: left; }
+.tree-more:hover, .tree-more:focus-visible { background: var(--hover); color: var(--text); }
+.tree-more small { color: var(--muted); font-size: var(--text-caption); }
+.tree-note-scan { flex-direction: column; align-items: flex-start; height: auto; gap: 1px; padding-block: 3px 5px; }
+.tree-note-scan > button { margin-left: 0; }
+.tree-more-row { display: flex; align-items: baseline; gap: 2px; }
+.tree-more-row > .tree-more { width: auto; flex: 1 1 auto; }
+.tree-more-row > .tree-collapse { flex: 0 0 auto; }
+
+/* A machine whose everyday connection failed: checked at startup and by folder reads. */
+.machine-connection { flex-shrink: 0; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: var(--text-caption); line-height: 17px; font-weight: 560; }
+.machine-connection.state-login { color: var(--warning); background: var(--warning-bg); }
+.machine-connection.state-unreachable { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.machine-connection.state-unsupported { color: var(--secondary-text); background: var(--surface-muted); }
+.machine-login[data-attention] { color: var(--warning); opacity: 1; }

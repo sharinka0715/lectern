@@ -1,0 +1,177 @@
+.desktop-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.desktop-window > .app-shell {
+  position: relative;
+  min-height: 0;
+  height: auto;
+  flex: 1;
+}
+.window-titlebar {
+  --caption-left: 0px;
+  --caption-right: 0px;
+  position: relative;
+  z-index: 65;
+  height: max(44px, env(titlebar-area-height, 44px));
+  flex: none;
+  background: var(--surface);
+  color: var(--text);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+/* With the rail open, its slate runs up behind the window controls. */
+.window-titlebar:has(.window-navigation[data-sidebar="open"]) {
+  background: linear-gradient(90deg, var(--rail) 0 calc(var(--titlebar-rail-width, 304px) - 1px),
+    var(--rail-edge) 0 var(--titlebar-rail-width, 304px), var(--surface) 0);
+}
+.window-titlebar[data-platform="darwin"] {
+  --caption-left: 92px;
+}
+.window-titlebar:is([data-platform="win32"], [data-platform="linux"]) {
+  --caption-right: 144px;
+}
+.window-titlebar-safe {
+  --safe-left: env(titlebar-area-x, var(--caption-left));
+  margin-left: var(--safe-left);
+  width: env(
+    titlebar-area-width,
+    calc(100% - var(--safe-left) - var(--caption-right))
+  );
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.window-navigation {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: max(114px, calc(var(--titlebar-rail-width, 304px) - var(--safe-left)));
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+}
+.window-navigation[data-sidebar="closed"] {
+  width: 114px;
+}
+.window-navigation button,
+.window-project button,
+.window-project-menu {
+  -webkit-app-region: no-drag;
+}
+.window-navigation .icon-button {
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+}
+.window-navigation .icon-button:hover:not(:disabled) { color: var(--text); }
+.window-navigation .icon-button:disabled {
+  opacity: 0.35;
+}
+.window-project {
+  position: relative;
+  min-width: 0;
+  max-width: min(48vw, 540px);
+  display: flex;
+  align-items: center;
+  padding-left: 9px;
+}
+.window-project::before {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  content: "";
+}
+.window-navigation[data-sidebar="open"] + .window-project { padding-left: 14px; }
+.window-navigation[data-sidebar="open"] + .window-project::before { display: none; }
+.window-project-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 9px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--secondary-text);
+  font-size: var(--text-label);
+  font-weight: 560;
+}
+.window-project-trigger > svg:first-child { color: var(--muted); }
+.window-project-trigger:hover > svg:first-child, .window-project-trigger[aria-expanded="true"] > svg:first-child { color: var(--accent); }
+.window-project-trigger:hover,
+.window-project-trigger[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.window-project-trigger span,
+.window-project-menu strong,
+.window-project-menu small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.window-project svg {
+  flex: none;
+}
+.window-project-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 8px;
+  width: min(340px, 85vw);
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 5px;
+  box-shadow: var(--shadow-pop);
+  background: var(--surface-raised);
+}
+.window-project-menu button {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-label);
+  border-radius: 8px;
+}
+.window-project-menu button > svg { flex: none; color: var(--muted); }
+.window-project-menu button[aria-checked="true"] { background: var(--selected); }
+.window-project-menu button[aria-checked="true"] > svg { color: var(--accent); }
+.window-project-menu button:hover,
+.window-project-menu button:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.window-project-menu button span {
+  flex: 1;
+  min-width: 0;
+}
+.window-project-menu strong,
+.window-project-menu small {
+  display: block;
+}
+.window-project-menu strong {
+  font-weight: 550;
+}
+.window-project-menu small {
+  color: var(--muted);
+  font-size: var(--text-caption);
+  font-family: var(--font-mono);
+}
+@media (display-mode: fullscreen) {
+  .window-titlebar-safe {
+    --safe-left: 0px;
+    width: 100%;
+  }
+}

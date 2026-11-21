@@ -1,0 +1,55 @@
+/* Compact replies keep activity on the text baseline. The enclosing rule only
+   appears after disclosure; it belongs to the rows, not to the summary. */
+.tool-block.activity-group, .tool-block.activity-row {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+.tool-block.activity-group > summary, .tool-block.activity-row > summary {
+  padding: .28em 0;
+  gap: .4em;
+  color: var(--muted);
+}
+.tool-block.activity-group > summary > .activity-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tool-block.activity-group > summary > .activity-label,
+.tool-block.activity-row > summary > .activity-verb {
+  color: inherit;
+  font-family: inherit;
+}
+.tool-block.activity-group > summary:hover, .tool-block.activity-row > summary:hover { color: var(--text); }
+.activity-group > summary:focus-visible, .activity-row > summary:focus-visible { outline-offset: -2px; border-radius: 4px; }
+.tool-block.activity-group > summary > .tool-state, .tool-block.activity-row > summary > .tool-state { margin-left: 0; }
+.activity-changes { display: inline-flex; flex: 0 0 auto; gap: .4em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.activity-added { color: var(--success); }
+.activity-removed { color: var(--danger); }
+.activity-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.tool-block summary .activity-subject .artifact-link { display: inline; max-width: 100%; padding: 0; font: inherit; vertical-align: baseline; }
+.activity-row > summary .activity-subject .artifact-link { color: var(--text); }
+.activity-rows { margin: .4em 0 .5em; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; }
+.activity-rows > .activity-row + .activity-row { border-top: 1px solid var(--line); }
+.activity-rows > .activity-row > summary { padding: .55em .85em; }
+.activity-row[open] > .tool-detail { background: var(--surface-muted); }
+.activity-peer-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--chat-line-height, 1.45); }
+.task-notice-content { padding: .2em 0 .4em 1em; color: var(--secondary-text); font-size: var(--text-ui); line-height: var(--chat-line-height, 1.45); }
+.task-notice-content > pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.peer-unverified { color: var(--warning); font-size: var(--text-meta); flex-shrink: 0; }
+
+/* A running foreground command's latest output, under its tool row (as in Claude Code). */
+.tool-live-output { margin: 2px 0 6px; padding: 7px 11px; max-height: 12.5em; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-sunken); color: var(--secondary-text); font-family: var(--font-mono); font-size: var(--text-meta); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-live-more { display: block; color: var(--muted); }
+.tool-live { margin: 5px 0 8px; }
+/* The pill itself is shared with "正在回复" (styles.css). */
+.tool-live-heading { min-width: 0; font-weight: 500; }
+.tool-live[data-live-state="waiting"] .tool-live-heading { border-color: color-mix(in srgb, var(--signal) 30%, var(--line)); background: color-mix(in srgb, var(--signal) 7%, var(--surface-raised)); color: var(--warning); }
+.tool-live-heading code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--secondary-text); font-family: var(--font-mono); font-weight: 400; }
+.tool-live-heading > span:last-child:not(.tool-live-title) { flex: none; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.tool-live-heading > :is(.tool-live-title, code, span:last-child:not(.pulse-dot))::before { content: ""; display: inline-block; width: 3px; height: 3px; margin-right: 7px; border-radius: 50%; background: currentColor; opacity: .5; vertical-align: middle; }
+.tool-live .tool-live-output { margin: 5px 0 0; }
+.tool-live-title { min-width: 0; overflow: hidden; color: var(--text); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Folded reasoning ("Thought for Ns" in Claude Code): quieter than the reply text. */
+.thought-row > .thought-text { color: var(--secondary-text); font-size: var(--text-ui); }
+.thought-row > .thought-text .markdown, .thought-row > .thought-text > * { color: inherit; }
+.activity-row.thought-row[open] > .thought-text { max-height: 24em; overflow: auto; }

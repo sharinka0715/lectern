@@ -1,0 +1,31 @@
+.rewind-panel,.turn-queue{width:100%;max-height:min(38vh,300px);overflow:auto;background:var(--surface-raised);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:0 auto 8px;font-size:var(--text-label);box-shadow:var(--shadow-soft)}
+.rewind-panel header,.turn-queue header{display:flex;align-items:center;gap:7px}
+.rewind-panel header button,.turn-queue header button{margin-inline-start:auto}
+.turn-queue .turn-queue-note{margin-inline-start:auto;color:var(--muted);font-size:var(--text-meta);padding:4px 7px}
+.rewind-panel button,.turn-queue button,.turn-text-action,.rewind-launch{border:0;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;border-radius:6px;padding:4px 7px;font-size:var(--text-meta)}
+.rewind-panel button:enabled:hover,.turn-queue button:enabled:hover,.turn-text-action:enabled:hover,.rewind-launch:enabled:hover{background:var(--hover);color:var(--text)}
+.rewind-panel p{margin:8px 0;color:var(--muted);line-height:1.5}
+.rewind-choices{display:flex;flex-direction:column;align-items:stretch;gap:2px}
+.rewind-choices button{color:var(--text);text-align:left;justify-content:space-between;padding:6px 8px}
+.rewind-choices button span,.rewind-panel blockquote,.turn-queue li{overflow-wrap:anywhere;white-space:pre-wrap}
+.rewind-choices button[aria-current=true]{background:var(--selected)}
+.rewind-panel button:disabled,.turn-text-action:disabled,.rewind-launch:disabled{opacity:.55;cursor:default}
+.rewind-picker.rewind-panel{position:fixed;inset:0;margin:auto;width:min(34rem,90vw);max-height:70vh;padding:18px;border-radius:16px;box-shadow:var(--shadow-modal)}
+.rewind-picker::backdrop{background:var(--backdrop);backdrop-filter:blur(2px)}
+.rewind-picker .rewind-choices button{gap:1rem;border-bottom:1px solid var(--line);border-radius:0;align-items:start}
+.rewind-picker .rewind-choices small{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
+.rewind-picker .rewind-choices span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+.rewind-navigation{margin-top:4px;display:flex;gap:5px}
+.rewind-panel blockquote{margin:10px 0;padding:4px 12px;border-left:3px solid var(--line-strong);color:var(--secondary-text)}
+.rewind-panel .rewind-confirm{background:var(--action);color:var(--on-action);padding:6px 12px;font-weight:560}
+.rewind-panel .rewind-confirm:enabled:hover{background:var(--action-hover);color:var(--on-action)}
+.turn-queue ol{margin:6px 0 0;padding-inline-start:23px}
+.turn-queue li{padding:2px 0;color:var(--muted)}
+.turn-text-action{white-space:nowrap;color:var(--text)}
+.interrupt-button:enabled {
+  background: var(--action);
+  color: var(--on-action);
+}
+.interrupt-button:enabled:hover {
+  background: var(--action-hover);
+}

@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "scope": "Synthetic records derived from the 2.1.326 native control flow. Expected messages describe Lectern active-branch chat projection, not a complete native transcript view. Compaction may retain historical chat; its summary must not become a new human prompt.",
+  "cases": [
+    {
+      "name": "explicit-rewind-excludes-old-branch",
+      "sessionId": "audit-synthetic",
+      "records": [
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "u1",
+          "parentUuid": null,
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "First question"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "audit-synthetic",
+          "uuid": "a1",
+          "parentUuid": "u1",
+          "timestamp": "2026-11-18T00:00:01Z",
+          "message": {
+            "role": "assistant",
+            "id": "response-a1",
+            "content": [
+              {
+                "type": "text",
+                "text": "First answer"
+              }
+            ],
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "u2",
+          "parentUuid": "a1",
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "Discarded question"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "audit-synthetic",
+          "uuid": "a2",
+          "parentUuid": "u2",
+          "timestamp": "2026-11-18T00:00:01Z",
+          "message": {
+            "role": "assistant",
+            "id": "response-a2",
+            "content": [
+              {
+                "type": "text",
+                "text": "Discarded answer"
+              }
+            ],
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "type": "last-prompt",
+          "sessionId": "audit-synthetic",
+          "leafUuid": "a1",
+          "explicit": true,
+          "rewound": true,
+          "cutUuid": "u2"
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "text": "First question"
+        },
+        {
+          "role": "assistant",
+          "text": "First answer"
+        }
+      ]
+    },
+    {
+      "name": "explicit-rewind-to-empty",
+      "sessionId": "audit-synthetic",
+      "records": [
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "u1",
+          "parentUuid": null,
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "First question"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "audit-synthetic",
+          "uuid": "a1",
+          "parentUuid": "u1",
+          "timestamp": "2026-11-18T00:00:01Z",
+          "message": {
+            "role": "assistant",
+            "id": "response-a1",
+            "content": [
+              {
+                "type": "text",
+                "text": "First answer"
+              }
+            ],
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "type": "last-prompt",
+          "sessionId": "audit-synthetic",
+          "leafUuid": null,
+          "explicit": true,
+          "rewound": true,
+          "cutUuid": "u1"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "skill-request-is-a-new-human-turn",
+      "sessionId": "audit-synthetic",
+      "records": [
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "u1",
+          "parentUuid": null,
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "First question"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "audit-synthetic",
+          "uuid": "a1",
+          "parentUuid": "u1",
+          "timestamp": "2026-11-18T00:00:01Z",
+          "message": {
+            "role": "assistant",
+            "id": "response-a1",
+            "content": [
+              {
+                "type": "text",
+                "text": "First answer"
+              }
+            ],
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "skill",
+          "parentUuid": "a1",
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "<command-message>audit</command-message>\n<command-name>/audit</command-name>\n<command-args>src</command-args>"
+          }
+        },
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "skill-content",
+          "parentUuid": "skill",
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "Synthetic skill instructions"
+          },
+          "isMeta": true,
+          "turnCompanion": true
+        },
+        {
+          "type": "assistant",
+          "sessionId": "audit-synthetic",
+          "uuid": "skill-answer",
+          "parentUuid": "skill-content",
+          "timestamp": "2026-11-18T00:00:01Z",
+          "message": {
+            "role": "assistant",
+            "id": "response-skill-answer",
+            "content": [
+              {
+                "type": "text",
+                "text": "Skill answer"
+              }
+            ],
+            "stop_reason": "end_turn"
+          }
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "text": "First question"
+        },
+        {
+          "role": "assistant",
+          "text": "First answer"
+        },
+        {
+          "role": "user",
+          "text": "/audit src"
+        },
+        {
+          "role": "assistant",
+          "text": "Skill answer"
+        }
+      ]
+    },
+    {
+      "name": "compact-summary-is-not-a-human-prompt",
+      "sessionId": "audit-synthetic",
+      "records": [
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "u1",
+          "parentUuid": null,
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "First question"
+          }
+        },
+        {
+          "type": "assistant",
+          "sessionId": "audit-synthetic",
+          "uuid": "a1",
+          "parentUuid": "u1",
+          "timestamp": "2026-11-18T00:00:01Z",
+          "message": {
+            "role": "assistant",
+            "id": "response-a1",
+            "content": [
+              {
+                "type": "text",
+                "text": "First answer"
+              }
+            ],
+            "stop_reason": "end_turn"
+          }
+        },
+        {
+          "type": "system",
+          "subtype": "compact_boundary",
+          "sessionId": "audit-synthetic",
+          "uuid": "compact",
+          "parentUuid": null,
+          "logicalParentUuid": "a1",
+          "compactMetadata": {
+            "trigger": "manual",
+            "preTokens": 100
+          }
+        },
+        {
+          "type": "user",
+          "sessionId": "audit-synthetic",
+          "uuid": "summary",
+          "parentUuid": "compact",
+          "timestamp": "2026-11-18T00:00:00Z",
+          "message": {
+            "role": "user",
+            "content": "Synthetic compaction summary"
+          },
+          "isCompactSummary": true,
+          "isVisibleInTranscriptOnly": true
+        }
+      ],
+      "expected": [
+        {
+          "role": "user",
+          "text": "First question"
+        },
+        {
+          "role": "assistant",
+          "text": "First answer"
+        }
+      ]
+    }
+  ]
+}

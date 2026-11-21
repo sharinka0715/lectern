@@ -1,0 +1,955 @@
+{
+  "version": "2.1.326",
+  "scenarios": {
+    "single": {
+      "width": 120,
+      "keys": [
+        "Tab",
+        "Down",
+        "Enter"
+      ],
+      "screens": {
+        "start": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel",
+        "afterTab": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "Your questions have been answered: \"Which drink should we serve?\"=\"Juice\". You can now continue with these answers in mind.",
+          "tool_use_id": "toolu_question_single",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "answers": {
+              "Which drink should we serve?": "Juice"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "other": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "Down",
+        {
+          "text": "Herbal water"
+        },
+        "End",
+        "C-u",
+        {
+          "text": "Lemon water"
+        },
+        "Enter"
+      ],
+      "screens": {
+        "focus": "────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n❯ 3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "text": "────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n❯ 3. Herbal water\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "cleared": "────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n❯ 3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user answered: \"Which drink should we serve?\"=\"Lemon water\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+          "tool_use_id": "toolu_question_other",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "answers": {
+              "Which drink should we serve?": "Lemon water"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "preview": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "n",
+        {
+          "text": "中文 初稿"
+        },
+        "End",
+        "C-u",
+        {
+          "text": "少糖 不加冰"
+        },
+        "Enter"
+      ],
+      "screens": {
+        "start": "────────────────────────────────────────────────────────────────────────────────\n ☐ 会场 布置\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 点心 区                      │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: press n to add notes\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Esc to cancel",
+        "edit": "────────────────────────────────────────────────────────────────────────────────\n ☐ 会场 布置\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 点心 区                      │ 陈列架                                   │\n                                  │   [点心]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: Add notes on this design…\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · ctrl+g to edit in VS Code ·\nEsc to cancel",
+        "draft": "────────────────────────────────────────────────────────────────────────────────\n ☐ 会场 布置\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 点心 区                      │ 陈列架                                   │\n                                  │   [点心]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 中文 初稿\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · ctrl+g to edit in VS Code ·\nEsc to cancel",
+        "cleared": "────────────────────────────────────────────────────────────────────────────────\n ☐ 会场 布置\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 点心 区                      │ 陈列架                                   │\n                                  │   [点心]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: Add notes on this design…\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · ctrl+g to edit in VS Code ·\nEsc to cancel",
+        "text": "────────────────────────────────────────────────────────────────────────────────\n ☐ 会场 布置\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 点心 区                      │ 陈列架                                   │\n                                  │   [点心]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 少糖 不加冰\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · ctrl+g to edit in VS Code ·\nEsc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user answered: \"接待区的设计方案，你更喜欢哪一种？\"=\"点心 区\" selected preview:\n陈列架\n  [点心] notes: 少糖 不加冰. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+          "tool_use_id": "toolu_question_preview",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "接待区的设计方案，你更喜欢哪一种？",
+                "header": "会场 布置",
+                "options": [
+                  {
+                    "label": "茶歇 区",
+                    "description": "第一种方案。",
+                    "preview": "木桌\n  [茶具]"
+                  },
+                  {
+                    "label": "点心 区",
+                    "description": "第二种方案。",
+                    "preview": "陈列架\n  [点心]"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "answers": {
+              "接待区的设计方案，你更喜欢哪一种？": "点心 区"
+            },
+            "annotations": {
+              "接待区的设计方案，你更喜欢哪一种？": {
+                "preview": "陈列架\n  [点心]",
+                "notes": "少糖 不加冰"
+              }
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "multi": {
+      "width": 120,
+      "keys": [
+        "Space",
+        "Down",
+        "Space",
+        "Down",
+        {
+          "text": "Crackers"
+        },
+        "Enter",
+        "Enter",
+        "Down",
+        "Down",
+        "Up",
+        "Enter",
+        "Enter"
+      ],
+      "screens": {
+        "start": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☐ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n❯ 1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n  3. [ ] Type something\n     Submit\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel",
+        "other": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [✔] Fruit\n         Fresh fruit.\n  2. [✔] Bread\n         Fresh bread.\n❯ 3. [ ] Type something\n     Submit\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "custom": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [✔] Fruit\n         Fresh fruit.\n  2. [✔] Bread\n         Fresh bread.\n❯ 3. [✔] Crackers\n     Submit\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "afterEnter": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [✔] Fruit\n         Fresh fruit.\n  2. [✔] Bread\n         Fresh bread.\n❯ 3. [ ] Crackers\n     Submit\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "submit": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [✔] Fruit\n         Fresh fruit.\n  2. [✔] Bread\n         Fresh bread.\n  3. [✔] Crackers\n❯    Submit\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "chat": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [✔] Fruit\n         Fresh fruit.\n  2. [✔] Bread\n         Fresh bread.\n  3. [✔] Crackers\n     Submit\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n❯ 4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "review": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nReview your answers\n\n ● Which snacks should we pack?\n   → Fruit, Bread, Crackers\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user answered: \"Which snacks should we pack?\"=\"Fruit, Bread, Crackers\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+          "tool_use_id": "toolu_question_multi",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which snacks should we pack?",
+                "header": "Snacks",
+                "options": [
+                  {
+                    "label": "Fruit",
+                    "description": "Fresh fruit."
+                  },
+                  {
+                    "label": "Bread",
+                    "description": "Fresh bread."
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which snacks should we pack?": "Fruit, Bread, Crackers"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "mixed": {
+      "width": 80,
+      "keys": [
+        "Right",
+        "Right",
+        "Left",
+        "Left",
+        "Enter",
+        "Space",
+        "Right",
+        "Enter"
+      ],
+      "screens": {
+        "start": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ Drink  ☐ Snacks  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "incomplete": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ Drink  ☐ Snacks  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel",
+        "second": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Drink  ☐ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n❯ 1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n  3. [ ] Type something\n     Submit\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "review": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Drink  ☒ Snacks  ✔ Submit  →\n\nReview your answers\n\n ● Which drink should we serve?\n   → Tea\n ● Which snacks should we pack?\n   → Fruit\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "Your questions have been answered: \"Which drink should we serve?\"=\"Tea\", \"Which snacks should we pack?\"=\"Fruit\". You can now continue with these answers in mind.",
+          "tool_use_id": "toolu_question_mixed",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which snacks should we pack?",
+                "header": "Snacks",
+                "options": [
+                  {
+                    "label": "Fruit",
+                    "description": "Fresh fruit."
+                  },
+                  {
+                    "label": "Bread",
+                    "description": "Fresh bread."
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which drink should we serve?": "Tea",
+              "Which snacks should we pack?": "Fruit"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "chat": {
+      "width": 120,
+      "keys": [
+        "Down",
+        "Down",
+        "Down",
+        "Enter",
+        {
+          "text": "Could you compare the drinks?"
+        },
+        "Enter"
+      ],
+      "screens": {
+        "focus": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n❯ 4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "composer": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n❯\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  ⏸ manual mode on · ? for shortcuts · ← for agents"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nThe user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n- \"Which drink should we serve?\"\n  (No answer provided)",
+          "is_error": true,
+          "tool_use_id": "toolu_question_chat",
+          "nativeResult": "Error: The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nThe user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n- \"Which drink should we serve?\"\n  (No answer provided)"
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        },
+        {
+          "role": "user",
+          "text": "Could you compare the drinks?"
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "cancel": {
+      "width": 80,
+      "keys": [
+        "Escape"
+      ],
+      "screens": {
+        "start": "────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_cancel",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "partialPreview": {
+      "width": 80,
+      "keys": [
+        "n",
+        {
+          "text": "保留 备注"
+        },
+        "Left",
+        "Escape",
+        "Down",
+        "Up",
+        "Down",
+        "Down",
+        "Up",
+        "Enter",
+        "Enter",
+        "Down",
+        "Enter"
+      ],
+      "screens": {
+        "first": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 室外                         │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: press n to add notes\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "saved": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 室外                         │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 保留 备注\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "without": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 室外                         │ No preview available                     │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 保留 备注\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "back": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 室外                         │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 保留 备注\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "chat": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 室外                         │ No preview available                     │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 保留 备注\n\n────────────────────────────────────────────────────────────────────────────────\n❯ Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "second": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ 会场 布置  ☐ Drink  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "review": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ 会场 布置  ☒ Drink  ✔ Submit  →\n\nReview your answers\n\n ● 接待区的设计方案，你更喜欢哪一种？\n   → 室外\n ● Which drink should we serve?\n   → Tea\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel",
+        "cancel": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ 会场 布置  ☒ Drink  ✔ Submit  →\n\nReview your answers\n\n ● 接待区的设计方案，你更喜欢哪一种？\n   → 室外\n ● Which drink should we serve?\n   → Tea\n\nReady to submit your answers?\n\n  1. Submit answers\n❯ 2. Cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_partialPreview",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "multiWithPreviews": {
+      "width": 120,
+      "keys": [
+        "Space",
+        "Down",
+        "Down",
+        "Down",
+        "Enter",
+        "Enter",
+        "Enter"
+      ],
+      "screens": {
+        "start": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☐ Snacks  ☐ Drink  ✔ Submit  →\n\nWhich snacks should we pack?\n\n❯ 1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n  3. [ ] Type something\n     Next\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "next": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ☐ Drink  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [✔] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n  3. [ ] Type something\n❯    Next\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "second": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ☐ Drink  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "Your questions have been answered: \"Which snacks should we pack?\"=\"Fruit\", \"Which drink should we serve?\"=\"Tea\". You can now continue with these answers in mind.",
+          "tool_use_id": "toolu_question_multiWithPreviews",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which snacks should we pack?",
+                "header": "Snacks",
+                "options": [
+                  {
+                    "label": "Fruit",
+                    "description": "Fresh fruit.",
+                    "preview": "Example 0"
+                  },
+                  {
+                    "label": "Bread",
+                    "description": "Fresh bread.",
+                    "preview": "Example 1"
+                  }
+                ],
+                "multiSelect": true
+              },
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "answers": {
+              "Which snacks should we pack?": "Fruit",
+              "Which drink should we serve?": "Tea"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "incompleteSubmit": {
+      "width": 80,
+      "keys": [
+        "Enter",
+        "Right",
+        "Enter"
+      ],
+      "screens": {
+        "partial": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Drink  ☐ Snacks  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\n ● Which drink should we serve?\n   → Tea\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "Your questions have been answered: \"Which drink should we serve?\"=\"Tea\". You can now continue with these answers in mind.",
+          "tool_use_id": "toolu_question_incompleteSubmit",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which snacks should we pack?",
+                "header": "Snacks",
+                "options": [
+                  {
+                    "label": "Fruit",
+                    "description": "Fresh fruit."
+                  },
+                  {
+                    "label": "Bread",
+                    "description": "Fresh bread."
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which drink should we serve?": "Tea"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "emptyNext": {
+      "width": 120,
+      "keys": [
+        "Down",
+        "Down",
+        "Down",
+        "Enter",
+        "Escape"
+      ],
+      "screens": {
+        "emptyNext": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☐ Snacks  ☐ Drink  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n  3. [ ] Type something\n❯    Next\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "after": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n←  ☐ Snacks  ☐ Drink  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_emptyNext",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "skipAll": {
+      "width": 80,
+      "keys": [
+        "Right",
+        "Right",
+        "Enter"
+      ],
+      "screens": {
+        "empty": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ Drink  ☐ Snacks  ✔ Submit  →\n\nReview your answers\n\n⚠ You have not answered all questions\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user did not answer the questions.",
+          "tool_use_id": "toolu_question_skipAll",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which snacks should we pack?",
+                "header": "Snacks",
+                "options": [
+                  {
+                    "label": "Fruit",
+                    "description": "Fresh fruit."
+                  },
+                  {
+                    "label": "Bread",
+                    "description": "Fresh bread."
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {},
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "cancelOther": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "Down",
+        {
+          "text": "With lemon"
+        },
+        "Escape"
+      ],
+      "screens": {
+        "editing": "────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n❯ 3. With lemon\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_cancelOther",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "previewTabs": {
+      "width": 80,
+      "keys": [
+        "Right",
+        "Left",
+        "Tab",
+        "BTab",
+        "Escape"
+      ],
+      "screens": {
+        "first": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 室外                         │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: press n to add notes\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "right": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "left": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 室外                         │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: press n to add notes\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel",
+        "tab": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "backtab": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ 会场 布置  ☐ Drink  ✔ Submit  →\n\n接待区的设计方案，你更喜欢哪一种？\n\n❯ 1. 茶歇 区                      ┌──────────────────────────────────────────┐\n  2. 室外                         │ 木桌                                     │\n                                  │   [茶具]                                 │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: press n to add notes\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions ·\nEsc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_previewTabs",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "preamble": {
+      "width": 120,
+      "keys": [
+        "Enter"
+      ],
+      "screens": {
+        "question": "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "viewport": "\n ▐▛███▛█   Claude Code v2.1.326\n▝▜██████▀  Opus 5.5 · API Usage Billing\n ▝▝   ▝▝   /tmp/question-probe/work\n\n\n❯ Run the question probe.\n\n⏺ Let us choose a drink before packing.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n ☐ Drink\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "ansiViewport": "\n\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[39m\u001b[49m   \u001b[1mClaude Code\u001b[0m \u001b[38;5;246mv2.1.326\n\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[39m  \u001b[38;5;246mOpus 5.5 · API Usage Billing\n\u001b[38;5;174m ▝▝   ▝▝ \u001b[39m  \u001b[38;5;246m/tmp/question-probe/work\n\n\n\u001b[48;5;237m❯ \u001b[38;5;231mRun the question probe.\u001b[39m                                                                                               \n\n\u001b[38;5;231m\u001b[49m⏺\u001b[39m Let us choose a drink before packing.\n\u001b[38;5;246m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\u001b[38;5;16m\u001b[48;5;153m ☐ Drink \n\n\u001b[1m\u001b[38;5;231m\u001b[49mWhich drink should we serve?\n\n\u001b[0m\u001b[38;5;153m❯\u001b[39m \u001b[38;5;246m1.\u001b[39m \u001b[38;5;153mTea\n\u001b[39m     \u001b[38;5;246mA warm infusion.\n\u001b[39m  \u001b[38;5;246m2.\u001b[39m Juice\n     \u001b[38;5;246mA cold drink.\n\u001b[39m  \u001b[38;5;246m3. Type something.\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n\u001b[39m  4. Chat about this\n\n\u001b[38;5;246mEnter to select · ↑/↓ to navigate · Esc to cancel\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[39m                                                                                                                      \n\n\n\n                                                    \n",
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "Your questions have been answered: \"Which drink should we serve?\"=\"Tea\". You can now continue with these answers in mind.",
+          "tool_use_id": "toolu_question_preamble",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which drink should we serve?",
+                "header": "Drink",
+                "options": [
+                  {
+                    "label": "Tea",
+                    "description": "A warm infusion."
+                  },
+                  {
+                    "label": "Juice",
+                    "description": "A cold drink."
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "answers": {
+              "Which drink should we serve?": "Tea"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "revisit": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "Enter",
+        "Left",
+        "Down",
+        "Down",
+        "Escape"
+      ],
+      "screens": {
+        "answered": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Drink  ☐ Snacks  ✔ Submit  →\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n❯ 2. Juice ✔\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel",
+        "chat": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Drink  ☐ Snacks  ✔ Submit  →\n\nWhich drink should we serve?\n\n  1. Tea\n     A warm infusion.\n  2. Juice ✔\n     A cold drink.\n  3. Type something.\n────────────────────────────────────────────────────────────────────────────────\n❯ 4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · ctrl+g to edit in VS Code · Esc\nto cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_revisit",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "revisitOther": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "Down",
+        {
+          "text": "茉莉 冷茶"
+        },
+        "Enter",
+        "Left",
+        "Escape"
+      ],
+      "screens": {
+        "answered": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Drink  ☐ Snacks  ✔ Submit  →\n\nWhich drink should we serve?\n\n❯ 1. Tea\n     A warm infusion.\n  2. Juice\n     A cold drink.\n  3. 茉莉 冷茶 ✔\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+          "is_error": true,
+          "tool_use_id": "toolu_question_revisitOther",
+          "nativeResult": "User rejected tool use"
+        }
+      ]
+    },
+    "notesWithoutPreview": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "n",
+        {
+          "text": "靠窗"
+        },
+        "Enter"
+      ],
+      "screens": {
+        "editing": "────────────────────────────────────────────────────────────────────────────────\n ☐ 会场 布置\n\n接待区的设计方案，你更喜欢哪一种？\n\n  1. 茶歇 区                      ┌──────────────────────────────────────────┐\n❯ 2. 室外                         │ No preview available                     │\n                                  └──────────────────────────────────────────┘\n\n                                  Notes: 靠窗\n\n────────────────────────────────────────────────────────────────────────────────\n  Chat about this\n\nEnter to select · ↑/↓ to navigate · n to add notes · ctrl+g to edit in VS Code ·\nEsc to cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user answered: \"接待区的设计方案，你更喜欢哪一种？\"=\"室外\" notes: 靠窗. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+          "tool_use_id": "toolu_question_notesWithoutPreview",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "接待区的设计方案，你更喜欢哪一种？",
+                "header": "会场 布置",
+                "options": [
+                  {
+                    "label": "茶歇 区",
+                    "description": "第一种方案。",
+                    "preview": "木桌\n  [茶具]"
+                  },
+                  {
+                    "label": "室外",
+                    "description": "无预览。"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ],
+            "answers": {
+              "接待区的设计方案，你更喜欢哪一种？": "室外"
+            },
+            "annotations": {
+              "接待区的设计方案，你更喜欢哪一种？": {
+                "notes": "靠窗"
+              }
+            }
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    },
+    "multiOtherOnly": {
+      "width": 80,
+      "keys": [
+        "Down",
+        "Down",
+        {
+          "text": "饼干"
+        },
+        "End",
+        "C-u",
+        {
+          "text": "薄荷 糖"
+        },
+        "Down",
+        "Enter",
+        "Enter"
+      ],
+      "screens": {
+        "first": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n❯ 3. [✔] 饼干\n     Submit\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "cleared": "────────────────────────────────────────────────────────────────────────────────\n←  ☐ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n❯ 3. [ ] Type something\n     Submit\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "replaced": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nWhich snacks should we pack?\n\n  1. [ ] Fruit\n         Fresh fruit.\n  2. [ ] Bread\n         Fresh bread.\n❯ 3. [✔] 薄荷 糖\n     Submit\n────────────────────────────────────────────────────────────────────────────────\n  4. Chat about this\n\nEnter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+        "review": "────────────────────────────────────────────────────────────────────────────────\n←  ☒ Snacks  ✔ Submit  →\n\nReview your answers\n\n ● Which snacks should we pack?\n   → 薄荷 糖\n\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel"
+      },
+      "pending": {
+        "toolUse": true,
+        "status": "waiting",
+        "waitingFor": "input needed"
+      },
+      "outcome": [
+        {
+          "type": "tool_result",
+          "content": "The user answered: \"Which snacks should we pack?\"=\"薄荷 糖\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+          "tool_use_id": "toolu_question_multiOtherOnly",
+          "nativeResult": {
+            "questions": [
+              {
+                "question": "Which snacks should we pack?",
+                "header": "Snacks",
+                "options": [
+                  {
+                    "label": "Fruit",
+                    "description": "Fresh fruit."
+                  },
+                  {
+                    "label": "Bread",
+                    "description": "Fresh bread."
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which snacks should we pack?": "薄荷 糖"
+            },
+            "annotations": {}
+          }
+        },
+        {
+          "role": "assistant",
+          "text": "Question probe follow-up."
+        }
+      ]
+    }
+  }
+}

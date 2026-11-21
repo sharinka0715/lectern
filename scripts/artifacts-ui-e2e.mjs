@@ -1,0 +1,449 @@
+import assert from 'node:assert/strict';
+import { appendFile, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { _electron as electron } from 'playwright';
+import { spawnSync } from 'node:child_process';
+import { ZipFile } from 'yazl';
+
+const profile = await mkdtemp(path.join(tmpdir(), 'lectern-artifacts-ui-'));
+// Workspace thumbnails come from the target: sips on macOS, python3 with Pillow elsewhere.
+const workspaceThumbnails = process.platform === 'darwin' || spawnSync('python3', ['-I', '-c', 'import PIL'], { stdio: 'ignore' }).status === 0;
+const results = path.resolve('test-results');
+await mkdir(results, { recursive: true });
+const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath, LECTERN_DIAGNOSTIC_CONTENT: '0' };
+delete env.ELECTRON_RUN_AS_NODE;
+delete env.LECTERN_DEV_URL;
+
+function redPage() {
+  const stream = '1 0 0 rg 8 8 184 184 re f\n';
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}endstream`];
+  let file = '%PDF-1.4\n';
+  const offsets = objects.map((value, index) => {
+    const at = file.length;
+    file += `${index + 1} 0 obj\n${value}\nendobj\n`;
+    return at;
+  });
+  const xref = file.length;
+  return file + 'xref\n0 5\n0000000000 65535 f \n' + offsets.map(at => String(at).padStart(10, '0') + ' 00000 n \n').join('') +
+    `trailer << /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+}
+
+async function verifyToolGroups(page, row, appendRows) {
+  const use = (id, name, input) => ({ type: 'tool_use', id, name, input });
+  const result = (id, content, is_error = false) => ({ type: 'tool_result', tool_use_id: id, content, is_error });
+  const text = text => ({ type: 'text', text });
+  const start = '检查本轮工具的排列。';
+  const middle = '继续读取。';
+  const end = '检查完毕。';
+  const read = { file_path: 'NOTICE' };
+  const edit = { file_path: 'a.txt', old_string: 'old', new_string: 'new' };
+  await appendRows([
+    row('user', { role: 'user', content: '验证两种工具展示方式。' }),
+    row('assistant', { id: randomUUID(), role: 'assistant', stop_reason: 'tool_use', content: [
+      text(start), use('r1', 'Read', read), use('r2', 'Read', read),
+      use('sh1', 'Bash', { command: 'pwd' }), use('sh2', 'PowerShell', { command: 'Get-Location' }),
+      use('send1', 'SendMessage', { to: '核对代理', message: '请核对读写记录' }),
+    ] }),
+    row('user', { role: 'user', content: '已核对读写记录' }, { origin: { kind: 'peer', name: '核对代理', msg_id: 'peer1', senderTaskId: 'agent-1' } }),
+    row('assistant', { id: randomUUID(), role: 'assistant', stop_reason: 'tool_use', content: [
+      use('r3', 'Read', read), text(middle), use('r4', 'Read', read),
+      use('e1', 'Edit', edit), use('e2', 'MultiEdit', { file_path: 'a.txt', edits: [edit] }),
+      use('e3', 'NotebookEdit', { notebook_path: 'notes.ipynb', new_source: 'notes' }),
+    ] }),
+    row('user', { role: 'user', content: [result('sh2', '命令失败', true)] }),
+  ]);
+
+  const reply = page.locator('.message-assistant').filter({ hasText: start });
+  const layout = () => reply.locator('.message-content > *').evaluateAll(nodes => nodes.map(node =>
+    node.matches('.tool-group') ? Array.from(node.querySelectorAll('[data-tool-id], [data-peer-id]'), item => item.dataset.toolId ?? item.dataset.peerId) :
+      node.matches('.tool-live') ? `live:${node.dataset.liveTool}` :
+      node.dataset.toolId ?? node.dataset.peerId ?? node.textContent.trim()));
+  const compact = [start, ['r1', 'r2', 'sh1', 'sh2', 'send1', 'peer1', 'r3'], middle, ['r4', 'e1', 'e2', 'e3']];
+  const group = id => reply.locator('.tool-group').filter({ has: page.locator(`[data-tool-id="${id}"]`) });
+  const card = id => reply.locator(`[data-tool-id="${id}"]`);
+  const summary = locator => locator.locator(':scope > summary');
+  const shells = group('sh1');
+  const firstShell = card('sh1');
+  await summary(shells).getByText('1 次失败 · 5 次进行中').waitFor();
+  await summary(shells).getByText(/执行 2 条命令，发送消息 1 次，收到 1 条消息/).waitFor();
+  // The still-running foreground command (sh1) shows below its collapsed group, as in Claude Code.
+  assert.deepEqual(await layout(), [compact[0], compact[1], 'live:sh1', ...compact.slice(2)], 'Tools and peer deliveries merge only at the same position, in recorded order');
+  assert.equal(await reply.locator('details[open]').count(), 0);
+  await summary(shells).click();
+  await summary(card('sh2')).getByText('执行失败').waitFor();
+  await summary(firstShell).getByText('进行中').waitFor();
+  await summary(firstShell).click();
+  await firstShell.locator('pre').filter({ hasText: 'pwd' }).waitFor();
+  const peer = reply.locator('[data-peer-id="peer1"]');
+  await summary(peer).getByText('核对代理').click();
+  await peer.getByText('已核对读写记录', { exact: true }).waitFor();
+  await summary(card('send1')).getByText('核对代理').waitFor();
+  await appendRows([
+    row('user', { role: 'user', content: ['e3', 'e2', 'r4', 'r3', 'r2', 'r1', 'send1', 'sh1'].map(id => result(id, `完成 ${id}`)) }),
+    row('user', { role: 'user', content: [result('e1', '完成 e1')] }, { toolUseResult: { structuredPatch: [
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-old', '+new'] },
+    ] } }),
+    row('assistant', { role: 'assistant', content: end, stop_reason: 'end_turn' }),
+  ]);
+  await firstShell.getByText('完成 sh1', { exact: true }).waitFor();
+  assert.equal(await summary(shells).locator('.tool-state').innerText(), '1 次失败');
+  assert.deepEqual(await layout(), [...compact, end]);
+  assert.equal(await firstShell.evaluate(node => node.open), true);
+  assert.equal(await shells.evaluate(node => node.open), true);
+  const edits = group('e1');
+  await summary(edits).getByText('读取 1 个文件，修改 2 个文件', { exact: true }).waitFor();
+  await summary(edits).getByText('已知', { exact: true }).waitFor();
+  await summary(edits).getByText('+1', { exact: true }).waitFor();
+  await summary(edits).getByText('−1', { exact: true }).waitFor();
+  await summary(edits).click();
+  assert.equal(await edits.locator('[data-tool-id][open]').count(), 0);
+  assert.equal(await card('e1').getByRole('region', { name: '编辑差异' }).isVisible(), false);
+  await summary(card('e1')).click();
+  await card('e1').getByRole('region', { name: '编辑差异' }).getByText('+new', { exact: true }).waitFor();
+  await summary(card('e1')).click();
+  await summary(shells).click();
+  await reply.screenshot({ path: path.join(results, 'desktop-mixed-activities.png') });
+
+  const settings = page.getByRole('dialog', { name: '设置', exact: true });
+  const openSettings = () => page.getByRole('button', { name: '界面与连接设置' }).click();
+  const closeSettings = () => settings.getByRole('button', { name: '关闭设置' }).click();
+  const detail = settings.getByLabel('回复详细程度');
+  const individual = [...compact.flat(), end];
+  await openSettings();
+  assert.equal(await detail.inputValue(), 'compact');
+  await detail.selectOption({ label: '逐条（单独列出工具）' });
+  await closeSettings();
+  assert.deepEqual(await layout(), individual);
+  assert.equal(await card('e1').evaluate(node => node.open), false);
+  await page.reload();
+  await reply.waitFor();
+  assert.deepEqual(await layout(), individual, 'The renderer loads the saved detail level');
+  assert.equal(await reply.locator('details[open]').count(), 0);
+  await openSettings();
+  assert.equal(await detail.inputValue(), 'individual');
+  await settings.getByRole('button', { name: '恢复默认外观' }).click();
+  assert.equal(await detail.locator('option:checked').textContent(), '精简（汇总连续操作）');
+  await closeSettings();
+  assert.deepEqual(await layout(), [...compact, end]);
+  await page.reload();
+  await reply.waitFor();
+  assert.deepEqual(await layout(), [...compact, end], 'Restoring default appearance also persists');
+}
+
+let app;
+try {
+  const executablePath = process.argv[2];
+  app = await electron.launch({ ...(executablePath && { executablePath: path.resolve(executablePath) }), args: [...(executablePath ? [] : ['.']), '--demo'], env, timeout: 60000 });
+  const page = await app.firstWindow();
+  page.setDefaultTimeout(15000);
+  const browserErrors = [];
+  const remoteRequests = [];
+  page.on('pageerror', error => browserErrors.push(error.message));
+  page.on('request', request => { if (/^https?:\/\//.test(request.url())) remoteRequests.push(request.url()); });
+  await page.locator('.message-assistant').first().waitFor();
+  const { workspace, session } = await page.evaluate(async () => {
+    const [workspace] = await window.desktop.listWorkspaces();
+    const session = (await window.desktop.discover(workspace.id)).sessions[0];
+    return { workspace, session };
+  });
+  const { cwd } = workspace;
+  assert.ok(session.path);
+  const image = Buffer.from('R0lGODlhAgABAPABAP8AAP///yH5BAAAAAAALAAAAAACAAEAAAICBAoAOw==', 'base64');
+  const bytes = Buffer.from([0, 128, 255, 22, 0]);
+  const docx = new ZipFile();
+  docx.addBuffer(Buffer.from('<w:document xmlns:w="test"><w:p><w:r><w:t>离线文档正文</w:t></w:r></w:p></w:document>'), 'word/document.xml');
+  docx.end();
+  const folder = path.join(cwd, 'preview files');
+  await mkdir(folder);
+  await mkdir(path.join(cwd, 'src', 'panels'), { recursive: true });
+  await mkdir(path.join(cwd, 'manual'));
+  await mkdir(path.join(cwd, 'paged'));
+  await Promise.all(Array.from({ length: 251 }, (_, i) => writeFile(path.join(cwd, 'paged', String(i).padStart(3, '0')), '')));
+  await Promise.all([
+    writeFile(path.join(folder, 'guide.md'), '# Lectern 手册\n\n[源文件](demo.ts) ![外链图片](https://example.invalid/no-network.png)'),
+    writeFile(path.join(folder, 'demo.ts'), 'export const answer = 42;\n'),
+    writeFile(path.join(folder, 'pixel.gif'), image),
+    writeFile(path.join(folder, 'sample.pdf'), redPage()),
+    ...['tiny.webm', 'tiny.mp4', 'tiny.mp3'].map(name => copyFile(path.resolve('tests/fixtures/media', name), path.join(folder, name))),
+    writeFile(path.join(folder, 'sample.docx'), docx.outputStream),
+    writeFile(path.join(folder, 'unknown.blob'), bytes),
+    writeFile(path.join(cwd, 'NOTICE'), 'extensionless fixture'),
+    writeFile(path.join(cwd, 'src/panels/ProxyPanel.tsx'), 'export const located = true;'),
+    writeFile(path.join(cwd, 'src/panels/中文ProxyPanel.tsx'), 'export const localized = true;'),
+    writeFile(path.join(cwd, 'src/index.ts'), 'first index'),
+    writeFile(path.join(cwd, 'index.ts'), 'second index'),
+    writeFile(path.join(cwd, 'usage.current'), 'not a prose link'),
+    writeFile(path.join(cwd, 'manual/startup'), 'not a prose link'),
+    writeFile(path.join(cwd, 'volatile.txt'), 'delete after link is resolved'),
+    writeFile(path.join(profile, 'outside.md'), 'private outside fixture'),
+  ]);
+  const row = (type, message, extra = {}) => ({ type, message, uuid: randomUUID(), sessionId: session.id, cwd, ...extra });
+  const noise = '400/429 3000/3010 usage.current manual/startup';
+  const outside = path.join(profile, 'outside.md');
+  const rows = [
+    row('user', { role: 'user', content: [{ type: 'text', text: `请检查 <literal> @preview/hello.ts 和 [笔记](<preview files/guide.md>)。普通文本：ProxyPanel.tsx ${noise} index.ts` },
+      { type: 'image', title: '粘贴图片.gif', source: { type: 'base64', media_type: 'image/gif', data: image.toString('base64') } }] }),
+    row('assistant', { id: randomUUID(), role: 'assistant', content: [
+      { type: 'text', text: ['打开 [文件夹](<preview files>)、![图像](<preview files/pixel.gif>) 和 [PDF](<preview files/sample.pdf>)。',
+        '找不到的路径：`missing.txt`。测试重试：`volatile.txt`。', `[跨目录](${outside}) ${outside} [失效](not-here.md)`,
+        `普通文本：ProxyPanel.tsx ${noise} index.ts。改了ProxyPanel.tsx和index.ts。中文ProxyPanel.tsx。`, '`ProxyPanel.tsx:42` `index.ts` `usage.current` `manual/startup`',
+        '```ts\nimport "./src/index.ts"; // ProxyPanel.tsx index.ts ' + noise + '\n```', '![外链图片](https://example.invalid/tracking.png)'].join('\n\n') },
+      { type: 'tool_use', id: 'read-file', name: 'Read', input: { file_path: 'NOTICE' } },
+      { type: 'text', text: '已读取说明，接下来修改示例。' },
+      { type: 'tool_use', id: 'edit-file', name: 'Edit', input: { file_path: 'preview files/demo.ts', old_string: '41', new_string: '42' } },
+    ], stop_reason: 'tool_use' }),
+    row('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-file', content: [
+      { type: 'text', text: 'See also "preview files/guide.md"' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/gif', data: image.toString('base64') } },
+    ] }] }),
+    row('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'edit-file', content: 'Updated file.' }] },
+      { toolUseResult: { filePath: 'preview files/demo.ts', structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-export const answer = 41;', '+export const answer = 42;'] }] } }),
+  ];
+  rows.push(row('assistant', { role: 'assistant', content: '示例已经修改。', stop_reason: 'end_turn' }));
+  const appendRows = batch => appendFile(session.path, batch.map(record => JSON.stringify(record)).join('\n') + '\n');
+  await appendRows(rows.slice(0, 2));
+  const pending = page.locator('[data-tool-id="read-file"][data-tool-state="pending"]');
+  await pending.locator('summary').click();
+  await appendRows(rows.slice(2));
+  const reply = page.locator('.message-assistant').filter({ hasText: '示例已经修改。' });
+  await reply.waitFor();
+  const order = await reply.locator('.message-content > *').evaluateAll(nodes => nodes.map(node =>
+    node.dataset.toolId ?? node.dataset.chatImage ?? node.textContent.trim()));
+  assert.deepEqual(order.slice(1), ['read-file', '已读取说明，接下来修改示例。', 'edit-file', '图片-1.gif', '示例已经修改。']);
+  assert.equal(await reply.locator('details .chat-image').count(), 0);
+  await reply.locator('[data-chat-image="图像"]').scrollIntoViewIfNeeded();
+  if (workspaceThumbnails) {
+    assert.equal(await reply.getByRole('img', { name: '图像', exact: true }).evaluate(async img => { await img.decode(); return img.naturalWidth; }), 2);
+  } else {
+    // Linux without Pillow has no thumbnail converter: the image stays a clickable placeholder.
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.equal(await reply.getByRole('button', { name: '放大 图像', exact: true }).locator('img').count(), 0);
+    console.log('NOTE: python3 Pillow is not installed, so workspace thumbnails were checked as placeholders.');
+  }
+  assert.match(order[0], /打开/);
+  assert.equal(await reply.locator('[data-tool-id="read-file"][data-tool-state="completed"]').evaluate(node => node.open), true);
+  const editCard = reply.locator('[data-tool-id="edit-file"]');
+  assert.equal(await editCard.evaluate(node => node.open), false, 'A native Edit patch arrives without opening the card');
+  await editCard.locator('summary').click();
+  const edit = editCard.getByRole('region', { name: '编辑差异' });
+  await edit.waitFor();
+  assert.match(await edit.innerText(), /已应用的修改/);
+  assert.match(await edit.innerText(), /\+export const answer = 42/);
+  assert.match(await page.locator('.user-text').last().innerText(), /<literal>/);
+  const drawer = page.getByRole('complementary', { name: '文件预览' });
+  const close = () => drawer.getByRole('button', { name: '关闭文件预览' }).click();
+  const pick = (name) => drawer.getByRole('button', { name, exact: true }).click();
+  const userText = page.locator('.user-text').last();
+  const panelPath = 'src/panels/ProxyPanel.tsx';
+  await userText.locator(`[data-file-path="${panelPath}"]`).waitFor();
+  for (const source of [reply, userText]) {
+    for (const term of [...noise.split(' '), 'index.ts', 'missing.txt', '失效']) {
+      assert.equal(await source.getByRole('button', { name: term, exact: true }).count(), 0, `Unverified text must not link: ${term}`);
+    }
+  }
+  // An existing file outside the folder, named explicitly, links and opens without a consent dialog.
+  const outsideReal = await realpath(outside); // macOS: /var is /private/var
+  assert.equal(await reply.locator(`[data-file-path="${outsideReal}"]`).count(), 2, 'the Markdown link and the bare absolute path');
+  await reply.getByRole('button', { name: '跨目录', exact: true }).click();
+  await drawer.getByText('private outside fixture').waitFor();
+  assert.equal(await drawer.getAttribute('data-artifact-path'), outsideReal);
+  await close();
+  const prose = reply.locator('p').filter({ hasText: '改了ProxyPanel.tsx和index.ts。' });
+  await prose.getByRole('button', { name: 'ProxyPanel.tsx', exact: true }).nth(1).waitFor();
+  assert.equal(await prose.getByRole('button', { name: '中文ProxyPanel.tsx', exact: true }).getAttribute('data-file-path'), 'src/panels/中文ProxyPanel.tsx');
+  const literal = reply.locator('pre code');
+  await literal.getByRole('button', { name: 'ProxyPanel.tsx', exact: true }).click();
+  await drawer.getByText('export const located = true;').waitFor();
+  assert.equal(await drawer.getAttribute('data-artifact-path'), panelPath);
+  await close();
+  await reply.locator('p code').getByRole('button', { name: 'ProxyPanel.tsx:42' }).waitFor();
+  assert.equal(await literal.locator('[data-file-path="src/index.ts"]').count(), 1, 'Explicit ./src/index.ts is exact even when index.ts is ambiguous');
+  const block = reply.locator('.code-block');
+  assert.deepEqual(await block.locator('pre').evaluate(pre => ({ wrap: getComputedStyle(pre).whiteSpace, fits: pre.scrollWidth <= pre.clientWidth + 1 })),
+    { wrap: 'pre-wrap', fits: true }, 'Code lines fold inside the column');
+  await block.hover();
+  const copyCode = block.getByRole('button', { name: '复制代码', exact: true });
+  await copyCode.evaluate(node => new Promise(resolve => {
+    const check = () => getComputedStyle(node).opacity === '1' ? resolve() : requestAnimationFrame(check); check();
+  }));
+  await copyCode.click();
+  await block.getByRole('button', { name: '已复制代码', exact: true }).waitFor();
+  assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), 'import "./src/index.ts"; // ProxyPanel.tsx index.ts ' + noise);
+  await edit.getByRole('button', { name: 'preview files/demo.ts' }).click();
+  await drawer.getByText('export const answer = 42;', { exact: true }).waitFor();
+  const code = drawer.locator('.code-preview[data-language="typescript"][data-line-numbers="true"][data-wrap="true"]');
+  await code.locator('.hljs-keyword').first().waitFor();
+  assert.deepEqual(await code.locator('.hljs-keyword').allTextContents(), ['export', 'const']);
+  assert.equal(await code.locator('.hljs-number').textContent(), '42');
+  assert.equal(await code.locator('.code-line').count(), 1, 'The final newline adds no empty line');
+  // The left edge resizes the panel like the sidebar; the width is kept for the next file.
+  const edge = drawer.getByRole('separator', { name: '调整文件预览宽度' });
+  const initialWidth = (await drawer.boundingBox()).width;
+  const grip = await edge.boundingBox();
+  await page.mouse.move(grip.x + 3, grip.y + grip.height / 2);
+  await page.mouse.down();
+  // The preview sits in the chat pane, which keeps 500px for the chat.
+  await page.mouse.move(grip.x - 57, grip.y + grip.height / 2, { steps: 6 });
+  await page.mouse.up();
+  const widened = (await drawer.boundingBox()).width;
+  assert.ok(Math.abs(widened - initialWidth - 60) <= 2, `dragged ${initialWidth} → ${widened}`);
+  await close();
+  await edit.getByRole('button', { name: 'preview files/demo.ts' }).click();
+  await drawer.getByText('export const answer = 42;', { exact: true }).waitFor();
+  assert.ok(Math.abs((await drawer.boundingBox()).width - widened) <= 1, 'the width survives reopening');
+  await edge.focus();
+  await page.keyboard.press('ArrowRight');
+  assert.ok(Math.abs((await drawer.boundingBox()).width - (widened - 24)) <= 1, 'arrow keys resize too');
+  await edge.dblclick();
+  assert.ok(Math.abs((await drawer.boundingBox()).width - initialWidth) <= 1, 'double click restores the default width');
+  await page.screenshot({ path: path.join(results, 'desktop-edit-file-preview.png') });
+  await close();
+  const tool = page.locator('[data-tool-id="read-file"]');
+  await tool.locator('summary [data-file-path="NOTICE"]').click();
+  await drawer.getByText('extensionless fixture').waitFor();
+  await close();
+  if (!await tool.evaluate(node => node.open)) await tool.locator('summary').click();
+  await tool.locator('[data-file-path="preview files/guide.md"]').click();
+  await drawer.getByRole('heading', { name: 'Lectern 手册' }).waitFor();
+  await pick('源码');
+  await drawer.locator('.code-preview[data-language="markdown"]').getByText('# Lectern 手册', { exact: true }).waitFor();
+  await pick('渲染');
+  await pick('源文件');
+  await drawer.getByText('export const answer = 42;', { exact: true }).waitFor();
+  await pick('返回上一项');
+  await drawer.getByRole('heading', { name: 'Lectern 手册' }).waitFor();
+  await close();
+  await page.getByRole('button', { name: '文件夹', exact: true }).click();
+  await pick('pixel.gif');
+  await page.waitForFunction(() => document.querySelector('.artifact-image img')?.naturalWidth === 2);
+  await pick('打开上级目录');
+  // Real VP8, H.264 and MP3 files play from memory in the native player.
+  for (const [name, tag] of [['tiny.webm', 'video'], ['tiny.mp4', 'video'], ['tiny.mp3', 'audio']]) {
+    await pick(name);
+    const player = drawer.locator(`.artifact-content ${tag}`);
+    await player.waitFor();
+    const loaded = await player.evaluate(media => new Promise(resolve => {
+      const done = () => resolve({ ready: media.readyState >= 1, width: media.videoWidth ?? 0, duration: Math.round(media.duration * 10) / 10, blob: media.src.startsWith('blob:') });
+      if (media.readyState >= 1) done(); else { media.addEventListener('loadedmetadata', done, { once: true }); media.addEventListener('error', () => resolve({ error: media.error?.code }), { once: true }); }
+    }));
+    assert.deepEqual(loaded, tag === 'video' ? { ready: true, width: 16, duration: 1, blob: true } : { ready: true, width: 0, duration: loaded.duration, blob: true }, name);
+    if (tag === 'audio') assert.ok(loaded.duration >= 0.4 && loaded.duration <= 0.7, `${name} duration ${loaded.duration}`);
+    assert.equal(await drawer.getAttribute('data-artifact-kind'), tag);
+    await pick('打开上级目录');
+  }
+  await pick('sample.docx');
+  await drawer.getByText('离线文档正文').waitFor();
+  await pick('打开上级目录');
+  await pick('unknown.blob');
+  await drawer.getByText('此格式暂不支持预览').waitFor();
+  // Only the native picker is replaced. IPC, target read, write and atomic rename stay live.
+  await app.evaluate(({ dialog }) => { dialog.showSaveDialog = async () => ({ canceled: true, filePath: '' }); });
+  await pick('下载原文件');
+  const downloadPath = path.join(profile, 'saved unknown.blob');
+  await app.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }); }, downloadPath);
+  await pick('下载原文件');
+  await drawer.getByText('已保存').waitFor();
+  assert.deepEqual(await readFile(downloadPath), bytes);
+  await close();
+  const attached = page.getByRole('button', { name: '放大 粘贴图片.gif', exact: true });
+  await attached.scrollIntoViewIfNeeded();
+  await attached.click();
+  const enlarged = page.getByRole('dialog', { name: '图片预览 · 粘贴图片.gif' });
+  const enlargedImage = enlarged.getByRole('img', { name: '粘贴图片.gif', exact: true });
+  await enlargedImage.evaluate(async img => { await img.decode(); });
+  assert.ok((await enlargedImage.boundingBox()).width > (await attached.boundingBox()).width);
+  await enlarged.getByRole('button', { name: '原始尺寸' }).click();
+  assert.equal((await enlargedImage.boundingBox()).width, 2);
+  await app.evaluate(({ clipboard }) => {
+    clipboard.write = async ([item]) => {
+      const png = await item.getType('image/png');
+      globalThis.copiedChatPng = Buffer.from(await png.arrayBuffer());
+    };
+  });
+  await enlargedImage.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '复制图片' }).click();
+  const copied = await app.evaluate(async ({ nativeImage }) => {
+    for (let i = 0; i < 80 && !globalThis.copiedChatPng; i++) await new Promise(resolve => setTimeout(resolve, 50));
+    const img = nativeImage.createFromBuffer(globalThis.copiedChatPng);
+    return { size: img.getSize(), pixels: [...img.toBitmap()] };
+  });
+  assert.deepEqual(copied, { size: { width: 2, height: 1 }, pixels: [0,0,255,255,0,0,255,255] });
+  await page.keyboard.press('Escape');
+  await enlarged.waitFor({ state: 'detached' });
+  await attached.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: '下载原图' }).click();
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !(await readFile(downloadPath)).equals(image)) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(await readFile(downloadPath), image);
+  await page.getByRole('button', { name: 'PDF', exact: true }).click();
+  await drawer.locator('iframe').waitFor();
+  // Check actual red page pixels in the native PDF surface, not the existence of an iframe or PDF toolbar.
+  const rect = await drawer.locator('iframe').boundingBox();
+  assert.ok(rect);
+  let red = 0;
+  for (let i = 0; i < 40 && red < 700; i++) {
+    red = await app.evaluate(async ({ BrowserWindow }, rect) => {
+      const image = await BrowserWindow.getAllWindows()[0].webContents.capturePage(rect);
+      const bitmap = image.toBitmap();
+      let count = 0;
+      for (let i = 0; i < bitmap.length; i += 16) if (bitmap[i + 2] > 230 && bitmap[i + 1] < 30 && bitmap[i] < 30) count++;
+      return count;
+    }, Object.fromEntries(Object.entries(rect).map(([k, n]) => [k, Math.floor(n)])));
+    if (red < 700) await page.waitForTimeout(150);
+  }
+  assert.ok(red >= 700, 'Native PDF viewer rendered the red vector page');
+  await page.screenshot({ path: path.join(results, 'desktop-pdf-preview.png') });
+  await close();
+  await rm(path.join(cwd, 'volatile.txt'));
+  await page.getByRole('button', { name: 'volatile.txt', exact: true }).click();
+  await drawer.getByText('无法打开此项').waitFor();
+  await writeFile(path.join(cwd, 'volatile.txt'), 'now exists');
+  await pick('重试');
+  await drawer.getByText('now exists').waitFor();
+  await close();
+  await page.getByRole('button', { name: '浏览工作目录' }).click();
+  await pick('paged');
+  await drawer.getByRole('button', { name: '000', exact: true }).waitFor();
+  assert.equal(await drawer.locator('.artifact-entry').count(), 250);
+  await pick('加载更多');
+  await drawer.getByRole('button', { name: '250', exact: true }).waitFor();
+  assert.equal(await drawer.locator('.artifact-entry').count(), 251);
+  await page.keyboard.press('Escape');
+  await drawer.waitFor({ state: 'detached' });
+  // Control response order after the filesystem round trips to make late responses deterministic.
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('lectern:previewArtifact');
+    ipcMain.handle('lectern:previewArtifact', async (_event, _id, path) => {
+      const reply = { path, kind: 'text', name: path, text: 'response for ' + path, mime: 'text/plain', truncated: false, size: 3 };
+      if (path !== 'volatile.txt') return reply;
+      await new Promise(resolve => { globalThis.finishDelayedArtifact = resolve; });
+      return reply;
+    });
+  });
+  const delayed = page.getByRole('button', { name: 'volatile.txt', exact: true });
+  await delayed.click();
+  await drawer.getByText('正在读取…').waitFor();
+  await edit.getByRole('button', { name: 'preview files/demo.ts' }).click();
+  await drawer.getByText('response for preview files/demo.ts').waitFor();
+  await app.evaluate(() => globalThis.finishDelayedArtifact());
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.doesNotMatch(await drawer.innerText(), /response for volatile/);
+  await delayed.click();
+  await drawer.getByText('正在读取…').waitFor();
+  await page.locator('.session-row.active').click();
+  await drawer.waitFor({ state: 'detached' });
+  await app.evaluate(() => globalThis.finishDelayedArtifact());
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await drawer.count(), 0);
+  await verifyToolGroups(page, row, appendRows);
+  assert.deepEqual(remoteRequests, [], 'Transcript and Markdown links never fetch external resources');
+  assert.deepEqual(browserErrors, []);
+  console.log('PASS: offline Electron mixed tool and peer groups, delivery order, recorded line counts, collapsed Edit diffs, delayed results, persisted reply detail and reset, file links, Markdown navigation, directory pagination, GIF, PDF pixels, embedded attachment and binary save.');
+} finally {
+  await app?.close();
+  await rm(profile, { recursive: true, force: true });
+}

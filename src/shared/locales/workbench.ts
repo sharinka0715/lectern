@@ -1,0 +1,30 @@
+import type { Namespace } from './types';
+
+/** Window chrome: title bar, split panes, sidebar resizing, machine names. */
+export const workbench = {
+  local: ['本地', 'Local'],
+  toggleDirection: ['切换分屏方向', 'Switch split direction'],
+  closePane: ['关闭此分屏', 'Close this pane'],
+  openSideBySide: ['并排打开对话', 'Open conversations side by side'],
+  resizeSplit: ['调整分屏比例', 'Resize panes'],
+  alreadyShown: ['这个对话已经在显示，拖其他对话到这里才能分屏', 'This conversation is already shown; drag another one here to split'],
+  edgeLeft: ['左侧', 'left'],
+  edgeRight: ['右侧', 'right'],
+  edgeTop: ['上方', 'top'],
+  edgeBottom: ['下方', 'bottom'],
+  mergeSingle: ['合并为单屏', 'Merge into one pane'],
+  alreadyHere: ['已在{edge}', 'Already on the {edge}'],
+  openAt: ['{edge}打开', 'Open on the {edge}'],
+  splitAt: ['{edge}分屏', 'Split to the {edge}'],
+  collapseSidebar: ['收起侧栏', 'Hide sidebar'],
+  expandSidebar: ['展开侧栏', 'Show sidebar'],
+  titlebar: ['窗口顶栏', 'Window title bar'],
+  back: ['后退', 'Back'],
+  forward: ['前进', 'Forward'],
+  switchFolder: ['切换工作目录', 'Switch folder'],
+  chooseFolder: ['选择工作目录', 'Choose a folder'],
+  folders: ['工作目录', 'Folders'],
+  resizeSidebar: ['调整侧栏宽度', 'Resize sidebar'],
+  pixels: ['{width} 像素', '{width} pixels'],
+  resizeSidebarTitle: ['拖动或用左右方向键调整宽度，双击恢复默认', 'Drag or use the left and right arrow keys to resize; double-click to reset'],
+} as const satisfies Namespace;

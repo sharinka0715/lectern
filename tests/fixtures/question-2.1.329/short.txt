@@ -1,0 +1,30 @@
+
+ ▐▛███▛█   Claude Code v2.1.329
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ 请问我
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Drink
+
+Which drink should we serve?
+
+❯ 1. Tea
+     A warm infusion.
+  2. Juice
+     A cold drink.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+

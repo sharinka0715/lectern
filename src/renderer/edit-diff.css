@@ -1,0 +1,15 @@
+.edit-diff { min-width:0; margin:6px 0 10px; border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:var(--text-ui); background:var(--surface-raised); }
+.edit-diff header { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:8px 10px; }
+.edit-diff header button { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:0; background:transparent; color:var(--accent); cursor:pointer; text-align:left; font:inherit; }
+.edit-diff header button:hover { text-decoration:underline; }
+.edit-diff header span, .edit-diff-note { color:var(--muted); font-size:var(--text-label); }
+.edit-diff header span { flex-shrink:0; }
+.edit-diff-note, .edit-diff-range { padding:4px 10px; }
+.edit-diff-hunk { overflow:auto; }
+.edit-diff-range, .edit-diff-line { font:var(--text-label)/1.6 var(--font-mono); }
+.edit-diff-range { background:var(--surface-muted); color:var(--text); }
+.edit-diff-line { display:grid; grid-template-columns:4ch 4ch minmax(0,1fr); column-gap:5px; width:100%; padding:0 4px; box-sizing:border-box; }
+.edit-diff-line span { color:var(--muted); user-select:none; text-align:right; }
+.edit-diff-line code { min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:4; font:inherit; color:var(--text); padding:0 4px; }
+.edit-diff-line.added { background:var(--success-bg); } .edit-diff-line.removed { background:var(--danger-bg); }
+.edit-diff-more { width:100%; cursor:pointer; background:transparent; border:0; padding:6px; color:inherit; font:inherit; }

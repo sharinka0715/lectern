@@ -1,0 +1,34 @@
+
+ ▐▛███▛█   Claude Code v2.1.329
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ 运行工作流
+
+● Workflow(Map two folders)
+  ⎿  Running in background · /workflows to monitor and save · medium size (/config)
+
+● 工作流已在后台运行。
+
+✻ Waiting for 1 dynamic workflow to finish
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)
+
+  ◯ demo-map  ▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱  0/4 · 11s

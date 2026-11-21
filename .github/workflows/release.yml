@@ -1,0 +1,193 @@
+# Lectern release: push a tag vX.Y.Z whose version matches package.json.
+# Pushing a tag is the only automatic trigger of any workflow in this repository.
+# The run first calls the full tests (ci.yml) and the Claude Code compatibility
+# matrix (claude-code-compat.yml); only when both pass does it build installers on
+# macOS (DMG/ZIP, arm64 and x64), Windows (NSIS x64) and Linux (AppImage and DEB
+# x64), write SHA256SUMS and publish a GitHub Release (not a draft, so the in-app
+# update check finds it) whose body is that version's entry in
+# src/shared/release-notes.ts. The installers also stay as Actions artifacts.
+#
+# Optional signing secrets (without them the run still succeeds: macOS gets an ad
+# hoc signature without notarization and Windows stays unsigned):
+#   MAC_CERTIFICATE, MAC_CERTIFICATE_PASSWORD   Developer ID Application .p12 (base64) and its password
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   notarization (used only with MAC_CERTIFICATE)
+#   WIN_CERTIFICATE, WIN_CERTIFICATE_PASSWORD   Authenticode .pfx (base64) and its password
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish again (e.g. v0.2.0)
+        required: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  LECTERN_LOCALE: zh-CN
+
+jobs:
+  verify:
+    name: Verify version and release notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Tag must match package.json
+        id: version
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
+      - name: Release notes from src/shared/release-notes.ts
+        run: npx tsx scripts/release-notes-md.ts "$TAG" > release-notes.md && cat release-notes.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  # The full tests and the compatibility matrix run once per tag, here; neither
+  # workflow has a push trigger of its own.
+  tests:
+    name: Tests
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+      # The build job below packages and launches every platform itself.
+      package: false
+
+  compat:
+    name: Claude Code compatibility
+    needs: verify
+    uses: ./.github/workflows/claude-code-compat.yml
+    with:
+      ref: ${{ inputs.tag || github.ref_name }}
+
+  build:
+    name: Installers (${{ matrix.name }})
+    needs: [verify, tests, compat]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            target: --mac --arm64 --x64
+          - name: Windows
+            os: windows-latest
+            target: --win --x64
+          - name: Linux
+            os: ubuntu-latest
+            target: --linux --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Linux packaging and smoke-test tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: npm ci
+      - run: npm run build
+      - name: Package installers
+        shell: bash
+        env:
+          LECTERN_PACKAGE_OUT: release-out
+          MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          NOTARIZE_APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARIZE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          NOTARIZE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CERTIFICATE: ${{ secrets.WIN_CERTIFICATE }}
+          WIN_CERTIFICATE_PASSWORD: ${{ secrets.WIN_CERTIFICATE_PASSWORD }}
+        run: bash scripts/ci-package.sh ${{ matrix.target }}
+      - name: Launch the packaged app
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s '-screen 0 1600x1000x24' node scripts/smoke-package.mjs release-out
+          else
+            node scripts/smoke-package.mjs release-out
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installers-${{ matrix.name }}
+          path: release-out/assets/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installers-*
+          path: assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: .
+      - name: Write and verify SHA256SUMS
+        run: node scripts/release-checksums.mjs assets
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          product=$(node -p 'require("./package.json").productName')
+          # A normal (not draft) release; GitHub's "latest" is what the update check reads.
+          flags=(--latest)
+          if [ "$PRERELEASE" = true ]; then flags=(--prerelease); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+            gh release edit "$TAG" --title "$product $VERSION" --notes-file release-notes.md --draft=false "${flags[@]}"
+          else
+            gh release create "$TAG" assets/* --verify-tag --title "$product $VERSION" --notes-file release-notes.md "${flags[@]}"
+          fi

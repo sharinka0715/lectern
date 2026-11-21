@@ -1,0 +1,74 @@
+.turn-progress {
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 0 .45rem;
+  color: var(--muted);
+  font-size: var(--text-label);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+/* A soft pill above the input box: the native verb shimmers like the TUI's,
+   time and tokens follow as quiet figures separated by dots. */
+.turn-progress-live,
+.turn-progress-receipt > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .1rem .55rem;
+}
+.turn-progress-live {
+  width: fit-content;
+  max-width: 100%;
+  margin-left: 6px;
+  padding: 3px 13px 3px 9px;
+  /* Warm sand with a terracotta pulse: the app's own colours, not a blue tint. */
+  border: 1px solid color-mix(in srgb, var(--action) 16%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bubble) 55%, var(--surface-raised));
+  box-shadow: 0 1px 2px rgb(60 44 22 / 5%);
+}
+.turn-progress-dots {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  fill: var(--action);
+  animation: turn-progress-orbit 1.5s linear infinite;
+}
+.turn-progress-label, .turn-progress-detail { overflow-wrap: anywhere; }
+.turn-progress-label {
+  font-weight: 600;
+  color: var(--secondary-text);
+  background: linear-gradient(90deg, var(--secondary-text) 35%, var(--action) 50%, var(--secondary-text) 65%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: turn-progress-shimmer 2.6s linear infinite;
+}
+.turn-progress-count { display: inline-flex; align-items: center; gap: .55rem; white-space: nowrap; color: var(--muted); }
+.turn-progress-count::before, .turn-progress-detail::before {
+  content: "";
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .55;
+}
+.turn-progress-detail { display: inline-flex; align-items: center; gap: .55rem; color: var(--muted); }
+.turn-progress-live[data-turn-progress="compacting"] { border-color: color-mix(in srgb, var(--signal) 28%, var(--line)); background: color-mix(in srgb, var(--signal) 7%, var(--surface-raised)); }
+.turn-progress-live[data-turn-progress="compacting"] .turn-progress-dots { fill: var(--signal); }
+.turn-progress-receipt > summary { width: fit-content; cursor: pointer; list-style: none; }
+.turn-progress-receipt > summary::-webkit-details-marker { display: none; }
+.turn-progress-receipt > summary::before {
+  content: '';
+  width: .36em;
+  height: .36em;
+  border: solid currentColor;
+  border-width: 1px 1px 0 0;
+  transform: rotate(45deg);
+}
+.turn-progress-receipt[open] > summary::before { transform: rotate(135deg); }
+.turn-progress-facts { padding: .2rem 0 .1rem .9rem; font-size: var(--text-meta); }
+.turn-progress-facts p { margin: .18rem 0; }
+@keyframes turn-progress-orbit { to { transform: rotate(360deg); } }
+@keyframes turn-progress-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .turn-progress-dots, .turn-progress-label { animation: none; } }

@@ -1,0 +1,126 @@
+.artifact-link { color: var(--accent); padding: 0; background: transparent; display: inline; font: inherit; text-align: inherit; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; overflow-wrap: anywhere; cursor: pointer; }
+.artifact-link:hover { color: var(--accent); text-decoration-color: currentColor; }
+.artifact-link svg { vertical-align: -2px; margin-right: 4px; }
+.tool-block summary .artifact-link { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 7px 0; }
+.artifact-attachments .artifact-link { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: 8px; font-size: var(--text-label); text-decoration: none; }
+.chat-image { display: inline-block; vertical-align: top; max-width: 100%; margin: 2px 6px 2px 0; font-size: var(--text-body); line-height: var(--chat-line-height, 1.45); }
+/* A fixed height (about two lines) and the image's own width: no letterboxing, and
+   several images in a row line up. A square placeholder until the thumbnail arrives. */
+.chat-image-open { display: flex; align-items: center; justify-content: center; height: 2lh; width: 2lh; max-width: 100%; overflow: hidden; padding: 0; font: inherit; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 7px; color: var(--muted); cursor: zoom-in; }
+.chat-image-open:has(> img) { width: auto; background: transparent; }
+.chat-image-status { margin: auto; padding: 12px; color: var(--secondary-text); }
+.chat-image-open img { display: block; width: auto; height: 100%; max-width: 100%; min-height: 0; object-fit: contain; }
+.chat-image-menu { position: fixed; inset: auto; margin: 0; padding: 5px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); border-radius: 10px; box-shadow: var(--shadow-pop); }
+.chat-image-menu button { display: flex; align-items: center; gap: 9px; padding: 7px 12px; width: 100%; background: transparent; color: inherit; border-radius: 4px; font: inherit; font-size: var(--text-ui); }
+.chat-image-menu button:hover, .chat-image-menu button:focus-visible { background: var(--hover); }
+.chat-image-dialog[open] { display: flex; flex-direction: column; width: min(1100px, 94vw); height: 88vh; max-width: 96vw; max-height: 94vh; padding: 0; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-modal); overflow: hidden; }
+.chat-image-dialog::backdrop { background: rgb(30 24 16 / 55%); }
+.chat-image-dialog-bar { flex: none; display: flex; align-items: center; padding: 8px 12px; gap: 6px; border-bottom: 1px solid var(--line); }
+.chat-image-dialog-bar > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-image-canvas { flex: 1; min-height: 0; display: flex; overflow: auto; }
+.chat-image-canvas > button { width: 100%; height: 100%; padding: 0; margin: auto; background: transparent; cursor: zoom-in; }
+.chat-image-canvas > button img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.chat-image-loading { display: grid; justify-items: center; gap: 8px; max-width: 100%; }
+.chat-image-loading img { max-width: 100%; height: auto; }
+.chat-image-canvas[data-actual-size="true"] button { width: max-content; height: max-content; flex-shrink: 0; cursor: zoom-out; }
+.chat-image-canvas[data-actual-size="true"] img { width: auto; height: auto; max-width: none; }
+.chat-image-error { display: block; padding: 4px; color: var(--danger); font-size: var(--text-label); }
+.artifact-drawer { position: relative; width: clamp(340px, 40cqw, 590px); max-width: max(300px, calc(100% - 500px)); flex-shrink: 0; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); color: var(--text); min-width: 0; overflow: hidden; }
+.artifact-separator { position: absolute; inset: 0 auto 0 0; width: 8px; z-index: 6; cursor: col-resize; touch-action: none; user-select: none; -webkit-app-region: no-drag; outline: none; }
+.artifact-separator::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--accent); opacity: 0; transition: opacity .15s ease; }
+.artifact-separator:hover::after, .artifact-separator:focus-visible::after, .artifact-separator[data-dragging]::after { opacity: .7; }
+/* Embedded viewers would swallow the pointer while the edge is dragged. */
+.artifact-drawer:has(.artifact-separator[data-dragging]) { user-select: none; }
+.artifact-drawer:has(.artifact-separator[data-dragging]) :is(iframe, video, audio) { pointer-events: none; }
+.artifact-bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px 0 18px; flex-shrink: 0; border-bottom: 1px solid var(--line); font-size: var(--text-ui); font-weight: 600; }
+.artifact-bar button { -webkit-app-region: no-drag; }
+.artifact-bar button:last-child { margin-left: auto; }
+.artifact-drawer button:disabled { opacity: .45; }
+.artifact-heading { padding: 18px 20px 13px; }
+.artifact-location { display: flex; align-items: baseline; gap: 9px; font-size: var(--text-meta); color: var(--secondary-text); overflow-wrap: anywhere; }
+.artifact-location button { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: inherit; font: inherit; padding: 0; }
+.artifact-heading h2 { margin: 7px 0 4px; font-size: 1.125rem; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.artifact-path { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.artifact-path code { font: var(--text-meta)/1.5 var(--font-mono); overflow-wrap: anywhere; color: var(--secondary-text); max-height: 48px; overflow: auto; }
+.artifact-path button { flex-shrink: 0; }
+.artifact-meta { display: flex; align-items: center; min-height: 36px; padding: 4px 20px; gap: 7px; color: var(--secondary-text); font-size: var(--text-label); border-block: 1px solid var(--line); }
+.artifact-save { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; height: 28px; color: var(--text); background: var(--surface-raised); border: 1px solid var(--line-strong); padding: 0 10px; font-size: var(--text-meta); font-weight: 560; border-radius: 7px; }
+.artifact-save:hover:not(:disabled) { background: var(--hover); }
+.artifact-content { overflow: auto; min-height: 0; flex: 1; }
+.artifact-directory { padding: 7px 10px; }
+.artifact-entry { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 7px 10px; color: var(--text); text-align: left; background: transparent; border-radius: 7px; }
+.artifact-entry:hover { background: var(--hover); }
+.artifact-entry span { flex: 1; font-size: var(--text-ui); overflow-wrap: anywhere; }
+.artifact-entry svg { flex-shrink: 0; color: var(--secondary-text); }
+.artifact-entry .artifact-folder-icon { color: var(--accent); }
+.artifact-entry svg:last-child { color: var(--muted); }
+/* Preview type sizes come from Settings → 文件预览 (absolute px, like the tool summary). */
+.artifact-text { margin: 0; padding: 14px 18px; font: var(--preview-code-font-size, 13px)/var(--preview-code-line-height, 1.6) var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; tab-size: 4; }
+.artifact-document { font-family: inherit; font-size: var(--preview-text-font-size, 15px); line-height: var(--preview-text-line-height, 1.65); }
+.markdown.artifact-markdown { padding: 16px 20px; font-size: var(--preview-text-font-size, 15px); line-height: var(--preview-text-line-height, 1.65); }
+.artifact-markdown > :first-child { margin-top: 0; }
+.artifact-markdown h1 { font-size: 1.45em; }
+.artifact-markdown h2 { font-size: 1.25em; }
+.artifact-markdown h3 { font-size: 1.1em; }
+.artifact-markdown h4 { font-size: 1em; }
+.artifact-markdown pre { font-size: var(--preview-code-font-size, 13px); line-height: var(--preview-code-line-height, 1.6); }
+.artifact-markdown table { font-size: .93em; }
+.artifact-image { padding: 14px; display: grid; place-items: center; }
+.artifact-image img { max-width: 100%; height: auto; }
+.artifact-video { padding: 14px; display: grid; place-items: center; }
+.artifact-video video { display: block; max-width: 100%; max-height: calc(100vh - 250px); border-radius: 8px; background: #000; }
+.artifact-audio { padding: 26px 20px; }
+.artifact-audio audio { display: block; width: 100%; }
+.artifact-view-switch { display: inline-flex; margin-left: auto; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); }
+.artifact-view-switch button { height: 22px; padding: 0 9px; border-radius: 6px; background: transparent; color: var(--secondary-text); font-size: var(--text-meta); }
+.artifact-view-switch button:hover { color: var(--text); }
+.artifact-view-switch button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+.artifact-view-switch + .artifact-save { margin-left: 6px; }
+
+/* Source view. Each line is its own box so a wrapped line keeps one number. */
+.code-preview { white-space: pre; overflow-wrap: normal; overflow: auto; }
+.code-preview code { display: block; width: max-content; min-width: 100%; font: inherit; color: var(--text); counter-reset: line; }
+.code-preview[data-wrap="true"] { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-preview[data-wrap="true"] code { width: auto; }
+.code-line { display: block; }
+.code-preview[data-line-numbers="true"] .code-line { display: grid; grid-template-columns: calc(var(--line-digits, 2) * 1ch + 14px) minmax(0, 1fr); }
+.code-preview[data-line-numbers="true"] .code-line::before {
+  counter-increment: line;
+  content: counter(line);
+  position: sticky;
+  left: 0;
+  padding-right: 14px;
+  text-align: right;
+  color: var(--muted);
+  background: var(--surface);
+  user-select: none;
+}
+.code-preview[data-line-numbers="true"] { padding-left: 8px; }
+.code-preview .hljs-comment, .code-preview .hljs-quote { color: var(--code-comment); font-style: italic; }
+.code-preview .hljs-keyword, .code-preview .hljs-selector-tag, .code-preview .hljs-literal, .code-preview .hljs-doctag, .code-preview .hljs-section { color: var(--code-keyword); }
+.code-preview .hljs-string, .code-preview .hljs-regexp, .code-preview .hljs-char, .code-preview .hljs-subst, .code-preview .hljs-symbol, .code-preview .hljs-link { color: var(--code-string); }
+.code-preview .hljs-number, .code-preview .hljs-meta, .code-preview .hljs-bullet, .code-preview .hljs-template-tag, .code-preview .hljs-template-variable { color: var(--code-number); }
+.code-preview .hljs-title, .code-preview .hljs-function, .code-preview .hljs-name, .code-preview .hljs-selector-id { color: var(--code-title); }
+.code-preview .hljs-type, .code-preview .hljs-built_in, .code-preview .hljs-class, .code-preview .hljs-selector-class, .code-preview .hljs-tag { color: var(--code-type); }
+.code-preview .hljs-attr, .code-preview .hljs-attribute, .code-preview .hljs-variable, .code-preview .hljs-property, .code-preview .hljs-params, .code-preview .hljs-selector-attr, .code-preview .hljs-selector-pseudo { color: var(--code-attr); }
+.code-preview .hljs-meta .hljs-string, .code-preview .hljs-meta.hljs-string { color: var(--code-string); }
+.code-preview .hljs-addition { color: var(--code-string); background: var(--success-bg); }
+.code-preview .hljs-deletion { color: var(--code-keyword); background: var(--danger-bg); }
+.code-preview .hljs-emphasis { font-style: italic; }
+.code-preview .hljs-strong { font-weight: 650; }
+.artifact-content-pdf { display: flex; flex-direction: column; }
+.artifact-pdf { border: 0; width: 100%; min-height: 200px; flex: 1; }
+.artifact-loading, .artifact-unavailable { padding: 30px 20px; display: flex; gap: 8px; align-items: center; color: var(--secondary-text); font-size: var(--text-ui); }
+.artifact-unavailable { flex-direction: column; padding-top: 42px; text-align: center; }
+.artifact-unavailable p { margin: 0 0 5px; font-size: var(--text-label); line-height: 1.7; overflow-wrap: anywhere; }
+.artifact-note, .artifact-error { margin: 10px 14px; font-size: var(--text-label); line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+.artifact-error { color: var(--danger); }
+.artifact-more { margin: 10px 0; }
+.artifact-open .topbar { padding-inline: 16px; gap: 8px; }
+.artifact-open .toolbar-button > span { display: none; }
+/* Each split pane has its own preview. It docks beside the chat when the pane
+   leaves the chat 500px, otherwise it shows over the chat. */
+@container chatpane (max-width: 839px) {
+  .artifact-drawer { position: absolute; inset: 0 0 0 auto; width: min(470px, 86cqw); z-index: 45; box-shadow: var(--shadow-pop); }
+}
