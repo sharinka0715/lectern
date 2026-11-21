@@ -741,15 +741,20 @@ export const SCENARIOS = [
         await writeFile(file, pngSwatch());
         await ui.openDraft(folders.main.name);
         await page.locator('form.composer input.composer-file-input').setInputFiles(file);
-        await page.waitForFunction(selector => document.querySelector(selector)?.value.includes('swatch.png'), sel.composer, { timeout: 20_000 });
-        const draft = await page.locator(sel.composer).inputValue();
-        await page.locator(sel.composer).fill(`${draft.trim()} What is in this picture? ccm:image`);
+        // The file shows as a card above the text; the text box keeps only the user's words.
+        await page.waitForFunction(() => {
+          const cards = [...document.querySelectorAll('.composer-attachments [data-attachment-card]')];
+          return cards.some(card => card.textContent.includes('swatch.png') || card.dataset.tip?.includes('swatch.png'))
+            && !document.querySelector('.composer-attachments [data-state="uploading"]');
+        }, null, { timeout: 20_000 });
+        assert.ok(!(await page.locator(sel.composer).inputValue()).includes('swatch.png'), 'the path stays out of the text box');
+        await page.locator(sel.composer).fill('What is in this picture? ccm:image');
         await page.locator(sel.send).click();
         await ui.waitReply('ccm-image-done', { timeout: 90_000 });
         const request = api.requests.find(r => r.script === 'image');
         ctx.note('images-in-request', request.images);
         assert.ok(request.images >= 1, 'Claude Code sent the image to the model');
-        await page.locator(`${sel.user} .chat-image, ${sel.user} [data-chat-image], ${sel.user} .artifact-link`).first().waitFor({ state: 'attached', timeout: 30_000 });
+        await page.locator(`${sel.user} .attachment-cards [data-attachment-card], ${sel.user} [data-attachment-chip]`).first().waitFor({ state: 'attached', timeout: 30_000 });
       });
     },
   },
