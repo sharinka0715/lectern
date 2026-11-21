@@ -1,7 +1,7 @@
 import { isDeepStrictEqual as equal } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseQuestionScreen } from '../core/question-screen';
-import { NavigationKeyNotSent } from './native-settings';
+import { NavigationKeyNotSent, TranscriptChangedNoKeys } from './native-settings';
 import { turnComposer } from '../core/turn-controls';
 import type { NativeQuestionScreen } from '../shared/native-question';
 import { isQuestionText, type QuestionAction } from '../shared/question-action';
@@ -100,7 +100,8 @@ export async function performQuestionAction(driver: QuestionDriver, paneId: stri
       catch (error) {
         if (!(error instanceof NavigationKeyNotSent)) throw error;
         awaitingEffect = false;
-        if (attempt === 2) throw error;
+        // The transcript changed: nothing was sent, and the same guard would refuse it again.
+        if (error instanceof TranscriptChangedNoKeys || attempt === 2) throw error;
         if (!equal((await inspect()).screen, current)) throw changed();
       }
     }

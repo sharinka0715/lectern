@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFile, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decodeFileWindow, liveTranscriptScript, transcriptVersionGuard } from '../src/backend/transcript-pages';
+import { decodeFileWindow, liveTranscriptScript, receiptOnFailure, transcriptVersionGuard } from '../src/backend/transcript-pages';
 
 const line = (record: object) => JSON.stringify(record) + '\n';
 // The one-time note Claude Code (sampled with 2.1.328) appends when the first command
@@ -45,5 +45,22 @@ test('the rewind guard still fails on new conversation records or a changed pref
     // Without a guard sample only the exact revision passes.
     await writeFile(file, prompt.repeat(20) + notice);
     assert.throws(() => execFileSync('sh', ['-c', transcriptVersionGuard([file], { ...cursor, guard: undefined })], { stdio: 'pipe' }));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('before a permission or question answer, a failed guard is a "not sent" receipt and nothing after it runs', { skip: process.platform === 'win32' }, async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-guard-')));
+  const file = join(root, 'session.jsonl');
+  try {
+    await writeFile(file, line({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: 'Prompt 0' } }).repeat(20));
+    const window = decodeFileWindow(execFileSync('sh', ['-c', liveTranscriptScript([file], undefined, true)]));
+    const cursor = { inode: window.inode, offset: window.end, stamp: window.stamp, guard: window.guard };
+    // As the input script runs it: under set -e, then the keys.
+    const run = () => execFileSync('sh', ['-c', `set -e\n${receiptOnFailure(transcriptVersionGuard([file], cursor), 'NOT_SENT_RECORD')}printf SENT`], { stdio: 'pipe' }).toString();
+    assert.equal(run(), 'SENT');
+    await appendFile(file, notice);
+    assert.equal(run(), 'SENT', 'a notice keeps the revision');
+    await appendFile(file, line({ parentUuid: 'x', isSidechain: false, type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_next', name: 'Bash', input: {} }] } }));
+    assert.equal(run(), 'NOT_SENT_RECORD', 'a new call: the receipt alone, exit status 0, no keys');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

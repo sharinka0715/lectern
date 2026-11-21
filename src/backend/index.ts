@@ -7,7 +7,7 @@ import { HistoryIndex } from './history-index';
 import { physicalStamp, selectPhysicalHistory } from './physical-history';
 import { PhysicalHistoryPages } from './physical-history-pages';
 import type { HistoryIndexDiskStore } from './history-index-disk-store';
-import { TranscriptPages, decodeFileWindow, liveTranscriptScript, transcriptVersionGuard, type HistoryCursor, type HistoryPage, type LiveCursor } from './transcript-pages';
+import { TranscriptPages, decodeFileWindow, liveTranscriptScript, receiptOnFailure, transcriptVersionGuard, type HistoryCursor, type HistoryPage, type LiveCursor } from './transcript-pages';
 export type { HistoryCursor, HistoryPage, LiveCursor } from './transcript-pages';
 import { WorkspaceArtifacts } from './artifacts';
 import { ComposerCompletions } from './composer-completions';
@@ -34,7 +34,7 @@ import { SESSION_UUID, decodePresence, matchPresence, presenceReadScript, presen
 import { decodeStatusLineSample, readStatusLineSample, statusLineLaunch, statusLineMarker, statusLineRegistration } from './native-status-line';
 import { paneNavigationStatus, type NavigationStatus, type ViewportObservation } from './session-status';
 import { KeybindingUnconfirmed, NativeKeybindings } from './native-keybindings';
-import { effortFrameGuard, NativeSettings, NavigationKeyNotSent, SessionSettingError, type SettingChoices, type SettingDriver } from './native-settings';
+import { effortFrameGuard, NativeSettings, NavigationKeyNotSent, SessionSettingError, TranscriptChangedNoKeys, type SettingChoices, type SettingDriver } from './native-settings';
 import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
@@ -65,6 +65,8 @@ const KEYS = new Set<string>(TERMINAL_KEYS);
 const tmuxKey = (key: TerminalKey) => key === 'Backspace' ? 'BSpace' : key === 'Delete' ? 'DC' : key;
 // tmux under a remote C locale replaces control-byte separators with underscores.
 const SEP = '|~lectern~|';
+// Suffix of an input's not-sent receipt when the transcript revision guard (not the screen) refused it.
+const RECORD_CHANGED = '_RECORD';
 const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_config_override}', '#{@lectern_fork_origin}', '#{pane_title}'].join(SEP);
 interface ProcessRow { pid: number; ppid: number; pgid: number; tpgid: number; args: string }
 interface InternalPane extends PaneInfo { forkOrigin?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
@@ -1441,6 +1443,7 @@ lectern_frame`;
       const { stdout } = await this.transport.run(workspace, script, { tag: input ? 'settings.input_observe' : 'settings.observe' });
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
       if (rejectedNavigation && stdout.equals(Buffer.from(rejectedNavigation))) throw new NavigationKeyNotSent();
+      if (rejectedNavigation && stdout.equals(Buffer.from(rejectedNavigation + RECORD_CHANGED))) throw new TranscriptChangedNoKeys();
       const split = stdout.indexOf(0), end = stdout.indexOf(boundary, split + 1);
       if (split < 0 || end < 0) throw new SessionSettingError(t('backend.settingScreenIncomplete'));
       const panes = this.parseProbe(workspace, location, stdout.subarray(split + 1, end));
@@ -1498,8 +1501,12 @@ ${this.nativeGuard(pane, location)}lectern_digest=$(${capture(paneId)}${tail}${f
       const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent
         ? 'LECTERN_MENU_KEY_NOT_SENT_' + randomUUID() : undefined;
       const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort' : 'exact';
+      // The transcript revision guard runs first: for a question or permission answer its
+      // failure is printed as a receipt that nothing was sent (TranscriptChangedNoKeys).
+      const recordGuard = !options.historyGuard ? '' : options.assertCurrent && rejectedNavigation
+        ? receiptOnFailure(options.historyGuard, rejectedNavigation + RECORD_CHANGED) : options.historyGuard;
       options.assertCurrent?.();
-      return read(settle, (options.historyGuard ?? '') + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
+      return read(settle, recordGuard + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
     };
     const submitCommand = async (command: string, paneId: string) => {
       kind = command.startsWith('/effort') ? 'effort' : 'model';

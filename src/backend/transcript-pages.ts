@@ -107,6 +107,12 @@ export function transcriptVersionGuard(files: string[], cursor: LiveCursor) {
   return `(\n${withTranscript(files, `[ "$inode" = ${q(cursor.inode)} ] && { { [ "$size" = ${cursor.offset} ] && [ "$stamp" = ${q(cursor.stamp)} ]; }${notices}; } || exit 1`, 'exit 1')}\n) || { echo ${q(stale())} >&2; exit 1; }\n`;
 }
 
+/** Run a guard before input; when it fails, print `receipt` and stop the script with
+ * status 0 (an explicit "nothing was sent" for the caller) instead of failing. */
+export function receiptOnFailure(guard: string, receipt: string) {
+  return `(\n${guard}) 2>/dev/null || { printf '%s' ${q(receipt)}; exit 0; }\n`;
+}
+
 function verified(cursor: HistoryCursor) {
   return `[ "$inode" = ${q(cursor.inode)} ] && [ "$size" -ge ${cursor.size} ] ${cursor.frozenStamp ? `&& [ "$size" = ${cursor.size} ] && [ "$stamp" = ${q(cursor.frozenStamp)} ]` : ''} ${cursor.guard ? `&& [ "$(guard_at ${cursor.size})" = ${q(cursor.guard)} ]` : ''} || { echo ${q(stale())} >&2; exit 1; }`;
 }

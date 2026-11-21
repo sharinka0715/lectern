@@ -709,6 +709,39 @@ test('explicit No stops watching the pre-history pane and stale trust completion
   } finally { await cleanup(); }
 });
 
+test('a notice appended under an unchanged permission dialog keeps the card and moves it to the newer record', async () => {
+  // Claude Code 2.1.321 can write "Auto mode can't check actions …" (system/informational) after the
+  // follow-up dialog is up. The card used to keep its first position, so the first click was refused.
+  const { readFileSync } = await import('node:fs');
+  const dialog = readFileSync(new URL('./fixtures/permission-2.1.328/bash.txt', import.meta.url), 'utf8');
+  const prompt = { type: 'user', uuid: 'u1', parentUuid: null, sessionId: 'chat', message: { role: 'user', content: 'run the bash step' } };
+  const call = { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 'chat', message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'echo hello > greeting.txt && ls' } }] } };
+  const notice = { parentUuid: 'a1', isSidechain: false, type: 'system', subtype: 'informational', level: 'warning', uuid: 'n1', sessionId: 'chat',
+    content: "Auto mode can't check actions in this session. Actions that need the check now ask for your approval." };
+  let records: unknown[] = [prompt, call], offset = 900;
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = { ...readResult(id, records), screen: dialog, viewport: dialog, panePid: 77, nativeStatus: 'waiting' as const, nativeWaitingFor: 'permission prompt',
+      transcriptPosition: { inode: '42', offset }, session: { ...readResult(id).session, status: 'waiting' as const } };
+    records = [];
+    return result;
+  });
+  const answered: unknown[][] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => { answered.push(args); };
+  const snapshots: SessionSnapshot[] = []; controller.on('snapshot', value => snapshots.push(value));
+  try {
+    await controller.watchSession('test', 'chat');
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.equal(card.toolUseId, 'toolu_bash');
+    records = [notice]; offset = 1793;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission!.token, card.token, 'the same dialog for the same call keeps its token');
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 1 });
+    assert.deepEqual(answered[0][7], { inode: '42', offset: 1793 }, 'answered at the record the backend has read');
+  } finally { await cleanup(); }
+});
+
 test('the main process refuses interactive built-ins and unknown skills before anything is typed', { timeout: 5000 }, async () => {
   const sent: string[] = [];
   const { controller, cleanup } = await fakeController(async id => readResult(id, []), async text => { sent.push(text); });

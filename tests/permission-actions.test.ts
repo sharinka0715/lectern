@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parsePermissionScreen } from '../src/core/permission-screen';
 import { performPermissionAction, PermissionInputUnconfirmed } from '../src/backend/native-permission-actions';
-import { NavigationKeyNotSent } from '../src/backend/native-settings';
+import { NavigationKeyNotSent, TranscriptChangedNoKeys } from '../src/backend/native-settings';
 import type { PermissionAction } from '../src/shared/native-permission';
 
 // Claude Code 2.1.328 frames, captured with a loopback model (see permission-screen.test.ts).
@@ -14,17 +14,18 @@ const focused = (n: number) => bash.replace(' ❯ 1. Yes', '   1. Yes').replace(
 
 type Step = string | ((keys: string[]) => string);
 /** Frames returned in turn after each key; a key may also throw. */
-function driver(frames: Step[], options: { notSentOnce?: string } = {}) {
-  const keys: string[] = [];
+function driver(frames: Step[], options: { notSentOnce?: string; recordChanged?: boolean } = {}) {
+  const keys: string[] = [], attempts: string[] = [];
   let index = 0, failed = false;
   return {
-    keys,
+    keys, attempts,
     frame: async () => {
       const step = frames[Math.min(index++, frames.length - 1)];
       return { paneId: '%3', panePid: 77, viewport: typeof step === 'function' ? step(keys) : step, nativeStatus: 'waiting', nativeWaitingFor: 'permission prompt' };
     },
     questionKey: async (key: string) => {
       if (options.notSentOnce === key && !failed) { failed = true; throw new NavigationKeyNotSent(); }
+      if (options.recordChanged) { attempts.push(key); throw new TranscriptChangedNoKeys(); }
       keys.push(key);
     },
   };
@@ -163,4 +164,18 @@ test('the billing notice is answered only as read: no other choice, no changed s
   const ignored = driver([billing, billing]);
   await assert.rejects(performPermissionAction(ignored, '%3', 77, parsePermissionScreen(billing)!, { kind: 'choose', number: 1 }, () => {}), PermissionInputUnconfirmed);
   assert.deepEqual(ignored.keys, ['Enter'], 'reported unconfirmed, never pressed again');
+});
+
+test('a transcript that changed after the card was read stops the answer as "not sent": never unconfirmed, never retried', async () => {
+  // The record guard runs before the key (e.g. the card still belonged to the previous call).
+  const d = driver([bash, bash], { recordChanged: true });
+  await assert.rejects(run(d, { kind: 'choose', number: 1 }), (error: unknown) => error instanceof TranscriptChangedNoKeys && !(error instanceof PermissionInputUnconfirmed) && /未发送按键/.test((error as Error).message));
+  assert.deepEqual(d.attempts, ['Enter'], 'tried once; the same guard would refuse again');
+  assert.deepEqual(d.keys, []);
+  const moving = driver([bash, bash, focused(2)], { recordChanged: true });
+  await assert.rejects(run(moving, { kind: 'choose', number: 2 }), TranscriptChangedNoKeys);
+  assert.deepEqual(moving.attempts, ['Down']);
+  const keyedNotice = driver([unavailable, unavailable], { recordChanged: true });
+  await assert.rejects(keyed(keyedNotice, { kind: 'choose', number: 1 }), TranscriptChangedNoKeys);
+  assert.deepEqual(keyedNotice.attempts, ['Enter']);
 });

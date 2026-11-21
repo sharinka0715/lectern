@@ -151,7 +151,13 @@ export function keysNotSent(error: unknown): error is Error {
 
 /** The target explicitly returned a unique receipt before its send-keys command. */
 export class NavigationKeyNotSent extends SessionSettingError {
-  constructor() { super(t('native.screenChangedNoKeys')); }
+  constructor(message = t('native.screenChangedNoKeys')) { super(message); }
+}
+
+/** The transcript changed since the decision was read (its revision guard runs before any
+ * input): nothing was sent, and sending again under the same guard cannot succeed. */
+export class TranscriptChangedNoKeys extends NavigationKeyNotSent {
+  constructor() { super(t('native.recordChangedNoKeys')); }
 }
 
 // The focused xhigh and max labels repaint while their text and the slider

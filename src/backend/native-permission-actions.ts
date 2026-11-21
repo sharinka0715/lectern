@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { focusedPermission, parsePermissionScreen, samePermission, type NativePermissionScreen } from '../core/permission-screen';
 import { turnComposer } from '../core/turn-controls';
 import type { PermissionAction } from '../shared/native-permission';
-import { NavigationKeyNotSent } from './native-settings';
+import { NavigationKeyNotSent, TranscriptChangedNoKeys } from './native-settings';
 import type { QuestionDriver } from './native-question-actions';
 import { t } from '../shared/i18n';
 
@@ -43,9 +43,11 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
       awaitingEffect = true;
       try { await driver.questionKey(value); return; }
       catch (error) {
-        // Only an explicit "not sent" receipt on an unchanged dialog may retry.
+        // Only an explicit "not sent" receipt on an unchanged dialog may retry. A changed
+        // transcript is not sent either, but the same guard would refuse it again.
         if (!(error instanceof NavigationKeyNotSent)) throw error;
         awaitingEffect = false;
+        if (error instanceof TranscriptChangedNoKeys) throw error;
         if (attempt === 2) throw error;
         const again = (await inspect()).screen;
         if (!again || !equalScreen(again, current)) throw changed();
