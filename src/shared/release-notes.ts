@@ -35,6 +35,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.1',
+    features: [],
+    fixes: [
+      ['点击消息里的网址链接没有反应，现在会在系统浏览器中打开。',
+        'Clicking a web link in a message did nothing; it now opens in the system browser.'],
+    ],
+  },
+  {
     version: '0.2.0',
     features: [
       ['应用改名为 Lectern，是一个全新的应用，换上了新的书本图标。',

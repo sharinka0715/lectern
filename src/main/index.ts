@@ -21,6 +21,7 @@ import { attachmentBytes, attachmentPreview, AttachmentThumbnails } from './mess
 import { setupDemo } from './demo';
 import { readSshConfigHosts } from './ssh-config-hosts';
 import { createUpdates } from './updates';
+import { routeExternalLinks } from './external-links';
 import type { MenuAction, RendererDiagnostic, SessionSnapshot, Workspace } from '../shared/types';
 import { maxAttachmentBytes } from '../shared/attachments';
 import { sshOnly, sshOnlyMessage } from '../shared/supported-targets';
@@ -144,8 +145,9 @@ function createWindow() {
   const publishInactive = () => win.webContents.send('lectern:window-readable', false);
   win.on('blur', publishInactive).on('hide', publishInactive).on('minimize', publishInactive);
   win.on('focus', publishReadable).on('show', publishReadable).on('restore', publishReadable);
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', event => event.preventDefault());
+  routeExternalLinks(window.webContents, url => {
+    shell.openExternal(url).catch(error => diagnostic.event('link.open_failed', { error: errorDetails(error) }, 'warn'));
+  });
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   // Text fields and selected text get the standard edit menu. Rows, messages and
   // files show the app's own menu; the renderer prevents this event for them.

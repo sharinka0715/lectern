@@ -191,7 +191,8 @@ try {
       { type: 'text', text: ['打开 [文件夹](<preview files>)、![图像](<preview files/pixel.gif>) 和 [PDF](<preview files/sample.pdf>)。',
         '找不到的路径：`missing.txt`。测试重试：`volatile.txt`。', `[跨目录](${outside}) ${outside} [失效](not-here.md)`,
         `普通文本：ProxyPanel.tsx ${noise} index.ts。改了ProxyPanel.tsx和index.ts。中文ProxyPanel.tsx。`, '`ProxyPanel.tsx:42` `index.ts` `usage.current` `manual/startup`',
-        '```ts\nimport "./src/index.ts"; // ProxyPanel.tsx index.ts ' + noise + '\n```', '![外链图片](https://example.invalid/tracking.png)'].join('\n\n') },
+        '```ts\nimport "./src/index.ts"; // ProxyPanel.tsx index.ts ' + noise + '\n```', '![外链图片](https://example.invalid/tracking.png)',
+        '参考 [Lectern 文档](https://example.invalid/docs?from=reply) 和 https://example.invalid/bare-link'].join('\n\n') },
       { type: 'tool_use', id: 'read-file', name: 'Read', input: { file_path: 'NOTICE' } },
       { type: 'text', text: '已读取说明，接下来修改示例。' },
       { type: 'tool_use', id: 'edit-file', name: 'Edit', input: { file_path: 'preview files/demo.ts', old_string: '41', new_string: '42' } },
@@ -225,6 +226,16 @@ try {
     console.log('NOTE: python3 Pillow is not installed, so workspace thumbnails were checked as placeholders.');
   }
   assert.match(order[0], /打开/);
+  // 网址交给系统浏览器打开：应用窗口不跳转，也不开新窗口。
+  await app.evaluate(({ shell }) => { globalThis.openedLinks = []; shell.openExternal = async url => { globalThis.openedLinks.push(url); }; });
+  const [pageUrl, windowCount] = [page.url(), app.windows().length];
+  await reply.getByRole('link', { name: 'Lectern 文档', exact: true }).click();
+  await reply.getByRole('link', { name: 'https://example.invalid/bare-link', exact: true }).click();
+  const openedLinks = () => app.evaluate(() => globalThis.openedLinks);
+  for (let i = 0; i < 50 && (await openedLinks()).length < 2; i++) await new Promise(resolve => setTimeout(resolve, 100));
+  assert.deepEqual(await openedLinks(), ['https://example.invalid/docs?from=reply', 'https://example.invalid/bare-link']);
+  assert.equal(page.url(), pageUrl);
+  assert.equal(app.windows().length, windowCount);
   assert.equal(await reply.locator('[data-tool-id="read-file"][data-tool-state="completed"]').evaluate(node => node.open), true);
   const editCard = reply.locator('[data-tool-id="edit-file"]');
   assert.equal(await editCard.evaluate(node => node.open), false, 'A native Edit patch arrives without opening the card');
