@@ -71,6 +71,8 @@ export const releaseNotes: ReleaseNote[] = [
         '"Quit Lectern Only" can be remembered so quitting no longer asks; change it back in Settings → Session.'],
     ],
     fixes: [
+      ['回答问答或权限卡、排队或立即引导后的补读可能与正在进行的读取重叠，漏掉 Claude Code 正在写入的记录（如提问不出卡）；现在同一对话的读取不再重叠。',
+        'A read right after answering a card, queueing or steering could overlap the one in progress and drop the record being written (a question then got no card); reads of a chat no longer overlap.'],
       ['粘贴的图片在消息里既是长路径、又在底部重复显示「查看 文件名」，现在只显示一次。',
         'A pasted image showed in its message as a long path and again as "View name" below it; it now shows once.'],
       ['点击消息里的网址链接没有反应，现在会在系统浏览器中打开。',

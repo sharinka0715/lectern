@@ -39,6 +39,8 @@ import { diagnostic, errorDetails, getDiagnosticsInfo, summarize } from '../diag
 import { t } from '../shared/i18n';
 
 type Watch = { id: string; polls: number; workspace: Workspace; sessionId: string; display: MessageDisplay; snapshot: SessionSnapshot; failures: number;
+  /** A read of this watch is in flight (poll()). */
+  reading?: boolean;
   settingsHandle?: SessionSettingsHandle;
   compactSamples: CompactSamples;
   question?: WatchedQuestion;
@@ -89,6 +91,8 @@ export class Controller extends EventEmitter {
   private polling = false;
   private inFlight?: Promise<void>;
   private pollSoon = false;
+  // A read asked for during another one wants a fresh viewport too (see poll()).
+  private pollSoonFresh = false;
   private sending = false;
   private turnBusy = false;
   private settingOperation?: { workspaceId: string; sessionId: string; finished: Promise<void> };
@@ -518,18 +522,28 @@ export class Controller extends EventEmitter {
   }
   private async poll(watch: Watch, freshViewport = false): Promise<void> {
     this.timer = undefined;
-    this.polling = true;
+    // One read of a conversation at a time. A second read from the same cursor hands the
+    // display the same bytes twice, and when the first one stopped inside a record Claude
+    // Code was still writing, the second copy of that record is dropped and never read
+    // again (a question then has no card). The read in flight reads again when it ends.
+    if (watch.reading) {
+      this.pollSoon = true;
+      this.pollSoonFresh ||= freshViewport;
+      diagnostic.event('controller.poll.coalesced', { watchId: watch.id, freshViewport });
+      return;
+    }
+    this.polling = watch.reading = true;
     const run = this.pollOnce(watch, freshViewport);
     this.inFlight = run;
     try { return await run; }
-    finally { this.polling = false; }
+    finally { this.polling = watch.reading = false; }
   }
   /** Read once more now, keeping the parsed history and cursor. After a resume
    * the new pane is found by this read, so the open transcript never blanks. */
   async refresh(workspaceId: string, sessionId: string): Promise<SessionSnapshot | undefined> {
     const watch = this.watch;
     if (!watch || watch.workspace.id !== workspaceId || watch.sessionId !== sessionId) return;
-    while (this.polling && this.watch === watch) await this.inFlight?.catch(() => {});
+    while ((this.polling || watch.reading) && this.watch === watch) await this.inFlight?.catch(() => {});
     if (this.watch !== watch) return;
     clearTimeout(this.timer);
     await this.poll(watch, true);
@@ -610,8 +624,8 @@ export class Controller extends EventEmitter {
           watch.snapshot.trustBusy === trustBusy && watch.snapshot.navigationStatus === result.session.status &&
           watch.snapshot.navigationStatusDetail === result.session.statusDetail && watch.snapshot.screen === result.screen) {
         // Avoid reprojecting and sending every opened history page over IPC on idle polls.
-        if (!this.background || this.pollSoon) this.schedulePoll(watch, this.pollSoon ? 0 : 5000);
-        this.pollSoon = false;
+        if (!this.background || this.pollSoon) this.schedulePoll(watch, this.pollSoon ? 0 : 5000, this.pollSoon && this.pollSoonFresh);
+        this.pollSoon = this.pollSoonFresh = false;
         return;
       }
       const previousHandle = watch.settingsHandle;
@@ -797,8 +811,8 @@ export class Controller extends EventEmitter {
     }
     if (this.watch !== watch) return;
     this.publish(watch, 'poll', inactiveFilter);
-    const soon = this.pollSoon;
-    this.pollSoon = false;
+    const soon = this.pollSoon, soonFresh = soon && this.pollSoonFresh;
+    this.pollSoon = this.pollSoonFresh = false;
     if (this.background && !soon) {
       // Off screen: a running pane is read often enough to stay current; saved
       // history needs no reads until it is shown again.
@@ -810,7 +824,7 @@ export class Controller extends EventEmitter {
     // A poll that started inside a picker can finish after the native menu closed.
     // Verify that waiting frame now so an actionable chooser needn't wait an idle interval.
     const stalePicker = settingRevisionAtRead !== this.settingRevision && !this.settingOperation && this.pickerMayStillBeVisible(watch);
-    this.schedulePoll(watch, stalePicker ? 0 : delay, stalePicker);
+    this.schedulePoll(watch, stalePicker ? 0 : delay, stalePicker || soonFresh);
     });
   }
   async answerQuestion(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
