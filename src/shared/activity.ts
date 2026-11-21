@@ -55,6 +55,24 @@ export function backgroundParts(counts: BackgroundCounts | undefined): string[] 
 /** When the current (or last) run began: the launch, or the latest resume. */
 export const runStart = (item: Pick<SessionActivity, 'startedAt' | 'resumedAt'>) => item.resumedAt ?? item.startedAt;
 
+/** `list` newest first by when its latest run began (`runStart`). Entries without a
+ * readable time keep their places and the others fill the rest; equal times keep their order. */
+function newestRunFirst<T extends Pick<SessionActivity, 'startedAt' | 'resumedAt'>>(list: readonly T[]): T[] {
+  const timed = list.flatMap((entry, index) => {
+    const start = runStart(entry), ms = start ? Date.parse(start) : NaN;
+    return Number.isNaN(ms) ? [] : [{ entry, index, ms }];
+  });
+  const sorted = [...timed].sort((a, b) => b.ms - a.ms || a.index - b.index), result = [...list];
+  timed.forEach((slot, rank) => { result[slot.index] = sorted[rank].entry; });
+  return result;
+}
+
+/** The order of the activity card's sections and the task column's groups: running ones
+ * first, then ended ones, each newest first by its latest start (the launch or the latest resume). */
+export function runOrder<T extends Pick<SessionActivity, 'status' | 'startedAt' | 'resumedAt'>>(list: readonly T[]): T[] {
+  return [...newestRunFirst(list.filter(entry => entry.status === 'running')), ...newestRunFirst(list.filter(entry => entry.status !== 'running'))];
+}
+
 /** Time spent running across the launch and every resume, up to `now` while running. */
 export function runningMs(item: SessionActivity, now: number): number | undefined {
   const start = runStart(item);

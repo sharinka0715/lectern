@@ -168,6 +168,10 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-task-key')), 'toolu_build', 'the column takes the focus on its entry');
   assert.deepEqual(await column.locator('.task-group').evaluateAll(groups => groups.map(group => [group.dataset.kind, group.querySelector('h3')?.firstChild?.nextSibling?.textContent])),
     [['shell', '终端'], ['monitor', '监控']]);
+  // Rows of a group as [key, state], top to bottom. All launched by one message (one start
+  // time) and all running: card order, the last launched first.
+  const rows = kind => column.locator(`.task-column-list button[data-kind="${kind}"]`).evaluateAll(buttons => buttons.map(row => [row.dataset.taskKey, row.dataset.state]));
+  assert.deepEqual(await rows('shell'), [['toolu_long', 'running'], ['toolu_train', 'running'], ['toolu_build', 'running']]);
   const detail = column.locator('[data-task-detail="toolu_build"]');
   await detail.locator('.task-output', { hasText: 'step 2: bundle' }).waitFor();
   assert.equal(await detail.locator('.task-command').innerText(), buildCommand, 'the whole command, line breaks kept');
@@ -233,10 +237,18 @@ try {
   await detail.locator('.task-output', { hasText: /done\s*$/ }).waitFor();
   assert.ok(!(await detail.locator('.task-output').innerText()).includes('[exited'), 'the native trailer is not output');
   // The long one fails: the shells' tally is now the longest, "1 running · 2 ended (1 failed)".
+  // It is shown when it fails: it moves below the running one and stays shown.
+  await column.locator('.task-column-list button[data-task-key="toolu_long"]').click();
+  await long.locator('.task-output', { hasText: 'line 100000' }).waitFor();
   const failed = notice(ids.long, 'toolu_long', 'failed', 'Background command "打印长输出" failed with exit code 1');
   await appendFile(main, lines([{ type: 'queue-operation', operation: 'enqueue', sessionId: sid, timestamp: at(31), content: failed },
     record('user', { origin: { kind: 'task-notification' }, promptSource: 'system', message: { role: 'user', content: failed } }, 31)]));
   await column.locator('.task-column-list button[data-task-key="toolu_long"][data-state="failed"]').waitFor();
+  assert.deepEqual(await rows('shell'), [['toolu_train', 'running'], ['toolu_long', 'failed'], ['toolu_build', 'completed']], 'running before ended');
+  assert.equal(await column.locator('.task-column-list button[aria-current="true"]').getAttribute('data-task-key'), 'toolu_long', 'the one shown stays shown when it moves');
+  await page.waitForFunction(() => document.querySelector('[data-task-detail="toolu_long"]')?.dataset.state === 'failed');
+  await column.locator('.task-column-list button[data-task-key="toolu_build"]').click();
+  await detail.locator('.task-output', { hasText: /done\s*$/ }).waitFor();
   const tallies = {
     zh: { '终端': ['1 运行中', '2 结束（1 失败）'], '监控': ['1 运行中'] },
     en: { 'Background shells': ['1 running', '2 ended (1 failed)'], Monitors: ['1 running'] },

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bot, ChevronDown, FileDiff, FileImage, GitBranch, Laptop, Loader2, Minus, PanelRight, Paperclip, Radio, RefreshCw, Server, Terminal } from "lucide-react";
-import type { ActivityKind, SessionActivity } from "../shared/activity";
+import { runOrder, type ActivityKind, type SessionActivity } from "../shared/activity";
 import type { GitChange, GitChangesResult, MessageAttachment } from "../shared/types";
 import { ActivityCard, Tally } from "./ActivityPanel";
 import { AttachmentThumbnail } from "./AttachmentThumbnail";
@@ -141,7 +141,8 @@ export function ActivityFloat(props: Props) {
     </button>}
   </div>;
 
-  const kinds = (["agent", "shell", "monitor"] as const).map(kind => ({ kind, list: items.filter(item => item.kind === kind) })).filter(group => group.list.length);
+  // Each kind in the task column's order: running ones first, then ended ones, newest first.
+  const kinds = (["agent", "shell", "monitor"] as const).map(kind => ({ kind, list: runOrder(items.filter(item => item.kind === kind)) })).filter(group => group.list.length);
   return <div ref={root} className="activity-float-anchor">
     <aside className="activity-float" aria-label={t('activity.label')}>
       <header>

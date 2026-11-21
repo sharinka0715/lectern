@@ -6,6 +6,8 @@
 // conversation as it grows, the finished one's thinking, tools and report, and a
 // SendMessage resume makes the finished one run again with its new messages,
 // until interim notifications (waiting on its own background work) end that run.
+// The list keeps running ones first, then ended ones, then an earlier one known only
+// from its transcript; the one shown stays shown as it moves (screenshot: subagent-column-order.png).
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -19,7 +21,7 @@ const userData = await mkdtemp(path.join(tmpdir(), 'lectern-subagents-profile-')
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: userData, LECTERN_NODE_BINARY: process.execPath, LECTERN_DIAGNOSTIC_CONTENT: '0' };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL; delete env.TMUX; delete env.TMUX_PANE;
 const exe = process.argv[2];
-const done = 'ae2edone0000000001', live = 'ae2elive0000000002';
+const done = 'ae2edone0000000001', live = 'ae2elive0000000002', earlier = 'ae2eold00000000003';
 const at = offset => new Date(Date.now() - 120_000 + offset * 1000).toISOString();
 // Folded thinking: a signature whose purpose field is empty (src/core/thinking.ts).
 const signature = Buffer.from([0x12, 4, 0x0a, 2, 0x08, 1]).toString('base64');
@@ -62,7 +64,11 @@ try {
     let up = null, n = 0;
     return (type, message, extra = {}) => { const uuid = `${agent}-${++n}`; const r = { parentUuid: up, isSidechain: true, sessionId: sid, agentId: agent, type, uuid, timestamp: at(5 + n), message, ...extra }; up = uuid; return r; };
   };
-  const doneRow = chain(done), liveRow = chain(live);
+  const doneRow = chain(done), liveRow = chain(live), earlierRow = chain(earlier);
+  // An earlier subagent: its transcript only, launched in history not loaded (nor in this chat at all).
+  await writeFile(path.join(subagents, `agent-${earlier}.meta.json`), JSON.stringify({ agentType: 'Explore', description: '早先的检查' }));
+  await writeFile(path.join(subagents, `agent-${earlier}.jsonl`), lines([earlierRow('user', { role: 'user', content: '早先检查一遍。' }),
+    earlierRow('assistant', { id: 'o1', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: '检查完了。' }] })]));
   await writeFile(path.join(subagents, `agent-${done}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description: '整理测试清单', toolUseId: 'toolu_e2e_done', finished: true }));
   await writeFile(path.join(subagents, `agent-${live}.meta.json`), JSON.stringify({ agentType: 'Explore', description: '检查构建脚本', toolUseId: 'toolu_e2e_live' }));
   await writeFile(path.join(subagents, `agent-${done}.jsonl`), lines([
@@ -94,7 +100,11 @@ try {
   await column.waitFor();
   assert.equal(await column.locator('.task-column-list button[aria-current="true"]').getAttribute('data-agent-id'), live);
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-agent-id')), live, 'the column takes the focus on its subagent');
-  assert.deepEqual(await column.locator('.task-column-list button[data-kind="agent"]').evaluateAll(rows => rows.map(row => [row.dataset.agentId, row.dataset.state])), [[live, 'running'], [done, 'completed']]);
+  // Running first, then ended, then the earlier one; each newest first by its latest start.
+  const rows = () => column.locator('.task-column-list button[data-kind="agent"]').evaluateAll(rows => rows.map(row => [row.dataset.agentId, row.dataset.state]));
+  await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`), earlier);
+  assert.deepEqual(await rows(), [[live, 'running'], [done, 'completed'], [earlier, 'unobserved']]);
+  assert.equal(await column.locator(`.task-column-list button[data-agent-id="${earlier}"] .task-state`).innerText(), '较早');
   const detail = column.locator(`[data-subagent-detail="${live}"]`);
   await detail.locator('article.message-user', { hasText: '检查构建脚本是否可用。' }).waitFor();
   await detail.locator('article.message-assistant', { hasText: '先看看构建脚本。' }).waitFor();
@@ -137,6 +147,17 @@ try {
     doneRow('assistant', { id: 'd3', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'text', text: 'cc-matrix 里还有 run.mjs。' }] }),
   ]));
   await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'running', done);
+  // Its latest run began after the other one's launch: it moves to the top, still shown.
+  assert.deepEqual(await rows(), [[done, 'running'], [live, 'running'], [earlier, 'unobserved']]);
+  const current = () => column.locator('.task-column-list button[aria-current="true"]').getAttribute('data-agent-id');
+  assert.equal(await current(), done, 'the one shown stays shown when it moves');
+  // The activity card lists its subagents in the same order.
+  const cardRows = async () => {
+    if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
+    if (!await section.locator('article.activity-card').count()) await section.locator('.activity-float-toggle').click();
+    return section.locator('article.activity-card').evaluateAll(cards => cards.map(card => [card.dataset.activityId, card.dataset.activityState]));
+  };
+  assert.deepEqual(await cardRows(), [['toolu_e2e_done', 'running'], ['toolu_e2e_live', 'running']]);
   await finished.locator('article.message-user', { hasText: '再看看 scripts/cc-matrix。' }).waitFor();
   await finished.locator('article.message-assistant', { hasText: 'cc-matrix 里还有 run.mjs。' }).waitFor();
   assert.equal(await finished.getAttribute('data-state'), 'running');
@@ -153,6 +174,13 @@ try {
   ]));
   await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'completed', done);
   assert.equal(await finished.getAttribute('data-state'), 'completed');
+  // Ended again: below the running one and above the earlier one, still shown; the card follows.
+  assert.deepEqual(await rows(), [[live, 'running'], [done, 'completed'], [earlier, 'unobserved']]);
+  assert.equal(await current(), done);
+  assert.deepEqual(await cardRows(), [['toolu_e2e_live', 'running'], ['toolu_e2e_done', 'completed']]);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: path.join(results, 'subagent-column-order.png') });
+  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
   const facts = await finished.locator('.subagent-detail-head small').innerText();
   assert.match(facts, /已续接 1 次/);
   await page.waitForTimeout(1500);
@@ -164,7 +192,7 @@ try {
   await column.waitFor({ state: 'detached' });
   assert.deepEqual(errors, []);
   console.log('PASS: the activity card opens the subagent column; it follows a running subagent live, shows a finished one with thinking, tools and report, a resumed one runs again with its new messages, and interim notifications end that run.');
-  console.log(`Screenshots: ${path.join(results, 'subagent-column-running.png')}, ${path.join(results, 'subagent-column-finished.png')}`);
+  console.log(`Screenshots: ${['running', 'finished', 'order'].map(name => path.join(results, `subagent-column-${name}.png`)).join(', ')}`);
 } catch (error) {
   const page = app?.windows()[0];
   if (page) await page.screenshot({ path: path.join(results, 'subagent-column-failure.png') }).catch(() => {});

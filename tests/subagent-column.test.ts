@@ -157,7 +157,7 @@ test('older pages come on request; a replaced file starts again from its newest 
   assert.equal(view.historyPage.hasOlder, false);
 });
 
-test('the column lists the activity card subagents first, matched to their transcripts, then older transcripts', () => {
+test('the column lists the activity card subagents first (running before ended), matched to their transcripts, then older transcripts', () => {
   const item = (id: string, status: SessionActivity['status'], taskId?: string): SessionActivity => ({ id, kind: 'agent', status, title: 'Task ' + id, taskId, events: [] });
   const files = [
     { agentId: 'afresh', size: 10, modifiedAt: '2026-01-01T00:00:05.000Z', toolUseId: 'toolu_sync', agentType: 'Explore' },
@@ -167,12 +167,12 @@ test('the column lists the activity card subagents first, matched to their trans
   ];
   const entries = subagentEntries([item('toolu_bg', 'completed', 'aknown'), { ...item('toolu_shell', 'running'), kind: 'shell' }, item('toolu_sync', 'running')], files);
   assert.deepEqual(entries.map(e => [e.key, e.agentId, e.status, e.title]), [
-    ['toolu_bg', 'aknown', 'completed', 'Task toolu_bg'],
     // No agent ID reported yet: the meta file names the call that launched it.
     ['toolu_sync', 'afresh', 'running', 'Task toolu_sync'],
+    ['toolu_bg', 'aknown', 'completed', 'Task toolu_bg'],
     ['agent:aolder', 'aolder', 'completed', 'Earlier work'],
     ['agent:aunknown', 'aunknown', 'unobserved', 'aunknown']]);
-  assert.equal(entries[1].agentType, 'Explore');
+  assert.equal(entries[0].agentType, 'Explore');
   assert.equal(defaultSubagent(entries)?.key, 'toolu_sync', 'a running subagent first');
   assert.equal(defaultSubagent(subagentEntries([item('toolu_x', 'running')], []))?.key, 'toolu_x');
   // Loading older history reaches the launch of the earlier one the column shows:
@@ -181,6 +181,39 @@ test('the column lists the activity card subagents first, matched to their trans
   assert.equal(shownSubagent(older, 'agent:aolder', 'aolder')?.key, 'toolu_older');
   assert.equal(shownSubagent(older, 'toolu_older', 'aolder')?.key, 'toolu_older');
   assert.equal(shownSubagent(older, 'agent:gone', undefined)?.key, 'toolu_sync', 'without a match the default');
+});
+
+test('subagents: running first, then ended, then earlier ones whatever their meta says; each newest first by the latest start', () => {
+  const at = (second: number) => `2026-01-01T00:01:${String(second).padStart(2, '0')}.000Z`;
+  const item = (id: string, status: SessionActivity['status'], extra: Partial<SessionActivity> = {}): SessionActivity =>
+    ({ id, kind: 'agent', status, title: 'Task ' + id, taskId: 'a' + id, events: [], ...extra });
+  // Card order: newest launch first. Earlier transcripts as the backend lists them, last written first.
+  const card = [item('t6', 'failed', { startedAt: at(6) }), item('t5', 'running', { startedAt: at(5) }), item('t4', 'completed'),
+    item('t3', 'running', { startedAt: at(3) }), item('t2', 'stopped', { startedAt: at(2), resumedAt: at(8), endedAt: at(9) }),
+    item('t1', 'running', { startedAt: at(1), resumedAt: at(7) }), item('t0', 'completed', { startedAt: at(0) })];
+  const files = [{ agentId: 'aearly1', size: 10, modifiedAt: at(20), finished: true, description: 'Earlier, finished' },
+    { agentId: 'aearly2', size: 10, modifiedAt: at(10), description: 'Earlier, no end recorded' }, { agentId: 'at5', size: 10, modifiedAt: at(30) }];
+  const entries = subagentEntries(card, files);
+  // Running: t1's resume (7) is later than t5's launch (5). Ended: t2's resume (8) first; t4 has no
+  // time and keeps its place (second of the ended ones in card order). Then the earlier two.
+  assert.deepEqual(entries.map(e => [e.key, e.status]), [['t1', 'running'], ['t5', 'running'], ['t3', 'running'],
+    ['t2', 'stopped'], ['t4', 'completed'], ['t6', 'failed'], ['t0', 'completed'],
+    ['agent:aearly1', 'completed'], ['agent:aearly2', 'unobserved']]);
+  assert.equal(entries[1].file?.agentId, 'at5', 'matched to its transcript');
+  assert.equal(defaultSubagent(entries)?.key, 't1', 'the default: the first running one');
+  // Selection survives a reorder: t1 is shown, then ends; t0 is resumed and runs again.
+  const later = subagentEntries(card.map(entry => entry.id === 't1' ? { ...entry, status: 'completed' as const, endedAt: at(11) }
+    : entry.id === 't0' ? { ...entry, status: 'running' as const, resumedAt: at(12) } : entry), files);
+  assert.deepEqual(later.map(e => e.key).slice(0, 4), ['t0', 't5', 't3', 't2']);
+  assert.deepEqual(later.map(e => e.key).slice(3, 7), ['t2', 't4', 't1', 't6'], 't1 ended: after t2 (resumed at 8); t4 (no time) keeps its place');
+  assert.equal(shownSubagent(later, 't1', 'at1')?.key, 't1');
+  assert.equal(shownSubagent(later, 't3', 'at3')?.key, 't3');
+  assert.equal(shownSubagent(later, undefined, undefined)?.key, 't0', 'only without a choice does the newest running one show');
+  // An earlier one shown when older history reaches its launch: from the last group into the ended
+  // ones under the card's key, found again by its agent ID.
+  const loaded = subagentEntries([...card, item('told', 'completed', { taskId: 'aearly1', startedAt: at(4) })], files);
+  assert.deepEqual(loaded.map(e => e.key).slice(3), ['t2', 't4', 't6', 'told', 't0', 'agent:aearly2']);
+  assert.equal(shownSubagent(loaded, 'agent:aearly1', 'aearly1')?.key, 'told');
 });
 
 const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windows runs no local commands' : false };

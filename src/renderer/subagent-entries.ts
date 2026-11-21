@@ -1,4 +1,4 @@
-import type { ActivityState, SessionActivity } from '../shared/activity';
+import { runOrder, type ActivityState, type SessionActivity } from '../shared/activity';
 import type { SubagentFile } from '../shared/types';
 
 /** One row of the subagent column. */
@@ -17,15 +17,17 @@ export interface SubagentEntry {
 
 /**
  * The conversation's subagents: those of the activity card first (their state
- * follows the lifecycle in session-activity.ts), matched to their transcript
- * files by agent ID or by the launching tool call in the meta file; then the
- * transcripts whose launch is in history not loaded yet, newest first.
+ * follows the lifecycle in session-activity.ts), running ones before ended ones,
+ * each newest first by its latest start (`runOrder`), matched to their transcript
+ * files by agent ID or by the launching tool call in the meta file; then, whatever
+ * their meta file says, the transcripts whose launch is in history not loaded yet,
+ * as the backend lists them (last written first).
  */
 export function subagentEntries(items: readonly SessionActivity[], files: readonly SubagentFile[]): SubagentEntry[] {
   const byAgent = new Map(files.map(file => [file.agentId, file]));
   const byTool = new Map(files.flatMap(file => file.toolUseId ? [[file.toolUseId, file] as const] : []));
   const used = new Set<string>();
-  const entries: SubagentEntry[] = items.filter(item => item.kind === 'agent').map(item => {
+  const entries: SubagentEntry[] = runOrder(items.filter(item => item.kind === 'agent')).map(item => {
     const file = (item.taskId ? byAgent.get(item.taskId) : undefined) ?? byTool.get(item.id);
     if (file) used.add(file.agentId);
     return { key: item.id, agentId: item.taskId ?? file?.agentId, title: item.title, agentType: item.agentType ?? file?.agentType, status: item.status, item, file };
