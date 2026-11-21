@@ -154,5 +154,8 @@ export function observeNativeNudges(sandbox, seen) {
     const screen = sandbox.capture(pane);
     if (/Make auto mode your default permission mode\?/.test(screen)) seen.add('auto-mode-default-nudge');
     if (/Auto mode is now Claude Code's default permission mode/.test(screen)) seen.add('auto-mode-default-notice');
+    // Auto mode's server check not passed through (expected only in the server-check scenario's folder).
+    if (/We're changing auto mode to no longer charge for classifier requests/.test(screen)) seen.add('auto-mode-billing-notice');
+    if (/^ {1,4}Auto mode can't check actions in this session$/m.test(screen)) seen.add('auto-mode-unavailable');
   }
 }

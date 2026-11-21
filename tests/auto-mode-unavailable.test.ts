@@ -99,11 +99,11 @@ test('the dialog\'s words quoted in a reply above an idle input box change nothi
   assert.equal(isIdleEmptyComposer(quoted), true);
 });
 
-test('2.1.300 and 2.1.310 have no such dialog; their billing notice in the same spot is no card but still a native prompt', () => {
+test('2.1.300 and 2.1.310 have no such dialog; their billing notice in the same spot is another card (auto-mode-billing.test.ts)', () => {
   for (const version of ['2.1.300', '2.1.310']) {
     const text = fixture(version, 'billing-notice');
     assert.match(text, /We're changing auto mode to no longer charge for classifier requests/);
-    assert.equal(parsePermissionScreen(text), undefined, version);
+    assert.equal(parsePermissionScreen(text)?.kind, 'auto-mode-billing', version);
     assert.equal(classifySessionScreen(text).status, 'waiting', version);
     assert.equal(isIdleEmptyComposer(text), false, version);
   }

@@ -1,5 +1,5 @@
 import { stripTerminalEscapes } from './screen';
-import { parseAutoModeUnavailableLines } from './auto-mode-screen';
+import { parseAutoModeBillingNoticeLines, parseAutoModeUnavailableLines } from './auto-mode-screen';
 import type { NativePermissionOption, NativePermissionScreen } from '../shared/native-permission';
 
 /**
@@ -29,8 +29,8 @@ const footerRow = /^Esc to cancel(?: · \S.*)?$/u;
 
 export function parsePermissionScreen(viewport: string): NativePermissionScreen | undefined {
   const lines = stripTerminalEscapes(viewport).split('\n').map(line => line.replace(/\s+$/u, ''));
-  const unavailable = autoModeUnavailable(lines);
-  if (unavailable) return unavailable;
+  const keyed = autoModeUnavailable(lines) ?? autoModeBilling(lines);
+  if (keyed) return keyed;
   let end = lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
   // The dialog occupies the bottom of the screen in place of the input box.
@@ -174,6 +174,14 @@ function autoModeUnavailable(lines: string[]): NativePermissionScreen | undefine
     { number: 1, label: 'stay in auto mode', focused: false, key: 'Enter' },
     { number: 2, label: 'leave for accept edits mode and stop', focused: false, key: 'BTab', ...!dialog.canLeave && { unavailable: true } },
   ] };
+}
+
+/** The classifier billing notice as a card: "continue" (Enter) is option 1, Esc is the card's cancel. */
+function autoModeBilling(lines: string[]): NativePermissionScreen | undefined {
+  const notice = parseAutoModeBillingNoticeLines(lines);
+  if (!notice) return;
+  return { kind: 'auto-mode-billing', title: notice.title, subtitle: notice.paragraphs, content: [], question: '', footer: notice.footer,
+    options: [{ number: 1, label: 'continue', focused: false, key: 'Enter' }] };
 }
 
 /** The same dialog in two frames: focus may differ, nothing else. */

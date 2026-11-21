@@ -3,15 +3,17 @@ export interface NativePermissionOption {
   number: number;
   label: string;
   focused: boolean;
-  /** A choice made with a key rather than by number (the auto-mode-unavailable dialog). */
+  /** A choice made with a key rather than by number (the keyed auto mode dialogs). */
   key?: 'Enter' | 'BTab';
   /** Claude Code does not take this choice now (e.g. "needs a taller window"). */
   unavailable?: boolean;
 }
 export interface NativePermissionScreen {
-  /** Undefined for a tool's own permission dialog; 'auto-mode-unavailable' for "Auto mode
-   * can't check actions in this session" (core/auto-mode-screen.ts), which holds a tool call too. */
-  kind?: 'auto-mode-unavailable';
+  /** Undefined for a tool's own permission dialog. Keyed dialogs that hold a tool call too
+   * (core/auto-mode-screen.ts): 'auto-mode-unavailable' for "Auto mode can't check actions in
+   * this session", 'auto-mode-billing' for the classifier billing notice ("We're changing auto
+   * mode to no longer charge for classifier requests …"). */
+  kind?: 'auto-mode-unavailable' | 'auto-mode-billing';
   title: string;
   subtitle: string[];
   content: string[];

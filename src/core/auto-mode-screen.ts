@@ -41,8 +41,8 @@ export function parseAutoModeNudgeLines(rawLines: readonly string[]): AutoModeNu
 /** "Auto mode can't check actions in this session" (Claude Code 2.1.321+), which
  * holds a tool call when auto mode's safety check is to run on the server and does
  * not: the requests go through a gateway or other third-party endpoint that does
- * not pass the check through, and the server-side check is on (it is unless
- * CLAUDE_CODE_AUTO_MODE_SERVER turns it off, which Lectern's launch settings do).
+ * not pass the check through, and the server-side check is on (it is unless the
+ * user's CLAUDE_CODE_AUTO_MODE_SERVER=0 turns it off; Lectern leaves it alone).
  * It replaces the input box until answered and has no numbered choices, only keys:
  *
  *   ────────────────────────────── (full-width rule)
@@ -66,13 +66,14 @@ export interface AutoModeUnavailable { title: string; paragraphs: string[]; foot
 export const AUTO_MODE_UNAVAILABLE_TITLE = "Auto mode can't check actions in this session";
 const UNAVAILABLE_FOOTER = /^Enter to stay in auto mode · shift\+Tab to leave for accept edits mode and stop( \(needs a taller window\))? · Esc to cancel$/u;
 
-/** The dialog's title under a full-width rule, with only its indented paragraphs below,
- * as the last thing on screen: also when a short terminal cuts off its end (and footer). */
-function unavailableDialog(rawLines: readonly string[]) {
+/** A keyed dialog: its exact `heading` under a full-width rule, with only paragraphs
+ * indented alike below it, as the last thing on screen; also when a short terminal cuts
+ * off its end (and footer). Returns the lines below the heading without their indent. */
+function keyedDialog(rawLines: readonly string[], heading: string) {
   const lines = rawLines.map(line => line.replace(/\u00a0/g, ' ').trimEnd());
   while (lines.length && !lines.at(-1)) lines.pop();
   let title = lines.length - 1;
-  while (title >= Math.max(0, lines.length - 80) && lines[title].trim() !== AUTO_MODE_UNAVAILABLE_TITLE) title--;
+  while (title >= Math.max(0, lines.length - 80) && lines[title].trim() !== heading) title--;
   if (title < 1 || !/^ {1,4}\S/u.test(lines[title])) return;
   let rule = title - 1;
   while (rule > 0 && !lines[rule]) rule--;
@@ -83,6 +84,9 @@ function unavailableDialog(rawLines: readonly string[]) {
   if (!indent || body.some(line => line && !(line.startsWith(indent) && /\S/u.test(line[indent.length])))) return;
   return body.map(line => line.slice(indent.length));
 }
+/** Paragraphs with their wrapped lines joined; the last one is the key hint (a narrow terminal wraps it too). */
+const paragraphsOf = (body: string[]) => body.join('\n').split(/\n{2,}/u).map(part => part.trim().split('\n').join(' ')).filter(Boolean);
+const unavailableDialog = (lines: readonly string[]) => keyedDialog(lines, AUTO_MODE_UNAVAILABLE_TITLE);
 
 /** True while the dialog holds the screen, readable or not (screen.ts classifies it as waiting). */
 export function showsAutoModeUnavailable(lines: readonly string[]): boolean {
@@ -92,10 +96,50 @@ export function showsAutoModeUnavailable(lines: readonly string[]): boolean {
 export function parseAutoModeUnavailableLines(rawLines: readonly string[]): AutoModeUnavailable | undefined {
   const body = unavailableDialog(rawLines);
   if (!body) return;
-  // Wrapped lines are joined; the last paragraph is the key hint (a narrow terminal wraps it too).
-  const paragraphs = body.join('\n').split(/\n{2,}/u).map(part => part.trim().split('\n').join(' ')).filter(Boolean);
+  const paragraphs = paragraphsOf(body);
   const footer = paragraphs.pop() ?? '';
   const keys = UNAVAILABLE_FOOTER.exec(footer);
   if (!keys || paragraphs.length < 2) return;
   return { title: AUTO_MODE_UNAVAILABLE_TITLE, paragraphs, footer, canLeave: !keys[1] };
+}
+
+/** Claude Code 2.1.300–2.1.310 in the same situation as "Auto mode can't check actions"
+ * (server-side check on, requests through a gateway that does not pass it through):
+ * before the first action that needs the check, a notice that auto mode falls back to
+ * its own, billed classifier requests here. Same layout, two keys:
+ *
+ *   ────────────────────────────── (full-width rule)
+ *     We're changing auto mode to no longer charge for classifier requests in Claude Code.
+ *
+ *     However, this session isn't eligible because your requests go through 127.0.0.1:…, …
+ *
+ *     Nothing breaks: auto mode keeps working, and its classifier requests are billed as before.
+ *
+ *     To fix it and access the new version of auto mode, ask your gateway to implement: …
+ *
+ *     Enter to continue · Esc to cancel
+ *
+ * Enter goes on with the local (billed) check and, with a gateway named, saves
+ * autoModeClassifierBillingNoticeAcknowledgedAt: no notice for 24 hours, in new sessions
+ * too. Esc interrupts the turn; the action does not run and the next one asks again.
+ * Later releases keep the notice (with other paragraphs) for when the server check falls
+ * back, so it is read by its heading and footer, not by version. Only the card answers it. */
+export interface AutoModeBillingNotice { title: string; paragraphs: string[]; footer: string }
+export const AUTO_MODE_BILLING_TITLE = "We're changing auto mode to no longer charge for classifier requests in Claude Code.";
+export const AUTO_MODE_BILLING_FOOTER = 'Enter to continue · Esc to cancel';
+
+/** True while the notice holds the screen, readable or not (screen.ts classifies it as waiting). */
+export function showsAutoModeBillingNotice(lines: readonly string[]): boolean {
+  return !!keyedDialog(lines, AUTO_MODE_BILLING_TITLE);
+}
+
+export function parseAutoModeBillingNoticeLines(rawLines: readonly string[]): AutoModeBillingNotice | undefined {
+  const body = keyedDialog(rawLines, AUTO_MODE_BILLING_TITLE);
+  if (!body) return;
+  const paragraphs = paragraphsOf(body);
+  const footer = paragraphs.pop() ?? '';
+  if (footer !== AUTO_MODE_BILLING_FOOTER || paragraphs.length < 2) return;
+  // Every known wording says why this session is left out and that the requests stay billed.
+  if (!/^However, this session isn't eligible\b/u.test(paragraphs[0]) || !paragraphs.some(part => /\bclassifier requests are billed as before\b/u.test(part))) return;
+  return { title: AUTO_MODE_BILLING_TITLE, paragraphs, footer };
 }

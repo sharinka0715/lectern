@@ -7,7 +7,6 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { _electron } from 'playwright';
 
@@ -55,10 +54,9 @@ try {
   // session falls back to manual mode and every tool asks.
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'default', disableAutoMode: 'disable' },
     env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
-  // Auto mode stays on there. With a third-party endpoint that does not run auto mode's
-  // server-side check, Claude Code 2.1.321+ asks "Auto mode can't check actions in this
-  // session" — in a session that keeps that check on: Lectern's own launch settings turn
-  // it off, so these sessions are started outside the app (step 4), as a user's own would be.
+  // Auto mode stays on there. Lectern leaves auto mode's check on the server, which this
+  // third-party endpoint does not run, so Claude Code 2.1.321+ asks "Auto mode can't check
+  // actions in this session" in the app's own new chats there (steps 4 and 5).
   await writeFile(path.join(autoConfig, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [autoCwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['perm-e2e'] } }));
   await writeFile(path.join(autoConfig, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
@@ -66,6 +64,8 @@ try {
     { id: 'auto', name: '自动检查', kind: 'local', cwd: autoCwd, claudeDir: autoConfig }]));
   const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  // Lectern's default: nothing moves auto mode's check off the server (manual mode in the first folder has none).
+  delete env.CLAUDE_CODE_AUTO_MODE_SERVER;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
@@ -163,15 +163,8 @@ try {
     console.error('ROWS', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.session-row')].map(row => [row.getAttribute('data-session-id'), row.textContent.slice(0, 60)]))));
   };
   const startAuto = async prompt => {
-    // The user's own `claude` in that folder, in a tmux session the app lists.
-    const id = randomUUID(), quote = arg => `'${arg.replaceAll("'", "'\\''")}'`;
-    const settings = JSON.stringify({ promptSuggestionEnabled: false, permissions: { defaultMode: 'auto' } });
-    // Without CLAUDE_CODE_AUTO_MODE_SERVER, which a shell started from a Lectern session inherits (as 0).
-    tmux('new-session', '-d', '-s', `lectern-${id.slice(0, 8)}-own`, '-x', '120', '-y', '40', '-c', autoCwd, '-e', `CLAUDE_CONFIG_DIR=${autoConfig}`,
-      `exec env -u CLAUDE_CODE_AUTO_MODE_SERVER claude --settings ${quote(settings)} --session-id ${id}`);
-    // Its folder is listed (opening a draft there selects it); the running session shows in it.
-    await page.locator('.workspace-select[aria-label="自动检查"]').click();
-    await page.locator(`.session-row[data-session-id="${id}"]`).click({ timeout: 60000 }).catch(async error => { await dumpPanes(); throw error; });
+    // A new chat the app starts in that folder, with Lectern's own launch settings.
+    await page.getByRole('button', { name: '在 自动检查 新建对话' }).click();
     await ready();
     await input.fill(prompt);
     await page.getByRole('button', { name: '发送消息', exact: true }).click();
@@ -181,44 +174,51 @@ try {
         cards: [...document.querySelectorAll('section.question-card')].map(c => c.textContent.slice(0, 200)), placeholder: document.querySelector('form.composer textarea')?.getAttribute('placeholder') }))));
       throw error;
     });
-    return id;
+    const id = await page.locator('.session-row.active').getAttribute('data-session-id');
+    return tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').find(line => line.includes(` lectern-${id.slice(0, 8)}`))?.split(' ')[0];
   };
-  const own = await startAuto('检查不了');
-  assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
-  const text = await unavailable.innerText();
-  assert.match(text, /auto mode 无法检查操作/);
-  assert.match(text, /Auto mode can't check actions in this session/);
-  assert.match(text, /You can stay in auto mode and approve each action that needs the check yourself\./);
-  assert.deepEqual(await unavailable.locator('[data-permission-option] strong').allInnerTexts(), ['留在 auto mode', '改用 accept edits 模式并停止本轮']);
-  assert.deepEqual(await unavailable.locator('.question-mark').allInnerTexts(), ['Enter', '⇧Tab']);
-  assert.equal(await unavailable.locator('.question-option[aria-pressed="true"]').count(), 0, 'nothing is preselected');
-  await mkdir('test-results', { recursive: true });
-  await unavailable.screenshot({ path: path.join('test-results', 'permission-auto-mode-unavailable.png') });
-  // Digits pick nothing here (the native dialog has no numbers), and nothing answers by itself.
-  await unavailable.locator('[data-permission-option="1"]').focus();
-  await page.keyboard.press('1');
-  await page.waitForTimeout(1500);
-  assert.equal(await unavailable.count(), 1);
-  assert.match(tmux('capture-pane', '-p', '-t', `lectern-${own.slice(0, 8)}-own`), /Enter to stay in auto mode/);
-  await unavailable.locator('[data-permission-option="1"]').click();
-  await unavailable.waitFor({ state: 'detached' });
-  // Staying: this action now asks like any tool, "No" focused first; approve it.
-  await card.waitFor();
-  assert.match(await card.innerText(), /Auto mode can't check actions in this session, so this one needs your approval/);
-  assert.deepEqual(await card.locator('[data-permission-option] strong').allInnerTexts(), ['No', 'Yes']);
-  assert.equal(await card.locator('[data-permission-option="1"]').getAttribute('aria-pressed'), 'true');
-  await card.locator('[data-permission-option="2"]').click();
-  await finished();
-  assert.match(await readFile(path.join(autoCwd, 'unchecked.txt'), 'utf8'), /^1 unchecked$/m);
+  // Before 2.1.321, Claude Code shows its classifier billing notice here instead (the matrix covers it).
+  const version = /(\d+)\.(\d+)\.(\d+)/.exec(execFileSync('claude', ['--version']).toString())?.slice(1).map(Number) ?? [0, 0, 0];
+  const asksUnavailable = version[0] * 1e6 + version[1] * 1e3 + version[2] >= 2_001_321;
+  if (!asksUnavailable) console.log(`NOTE: Claude Code ${version.join('.')} shows the classifier billing notice instead of "Auto mode can't check actions"; steps 4 and 5 skipped`);
+  if (asksUnavailable) {
+    const ownPane = await startAuto('检查不了');
+    assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
+    const text = await unavailable.innerText();
+    assert.match(text, /auto mode 无法检查操作/);
+    assert.match(text, /Auto mode can't check actions in this session/);
+    assert.match(text, /You can stay in auto mode and approve each action that needs the check yourself\./);
+    assert.deepEqual(await unavailable.locator('[data-permission-option] strong').allInnerTexts(), ['留在 auto mode', '改用 accept edits 模式并停止本轮']);
+    assert.deepEqual(await unavailable.locator('.question-mark').allInnerTexts(), ['Enter', '⇧Tab']);
+    assert.equal(await unavailable.locator('.question-option[aria-pressed="true"]').count(), 0, 'nothing is preselected');
+    await mkdir('test-results', { recursive: true });
+    await unavailable.screenshot({ path: path.join('test-results', 'permission-auto-mode-unavailable.png') });
+    // Digits pick nothing here (the native dialog has no numbers), and nothing answers by itself.
+    await unavailable.locator('[data-permission-option="1"]').focus();
+    await page.keyboard.press('1');
+    await page.waitForTimeout(1500);
+    assert.equal(await unavailable.count(), 1);
+    assert.match(tmux('capture-pane', '-p', '-t', ownPane), /Enter to stay in auto mode/);
+    await unavailable.locator('[data-permission-option="1"]').click();
+    await unavailable.waitFor({ state: 'detached' });
+    // Staying: this action now asks like any tool, "No" focused first; approve it.
+    await card.waitFor();
+    assert.match(await card.innerText(), /Auto mode can't check actions in this session, so this one needs your approval/);
+    assert.deepEqual(await card.locator('[data-permission-option] strong').allInnerTexts(), ['No', 'Yes']);
+    assert.equal(await card.locator('[data-permission-option="1"]').getAttribute('aria-pressed'), 'true');
+    await card.locator('[data-permission-option="2"]').click();
+    await finished();
+    assert.match(await readFile(path.join(autoCwd, 'unchecked.txt'), 'utf8'), /^1 unchecked$/m);
 
-  // 5. Leaving for accept edits mode stops the turn; the waiting action never runs.
-  await startAuto('再检查一次');
-  await unavailable.locator('[data-permission-option="2"]').click();
-  await unavailable.waitFor({ state: 'detached' });
-  await page.waitForFunction(() => document.querySelector('.session-execution-mode')?.getAttribute('data-execution-mode') === 'acceptEdits', null, { timeout: 30000 });
-  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '发送给 Claude 的消息', null, { timeout: 30000 });
-  assert.equal(existsSync(path.join(autoCwd, 'again.txt')), false);
-  console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true, autoModeUnavailable: { stayed: true, left: true } }));
+    // 5. Leaving for accept edits mode stops the turn; the waiting action never runs.
+    await startAuto('再检查一次');
+    await unavailable.locator('[data-permission-option="2"]').click();
+    await unavailable.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('.session-execution-mode')?.getAttribute('data-execution-mode') === 'acceptEdits', null, { timeout: 30000 });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '发送给 Claude 的消息', null, { timeout: 30000 });
+    assert.equal(existsSync(path.join(autoCwd, 'again.txt')), false);
+  }
+  console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true, autoModeUnavailable: asksUnavailable ? { stayed: true, left: true } : 'skipped' }));
 } finally {
   await app?.close().catch(() => {});
   try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}

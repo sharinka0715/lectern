@@ -19,7 +19,10 @@ const output = path.resolve(option('--output') ?? path.join('test-results', 'cc-
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const { versions } = await resolveVersions({ list: option('--versions') });
 // The per-process settings Lectern passes (statusLine aside), plus each variant's own.
-const appSettings = extra => JSON.stringify({ promptSuggestionEnabled: false, enableWorkflows: true, env: { CLAUDE_CODE_AUTO_MODE_SERVER: '0' }, ...extra });
+// Like Lectern they leave auto mode's check on the server: the probe's command is one
+// auto mode runs unchecked, so neither the billing notice nor "Auto mode can't check
+// actions" comes up (a variant's `env` can set CLAUDE_CODE_AUTO_MODE_SERVER=0).
+const appSettings = extra => JSON.stringify({ promptSuggestionEnabled: false, enableWorkflows: true, ...extra });
 const manual = { permissions: { defaultMode: 'default' } };
 const allVariants = [
   { id: 'plain', args: [] },

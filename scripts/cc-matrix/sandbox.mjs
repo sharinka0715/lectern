@@ -5,7 +5,10 @@
 // pre-seeded, a private tmux server (TMUX_TMPDIR; TMUX/TMUX_PANE unset), and an
 // environment built from scratch: the fake API as ANTHROPIC_BASE_URL and as the
 // HTTP(S) proxy, a fake API key, no OAuth tokens or cloud-provider variables, and
-// the user's real ~/.claude never mentioned.
+// the user's real ~/.claude never mentioned. Nothing here sets CLAUDE_CODE_AUTO_MODE_SERVER:
+// as with Lectern, auto mode's check is to run on the server, which the fake API (a
+// gateway to Claude Code) never does; the matrix's folders and the probes choose
+// the local check where they need it (scenarios.mjs prepareFolders, probe --local).
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';

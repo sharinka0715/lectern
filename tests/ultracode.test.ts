@@ -78,7 +78,7 @@ test('Lectern-launched sessions turn on dynamic workflows unless the user opted 
     const first = await launched();
     assert.equal(first.enableWorkflows, true);
     assert.equal(first.promptSuggestionEnabled, false, 'existing per-process settings remain');
-    assert.deepEqual(first.env, { CLAUDE_CODE_AUTO_MODE_SERVER: '0' }, 'the auto mode notice stays off');
+    assert.equal('env' in first, false, 'auto mode\'s check is left to Claude Code (no CLAUDE_CODE_AUTO_MODE_SERVER)');
     assert.deepEqual(first.permissions, { defaultMode: 'auto' }, 'Lectern-launched sessions start in auto mode');
     backend.setLaunchPreferences({ enableWorkflows: false });
     assert.equal('enableWorkflows' in await launched(), false, 'opting out leaves the user setting in charge');

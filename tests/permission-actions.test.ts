@@ -140,3 +140,27 @@ test('the unnumbered "No / Yes" that follows staying in auto mode is answered by
   await performPermissionAction(no, '%3', 77, parsePermissionScreen(ask)!, { kind: 'choose', number: 1 }, () => {});
   assert.deepEqual(no.keys, ['Enter']);
 });
+
+// The classifier billing notice (Claude Code 2.1.300/2.1.310): "Enter to continue · Esc to cancel".
+const billingFixture = (name: string) => readFileSync(new URL(`./fixtures/auto-mode-unavailable-2.1.300/${name}.txt`, import.meta.url), 'utf8');
+const billing = billingFixture('billing-notice'), continued = billingFixture('billing-continued'), cancelled = billingFixture('billing-cancelled');
+
+test('continuing past the billing notice is one Enter after its input grace; the finished turn closes it', async () => {
+  const started = Date.now(), d = driver([billing, billing, continued]);
+  await performPermissionAction(d, '%3', 77, parsePermissionScreen(billing)!, { kind: 'choose', number: 1 }, () => {});
+  assert.ok(Date.now() - started >= 1000, 'the notice is opened with an input grace too');
+  assert.deepEqual(d.keys, ['Enter']);
+  const stop = driver([billing, billing, cancelled]);
+  await performPermissionAction(stop, '%3', 77, parsePermissionScreen(billing)!, { kind: 'cancel' }, () => {});
+  assert.deepEqual(stop.keys, ['Escape']);
+});
+
+test('the billing notice is answered only as read: no other choice, no changed screen, no second key', async () => {
+  await assert.rejects(performPermissionAction(driver([billing]), '%3', 77, parsePermissionScreen(billing)!, { kind: 'choose', number: 2 }, () => {}), /没有这个选项/);
+  const other = driver([unavailable]);
+  await assert.rejects(performPermissionAction(other, '%3', 77, parsePermissionScreen(billing)!, { kind: 'choose', number: 1 }, () => {}), /已变化/);
+  assert.deepEqual(other.keys, []);
+  const ignored = driver([billing, billing]);
+  await assert.rejects(performPermissionAction(ignored, '%3', 77, parsePermissionScreen(billing)!, { kind: 'choose', number: 1 }, () => {}), PermissionInputUnconfirmed);
+  assert.deepEqual(ignored.keys, ['Enter'], 'reported unconfirmed, never pressed again');
+});

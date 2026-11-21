@@ -107,6 +107,10 @@ const tmuxRoot = mkdtempSync(path.join(process.platform === 'win32' ? tmpdir() :
 const baseEnv = { ...process.env, TMUX_TMPDIR: tmuxRoot, LECTERN_LOCALE: 'zh-CN', FORCE_COLOR: '0' };
 delete baseEnv.TMUX; delete baseEnv.TMUX_PANE; delete baseEnv.ELECTRON_RUN_AS_NODE; delete baseEnv.LECTERN_DEV_URL;
 delete baseEnv.LECTERN_SHOW_TEST_WINDOWS;
+// A CLAUDE_CODE_AUTO_MODE_SERVER of the developer's own (inherited, e.g., from a Claude Code
+// session) would decide where auto mode checks actions for every real CLI the suite starts;
+// the scripts that need the local check set it themselves.
+delete baseEnv.CLAUDE_CODE_AUTO_MODE_SERVER;
 
 function killPrivateTmux() {
   if (process.platform === 'win32') return;

@@ -3,15 +3,14 @@
 // `api.script(name, fn)`; prompts carry `ccm:<name>` so the model knows which
 // script answers. Rows (features) are what the coverage table reports.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { sel } from './app.mjs';
-import { readJsonl, SESSION_PREFIX } from './sandbox.mjs';
+import { readJsonl } from './sandbox.mjs';
 import { textOf } from './fake-api.mjs';
+import { compareVersions } from './versions.mjs';
 
 export const FEATURES = [
   { id: 'model-catalog', title: 'Model/effort lists from the stream-json control-request probe' },
@@ -22,7 +21,8 @@ export const FEATURES = [
   { id: 'auto-mode-user-manual', title: 'Auto mode even when the user\'s own default is manual, no blocking prompt' },
   { id: 'manual-fallback', title: 'Auto mode turned off (disableAutoMode): manual mode, permission cards' },
   { id: 'auto-mode-confirm', title: 'Auto mode asks after blocked actions: permission card with its reason' },
-  { id: 'auto-mode-unavailable', title: "Auto mode can't check actions (server check not passed through): card, stay, then the tool's own permission card" },
+  { id: 'auto-mode-billing', title: 'Classifier billing notice (server check not passed through, before 2.1.321): card, cancel stops the turn, continue runs the action' },
+  { id: 'auto-mode-unavailable', title: "Auto mode can't check actions (server check not passed through, 2.1.321+): card, stay, then the tool's own permission card" },
   { id: 'auto-mode-unavailable-leave', title: "Auto mode can't check actions: leave for accept edits mode from the card, the session goes on" },
   { id: 'trust-card', title: 'Directory trust prompt answered from the trust card' },
   { id: 'onboarding', title: 'Fresh config: first message waits for API-key approval and trust' },
@@ -81,7 +81,13 @@ const paragraph = 'The compatibility matrix streams this reply slowly so the des
 
 /** Folders the app starts with. `main` pre-approves the file tools; `perm` turns
  * auto mode off and asks for every tool; `fresh` is not trusted yet; `onboard` uses
- * its own, barely used Claude configuration whose user prefers manual mode. */
+ * its own, barely used Claude configuration whose user prefers manual mode.
+ * Lectern leaves auto mode's check on the server, which the fake API (a gateway to
+ * Claude Code) never runs. The sandbox's configuration therefore sets
+ * CLAUDE_CODE_AUTO_MODE_SERVER=0, so Claude Code checks actions itself and the
+ * scenarios test what they are about (`onboard`, with a configuration of its own, only
+ * gets plain replies). `server` has its own configuration without the variable: the
+ * product's default path, which ends in a dialog (scenario server-check). */
 export async function prepareFolders(sandbox) {
   const main = sandbox.work;
   const perm = path.join(sandbox.root, 'perm-work');
@@ -89,7 +95,8 @@ export async function prepareFolders(sandbox) {
   // Background tasks run without permission questions: auto mode off, the tools allowed.
   const tasks = path.join(sandbox.root, 'tasks-work');
   const onboard = path.join(sandbox.root, 'onboard-work'), onboardConfig = path.join(sandbox.root, 'onboard-config');
-  for (const dir of [perm, fresh, onboard, onboardConfig, path.join(tasks, '.claude')]) await mkdir(dir, { recursive: true });
+  const server = path.join(sandbox.root, 'server-work'), serverConfig = path.join(sandbox.root, 'server-config');
+  for (const dir of [perm, fresh, onboard, onboardConfig, server, serverConfig, path.join(tasks, '.claude')]) await mkdir(dir, { recursive: true });
   await writeFile(path.join(tasks, '.claude', 'settings.json'), JSON.stringify({ permissions: { disableAutoMode: 'disable', allow: ['Bash', 'Monitor', 'ToolSearch', 'TaskStop'] } }));
   // Onboarding itself (theme, connectivity check against api.anthropic.com) cannot run
   // offline; this configuration has finished it and nothing else: the API key is not
@@ -110,12 +117,19 @@ export async function prepareFolders(sandbox) {
   config.projects[perm] = { ...config.projects[main] };
   config.projects[tasks] = { ...config.projects[main] };
   await writeFile(configFile, JSON.stringify(config, null, 2));
+  // The same first-run state for `server` (onboarded, API key approved, folder trusted) and
+  // the same settings, but not the variable that moves auto mode's check off the server.
+  const settingsFile = path.join(sandbox.config, 'settings.json'), settings = JSON.parse(await readFile(settingsFile, 'utf8'));
+  await writeFile(path.join(serverConfig, '.claude.json'), JSON.stringify({ ...config, projects: { [server]: { ...config.projects[main] } } }, null, 2));
+  await writeFile(path.join(serverConfig, 'settings.json'), JSON.stringify(settings, null, 2));
+  await writeFile(settingsFile, JSON.stringify({ ...settings, env: { CLAUDE_CODE_AUTO_MODE_SERVER: '0' } }, null, 2));
   return {
     main: { id: 'ccm-main', name: 'ccm-main', cwd: main },
     perm: { id: 'ccm-perm', name: 'ccm-perm', cwd: perm },
     fresh: { id: 'ccm-fresh', name: 'ccm-fresh', cwd: fresh },
     tasks: { id: 'ccm-tasks', name: 'ccm-tasks', cwd: tasks },
     onboard: { id: 'ccm-onboard', name: 'ccm-onboard', cwd: onboard, claudeDir: onboardConfig },
+    server: { id: 'ccm-server', name: 'ccm-server', cwd: server, claudeDir: serverConfig },
   };
 }
 
@@ -363,6 +377,11 @@ export const SCENARIOS = [
         await card.waitFor({ timeout: 90_000 });
         assert.match(await card.innerText(), /Auto mode (?:needs your confirmation|classifier requires confirmation)/);
         assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
+        // The fake model answers at once: the dialog can be on screen before Claude Code has
+        // written the third call (and the second one's result), so the card first belongs to
+        // the second call and a click then is refused by the transcript guard. Answer once the
+        // chat shows the third call, as a reader would.
+        await page.waitForFunction(selector => document.querySelectorAll(selector).length >= 3, sel.tool('Bash'), { timeout: 30_000 });
         await card.locator('[data-permission-option="1"]').click();
         await card.waitFor({ state: 'detached', timeout: 30_000 });
         await ui.waitReply('ccm-auto-confirm-done', { timeout: 60_000 });
@@ -372,63 +391,81 @@ export const SCENARIOS = [
     },
   },
   {
-    id: 'auto-unavailable',
-    features: ['auto-mode-unavailable', 'auto-mode-unavailable-leave'],
-    timeoutMs: 240_000,
+    id: 'server-check',
+    features: ['auto-mode-billing', 'auto-mode-unavailable', 'auto-mode-unavailable-leave'],
+    timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check, note } = ctx;
-      // Claude Code 2.1.321+ asks "Auto mode can't check actions in this session" when auto
-      // mode's check is to run on the server and a third-party endpoint (here the loopback
-      // fake API) gives no verdict. Lectern's launch settings turn the server check off
-      // (CLAUDE_CODE_AUTO_MODE_SERVER=0 keeps the local check), and neither the shell nor
-      // the user's settings can turn it back on, so a chat the app starts never gets there.
-      // A session started outside the app does (the user's own `claude`, here in a tmux
-      // session the app lists): the same flags as the app's, without that variable.
-      const tmuxBin = path.join(sandbox.bin, 'tmux'), quote = arg => `'${arg.replaceAll("'", "'\\''")}'`;
-      const external = async () => {
-        const id = crypto.randomUUID();
-        const settings = JSON.stringify({ promptSuggestionEnabled: false, permissions: { defaultMode: 'auto' } });
-        const command = `exec ${quote(path.join(sandbox.home, '.local', 'bin', 'claude'))} --settings ${quote(settings)} --session-id ${id}`;
-        execFileSync(tmuxBin, ['new-session', '-d', '-s', `${SESSION_PREFIX}${id.slice(0, 8)}-own`, '-x', '120', '-y', '40', '-c', folders.main.cwd,
-          ...Object.entries(sandbox.env).flatMap(([k, v]) => ['-e', `${k}=${v}`]), command], { env: sandbox.env, stdio: 'ignore' });
-        await page.locator(sel.row(id)).click({ timeout: 60_000 });
-        await ui.ready(60_000);
-        return id;
-      };
-      const command = name => ({ blocks: [{ type: 'tool_use', name: 'Bash', input: { command: `seq -w 1 3 | sed 's/$/ ccm-unavailable/' | tee ${name}.txt`, description: `Unchecked ${name}` } }] });
+      // Lectern's default: auto mode's check stays on the server, and the fake API, a gateway to
+      // Claude Code, never runs it. Before the first action that needs the check Claude Code
+      // 2.1.300 and 2.1.310 show their classifier billing notice, 2.1.321+ "Auto mode can't check
+      // actions in this session"; each is a card in chats the app starts in `server`, whose
+      // configuration does not set CLAUDE_CODE_AUTO_MODE_SERVER.
+      const expected = compareVersions(ctx.version, '2.1.321') < 0 ? 'billing' : 'unavailable';
+      const cwd = folders.server.cwd;
+      const command = name => ({ blocks: [{ type: 'tool_use', name: 'Bash', input: { command: `seq -w 1 3 | sed 's/$/ ccm-server/' | tee ${name}.txt`, description: `Checked ${name}` } }] });
+      api.script('server-cancel', ({ step }) => step < 1 ? command('billing-cancel') : { text: 'Should not run (ccm-server-cancel-done).' });
+      api.script('server-continue', ({ step }) => step < 1 ? command('billing-continue') : { text: 'Ran it after the notice (ccm-server-continue-done).' });
       api.script('auto-unavailable', ({ step }) => step < 1 ? command('unavailable-stay') : { text: 'Ran it after approval (ccm-unavailable-stay-done).' });
       api.script('auto-unavailable-leave', ({ step }) => step < 1 ? command('unavailable-leave') : { text: 'Should not run (ccm-unavailable-leave-done).' });
       api.script('auto-unavailable-after', () => ({ text: 'Still here in accept edits mode (ccm-unavailable-after).' }));
+      const billing = page.locator(`${sel.permission}[data-permission-kind="auto-mode-billing"]`);
       const card = page.locator(`${sel.permission}[data-permission-kind="auto-mode-unavailable"]`);
       const toolCard = page.locator(`${sel.permission}:not([data-permission-kind])`);
       // The native dialog, kept per release for parser samples.
       const record = async name => {
         const screen = (await ui.screen()).replaceAll(sandbox.root, '<sandbox>');
-        await writeFile(path.join(ctx.dir, `auto-unavailable.${name}.txt`), screen);
+        await writeFile(path.join(ctx.dir, `server-check.${name}.txt`), screen);
         return screen;
       };
-      /** The dialog appears, or this release does not have it: 2.1.300 and 2.1.310 show their
-       * classifier billing notice instead (Enter to continue, left to the terminal here). */
-      const notice = async () => {
-        for (const end = Date.now() + 90_000; Date.now() < end; await delay(500))
-          if (/We're changing auto mode to no longer charge for classifier requests/.test(await ui.screen())) return 'billing-notice';
-        throw new Error('no dialog');
-      };
+      /** The chat's first checked action brings this release's own card, nothing else. */
       const offered = async () => {
-        const seen = await Promise.race([card.waitFor({ timeout: 90_000 }).then(() => 'card'), toolCard.waitFor({ timeout: 90_000 }).then(() => 'tool'),
-          ui.waitReply('ccm-unavailable-', { timeout: 90_000 }).then(() => 'reply'), notice()]).catch(error => `none: ${error.message.split('\n')[0]}`);
-        if (seen === 'card') return true;
-        const screen = await record('without-dialog');
-        note('without-dialog', { seen, screen: screen.split('\n').slice(-30) });
-        // Only the older releases' own notice excuses the dialog; anything else is a failure.
-        if (seen !== 'billing-notice') throw new Error(`no "Auto mode can't check actions" card (${seen}); screen:\n${screen.split('\n').filter(line => line.trim()).slice(-12).join('\n')}`);
-        return seen;
+        const seen = await Promise.race([billing.waitFor({ timeout: 90_000 }).then(() => 'billing'), card.waitFor({ timeout: 90_000 }).then(() => 'unavailable'),
+          toolCard.waitFor({ timeout: 90_000 }).then(() => 'tool'), ui.waitReply('(ccm-', { timeout: 90_000 }).then(() => 'reply')]).catch(error => `none: ${error.message.split('\n')[0]}`);
+        if (seen === expected) return;
+        const screen = await record('unexpected');
+        note('unexpected', { seen, screen: screen.split('\n').slice(-30) });
+        throw new Error(`expected the ${expected} card, saw ${seen}; screen:\n${screen.split('\n').filter(line => line.trim()).slice(-12).join('\n')}`);
       };
-      await check('auto-mode-unavailable', async () => {
-        await external();
-        await ui.send('Run the command auto mode cannot check ccm:auto-unavailable');
-        const shown = await offered();
-        if (shown !== true) return { skip: `Claude Code ${ctx.version} does not show this dialog (${shown})` };
+      const skip = `Claude Code ${ctx.version} shows ${expected === 'billing' ? 'the classifier billing notice' : '"Auto mode can\'t check actions"'} instead`;
+      if (expected === 'unavailable') await check('auto-mode-billing', async () => ({ skip }));
+      else for (const feature of ['auto-mode-unavailable', 'auto-mode-unavailable-leave']) await check(feature, async () => ({ skip }));
+      if (expected === 'billing') await check('auto-mode-billing', async () => {
+        await startChat(ctx, folders.server, 'Run the command auto mode checks on the server ccm:server-cancel');
+        await offered();
+        note('notice', (await record('billing-notice')).split('\n').slice(-16));
+        assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
+        const text = await billing.innerText();
+        assert.match(text, /auto mode 计费说明/);
+        assert.match(text, /Claude Code 自己的计费变更说明/);
+        assert.match(text, /We're changing auto mode to no longer charge for classifier requests in Claude Code\./);
+        assert.match(text, /classifier requests are billed as before/);
+        assert.deepEqual(await billing.locator('.question-option strong').allInnerTexts(), ['继续', '取消']);
+        assert.deepEqual(await billing.locator('.question-mark').allInnerTexts(), ['Enter', 'Esc']);
+        assert.equal(await billing.locator('.question-option[aria-pressed="true"]').count(), 0, 'nothing is preselected');
+        await billing.screenshot({ path: path.join(ctx.dir, 'server-check.billing-card.png') });
+        // Cancel (Esc): the turn stops, the action does not run, nothing is remembered.
+        await billing.locator('[data-permission-cancel]').click();
+        await billing.waitFor({ state: 'detached', timeout: 30_000 });
+        await ui.waitStatus('idle', 30_000);
+        assert.ok(!existsSync(path.join(cwd, 'billing-cancel.txt')), 'the cancelled action did not run');
+        assert.equal(api.requests.filter(r => r.script === 'server-cancel').length, 1, 'the stopped turn sent nothing more');
+        // The next checked action brings the notice again; continue (Enter) runs it after Claude Code's own check.
+        const checks = api.requests.filter(r => r.kind === 'classifier').length;
+        await ui.send('Run another one ccm:server-continue');
+        await offered();
+        await billing.locator('[data-permission-option="1"]').click();
+        await billing.waitFor({ state: 'detached', timeout: 30_000 });
+        await ui.waitReply('ccm-server-continue-done', { timeout: 60_000 });
+        assert.ok(existsSync(path.join(cwd, 'billing-continue.txt')), 'the action ran');
+        assert.ok(api.requests.filter(r => r.kind === 'classifier').length > checks, 'checked by Claude Code with a request of its own');
+        const config = JSON.parse(await readFile(path.join(folders.server.claudeDir, '.claude.json'), 'utf8'));
+        assert.equal(typeof config.autoModeClassifierBillingNoticeAcknowledgedAt, 'number', 'Claude Code remembers the answer');
+        assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
+      });
+      if (expected === 'unavailable') await check('auto-mode-unavailable', async () => {
+        await startChat(ctx, folders.server, 'Run the command auto mode cannot check ccm:auto-unavailable');
+        await offered();
         note('dialog', (await record('dialog')).split('\n').slice(-24));
         assert.match(await card.innerText(), /Auto mode can't check actions in this session/);
         assert.deepEqual(await card.locator('[data-permission-option]').evaluateAll(rows => rows.map(row => row.dataset.permissionKey)), ['Enter', 'BTab']);
@@ -438,29 +475,28 @@ export const SCENARIOS = [
         // Staying in auto mode: this action now asks like any tool, and runs once approved.
         await toolCard.waitFor({ timeout: 30_000 });
         note('after-stay', (await record('after-stay')).split('\n').slice(-20));
-        assert.match(await toolCard.innerText(), /ccm-unavailable/);
+        assert.match(await toolCard.innerText(), /ccm-server/);
         // Claude Code asks with unnumbered choices and "No" first; approve with "Yes".
         const choices = await toolCard.locator('[data-permission-option] strong').allInnerTexts();
         note('after-stay-options', choices);
         await toolCard.locator('[data-permission-option]', { has: page.locator('strong', { hasText: /^Yes$/ }) }).click();
         await toolCard.waitFor({ state: 'detached', timeout: 30_000 });
         await ui.waitReply('ccm-unavailable-stay-done', { timeout: 60_000 });
-        assert.ok(existsSync(path.join(folders.main.cwd, 'unavailable-stay.txt')), 'the approved command ran');
+        assert.ok(existsSync(path.join(cwd, 'unavailable-stay.txt')), 'the approved command ran');
         assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
       });
-      await ui.closeChat();
-      await check('auto-mode-unavailable-leave', async () => {
-        await external();
-        await ui.send('Run the command again ccm:auto-unavailable-leave');
-        const shown = await offered();
-        if (shown !== true) return { skip: `Claude Code ${ctx.version} does not show this dialog (${shown})` };
+      if (expected === 'unavailable') await ui.closeChat();
+      // A new chat (a new Claude Code process) asks again.
+      if (expected === 'unavailable') await check('auto-mode-unavailable-leave', async () => {
+        await startChat(ctx, folders.server, 'Run the command again ccm:auto-unavailable-leave');
+        await offered();
         await card.locator('[data-permission-option="2"]').click();
         await card.waitFor({ state: 'detached', timeout: 30_000 });
         // The turn stops in accept edits mode; the waiting action never ran.
         await waitMode(page, 'acceptEdits');
         note('after-leave', (await record('after-leave')).split('\n').slice(-12));
         await ui.waitStatus('idle', 30_000);
-        assert.ok(!existsSync(path.join(folders.main.cwd, 'unavailable-leave.txt')), 'the waiting action did not run');
+        assert.ok(!existsSync(path.join(cwd, 'unavailable-leave.txt')), 'the waiting action did not run');
         await ui.send('Go on ccm:auto-unavailable-after');
         await ui.waitReply('ccm-unavailable-after', { timeout: 60_000 });
         assert.equal(api.requests.filter(r => r.script === 'auto-unavailable-leave').length, 1, 'the stopped turn sent nothing more');

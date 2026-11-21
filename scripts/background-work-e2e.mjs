@@ -13,17 +13,18 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from 'playwright';
-import { answerAutoModeCheck, isAutoModeCheck } from './fixtures/auto-mode-check.mjs';
+import { answerAutoModeCheck, isAutoModeCheck, LOCAL_AUTO_MODE_CHECK } from './fixtures/auto-mode-check.mjs';
 
 const textOf = content => typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => part.text ?? (typeof part.content === 'string' ? part.content : JSON.stringify(part.content ?? ''))).join('\n') : '';
 const requests = [];
+let localChecks = 0;
 let releaseAgent, releaseResumed, agentId, sendMessageTool, toolSearch, mainTools;
 const agentHeld = new Promise(resolve => { releaseAgent = resolve; });
 const resumedHeld = new Promise(resolve => { releaseResumed = resolve; });
 const server = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   let body; try { body = JSON.parse(raw); } catch {}
-  if (req.method === 'POST' && isAutoModeCheck(body)) return answerAutoModeCheck(res, body);
+  if (req.method === 'POST' && isAutoModeCheck(body)) { localChecks++; return answerAutoModeCheck(res, body); }
   if (req.method !== 'POST' || !body?.stream) return res.writeHead(500).end('{}');
   const messages = body.messages ?? [], last = messages.at(-1);
   const all = messages.map(message => textOf(message.content)).join('\n');
@@ -93,7 +94,9 @@ try {
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash', 'ToolSearch', 'SendMessage'], defaultMode: 'acceptEdits' },
     env: { ANTHROPIC_API_KEY: 'bg-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'bg', name: '后台任务', kind: 'local', cwd, claudeDir: config }]));
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(output, 'diagnostics') };
+  // Auto mode's check runs locally (answered by the loopback model), not on the server, which
+  // this loopback "gateway" cannot run; the variable reaches Claude Code through the app and tmux.
+  const env = { ...process.env, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(output, 'diagnostics') };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
@@ -188,7 +191,7 @@ try {
     assert.ok(Date.parse(report.agentFinishedAgain.endedAt) > Date.parse(report.agentDone.endedAt));
   }
   report.requests = requests;
-  console.log(JSON.stringify({ ok: true, report }));
+  console.log(JSON.stringify({ ok: true, report, localChecks }));
 } catch (error) {
   report.requests = requests;
   report.failureRow = await page?.evaluate(() => { const row = document.querySelector('.session-row.active'); return { title: row?.title, background: row?.dataset.background,

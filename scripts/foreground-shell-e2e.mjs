@@ -8,14 +8,14 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from 'playwright';
-import { answerAutoModeCheck, isAutoModeCheck } from './fixtures/auto-mode-check.mjs';
+import { answerAutoModeCheck, isAutoModeCheck, LOCAL_AUTO_MODE_CHECK } from './fixtures/auto-mode-check.mjs';
 
 const command = 'for i in 1 2 3 4 5 6; do echo fg-line-$i; sleep 1; done';
-let turn = 0;
+let turn = 0, localChecks = 0;
 const server = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += chunk;
   let body; try { body = JSON.parse(raw); } catch {}
-  if (req.method === 'POST' && isAutoModeCheck(body)) return answerAutoModeCheck(res, body);
+  if (req.method === 'POST' && isAutoModeCheck(body)) { localChecks++; return answerAutoModeCheck(res, body); }
   if (req.method !== 'POST' || !body?.stream) return res.writeHead(500).end('{}');
   const tool = turn++ === 0 && body.tools?.some(t => t.name === 'Bash');
   const send = (type, fields = {}) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...fields })}\n\n`);
@@ -36,7 +36,9 @@ try {
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash'], defaultMode: 'acceptEdits' },
     env: { ANTHROPIC_API_KEY: 'fg-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'fg', name: '前台命令', kind: 'local', cwd, claudeDir: config }]));
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
+  // Auto mode's check runs locally (answered by the loopback model), not on the server, which
+  // this loopback "gateway" cannot run; the variable reaches Claude Code through the app and tmux.
+  const env = { ...process.env, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
@@ -76,7 +78,7 @@ try {
     throw error;
   });
   await live.waitFor({ state: 'detached' });
-  console.log(JSON.stringify({ ok: true, liveRow: true, description: true, screenLineCount: lines ?? null, panelExcluded: true }));
+  console.log(JSON.stringify({ ok: true, liveRow: true, description: true, screenLineCount: lines ?? null, panelExcluded: true, localChecks }));
 } finally {
   await app?.close().catch(() => {});
   try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}

@@ -17,8 +17,11 @@ export function launchSettings(options: { statusLine?: object; enableWorkflows: 
     // with permissions.disableAutoMode in user, project or managed settings)
     // Claude Code starts in manual mode and tool permissions show as cards.
     permissions: { defaultMode: 'auto' },
-    // CLAUDE_CODE_AUTO_MODE_SERVER=0 keeps the "auto mode is free" notice from
-    // opening over the composer, where it would read as a native dialog.
-    env: { CLAUDE_CODE_AUTO_MODE_SERVER: '0' },
+    // No `env`: auto mode's safety check stays where Claude Code puts it (on the
+    // server, free of charge, with a direct Anthropic connection). Through a gateway
+    // that does not pass it through, Claude Code says so in a dialog (the billing
+    // notice in 2.1.300–2.1.310, "Auto mode can't check actions" from 2.1.321), which
+    // Lectern shows as a card (core/auto-mode-screen.ts). A user who wants the local
+    // check sets CLAUDE_CODE_AUTO_MODE_SERVER=0 in their shell or settings themselves.
   };
 }

@@ -9,7 +9,8 @@ test('every Lectern starts gets auto mode as its default through per-process set
   assert.deepEqual(settings.statusLine, statusLine.statusLine);
   assert.equal(settings.promptSuggestionEnabled, false);
   assert.equal(settings.enableWorkflows, true);
-  assert.deepEqual(settings.env, { CLAUDE_CODE_AUTO_MODE_SERVER: '0' });
+  // Auto mode's check is left where Claude Code puts it: no environment of Lectern's own.
+  assert.equal('env' in settings, false);
   // The same settings without a status line (the model-list probe) or workflows.
   const plain = launchSettings({ enableWorkflows: false });
   assert.deepEqual(plain.permissions, { defaultMode: 'auto' });

@@ -1,6 +1,10 @@
-// The app starts Claude Code in auto mode, which sends some tool calls (background
-// tasks, subagents, pipelines, loops) to the model as a safety check before running
-// them, usually as a non-streaming request. Loopback fake models in the e2e scripts
+// The app starts Claude Code in auto mode, which has some tool calls (background
+// tasks, subagents, pipelines, loops) checked before running them. Lectern leaves
+// that check on the server, which a loopback model, like any gateway, does not run:
+// Claude Code then stops with its billing notice (2.1.300–2.1.310) or "Auto mode
+// can't check actions" (2.1.321+). E2e scripts that test something else start the
+// app with CLAUDE_CODE_AUTO_MODE_SERVER=0, so Claude Code checks locally by sending
+// the model a request of its own, usually non-streaming. Their loopback models
 // answer it with this: every action is harmless. Without an answer Claude Code
 // blocks the action ("auto mode cannot determine the safety of …").
 
@@ -9,6 +13,10 @@ export function isAutoModeCheck(body) {
   const system = typeof body?.system === 'string' ? body.system : (body?.system ?? []).map(part => part?.text ?? '').join('\n');
   return /security monitor for autonomous AI coding agents/i.test(system);
 }
+
+/** The app's environment for e2e scripts that are not about auto mode's server check:
+ * Claude Code checks actions locally (passed through the app and tmux to the CLI). */
+export const LOCAL_AUTO_MODE_CHECK = { CLAUDE_CODE_AUTO_MODE_SERVER: '0' };
 
 /** Answer the check: the first stage wants only <severity>N</severity>, the second thinks first. */
 export function answerAutoModeCheck(res, body) {

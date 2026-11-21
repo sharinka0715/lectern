@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ShieldAlert, ShieldQuestion, Terminal, X } from 'lucide-react';
+import { Coins, ShieldAlert, ShieldQuestion, Terminal, X } from 'lucide-react';
 import type { NativePermissionOption, PermissionAction, PermissionSnapshot } from '../shared/native-permission';
 import './question-card.css';
 import { t } from '../shared/i18n';
@@ -20,8 +20,9 @@ export function diffKind(line: string): 'add' | 'del' | undefined {
 /** A rejecting choice leaves the turn waiting for the user's guidance. */
 export const rejects = (label: string) => /^No\b/u.test(label);
 const keyGlyph = { Enter: 'Enter', BTab: '⇧Tab' } as const;
-/** "Auto mode can't check actions in this session": what each keyed choice does, in the app's language. */
-function keyedCopy(option: NativePermissionOption) {
+/** A keyed dialog's choices (core/auto-mode-screen.ts): what each one does, in the app's language. */
+function keyedCopy(kind: PermissionSnapshot['kind'], option: NativePermissionOption) {
+  if (kind === 'auto-mode-billing') return { label: t('cards.autoModeBillingContinue'), hint: t('cards.autoModeBillingContinueHint') };
   if (option.key === 'Enter') return { label: t('cards.autoModeStay'), hint: t('cards.autoModeStayHint') };
   return { label: t('cards.autoModeLeave'), hint: option.unavailable ? t('cards.autoModeLeaveUnavailable') : t('cards.autoModeLeaveHint') };
 }
@@ -33,7 +34,9 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
   const root = useRef<HTMLElement>(null);
   const pending = result?.token === p.token && !result.error;
   const blocked = busy || pending || !!unconfirmed;
-  const keyed = p.kind === 'auto-mode-unavailable';
+  // A keyed dialog: "Auto mode can't check actions" or the classifier billing notice.
+  const keyed = !!p.kind, billing = p.kind === 'auto-mode-billing';
+  const heading = billing ? t('cards.autoModeBilling') : keyed ? t('cards.autoModeUnavailable') : t('cards.permission');
   useEffect(() => { root.current?.querySelector<HTMLButtonElement>('.question-option[aria-pressed="true"]')?.focus({ preventScroll: true }); }, [p.toolUseId]);
   const act = async (action: PermissionAction) => {
     if (blocked || inFlight.current) return;
@@ -43,7 +46,7 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
     catch (error) { setResult({ token: p.token, error: error instanceof Error ? error.message : String(error) }); }
     finally { inFlight.current = false; }
   };
-  return <section ref={root} className={`question-card permission-card${keyed ? ' auto-mode-unavailable' : ''}`} aria-label={keyed ? t('cards.autoModeUnavailable') : t('cards.permission')}
+  return <section ref={root} className={`question-card permission-card${keyed ? ` ${p.kind}` : ''}`} aria-label={heading}
     aria-busy={blocked} data-permission-token={p.token} data-permission-kind={p.kind}
     onKeyDown={event => {
       if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -53,11 +56,11 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
       else if (event.key === 'Escape') { event.preventDefault(); void act({ kind: 'cancel' }); }
     }}>
     <header className="question-header">
-      <span>{keyed ? <><ShieldAlert size={15} aria-hidden="true" />{t('cards.autoModeUnavailable')}</>
+      <span>{keyed ? <>{billing ? <Coins size={15} aria-hidden="true" /> : <ShieldAlert size={15} aria-hidden="true" />}{heading}</>
         : <><ShieldQuestion size={15} aria-hidden="true" />{t('cards.needsConfirmation', { title: p.title })}</>}</span>
       <button type="button" onClick={onViewTerminal} title={t('cards.viewPermissionScreen')}><Terminal size={14} aria-hidden="true" />{t('cards.viewScreen')}</button>
     </header>
-    {keyed && <p className="permission-intro">{t('cards.autoModeUnavailableIntro')}</p>}
+    {keyed && <p className="permission-intro">{billing ? t('cards.autoModeBillingIntro') : t('cards.autoModeUnavailableIntro')}</p>}
     {keyed ? <figure className="question-preview permission-native">
       <figcaption>{t('cards.autoModeNative')}</figcaption>
       <p lang="en"><strong>{p.title}</strong></p>
@@ -70,7 +73,7 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
     {p.question && <h3>{p.question}</h3>}
     <ul className="question-options" aria-label={t('cards.options')}>
       {p.options.map(row => {
-        const copy = row.key ? keyedCopy(row) : undefined;
+        const copy = row.key ? keyedCopy(p.kind, row) : undefined;
         return <li key={row.number}>
           <div className="question-option-row">
             <button type="button" className="question-option" aria-pressed={row.focused} disabled={blocked || row.unavailable}
@@ -84,11 +87,21 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
           </div>
         </li>;
       })}
+      {/* The billing notice's footer is "Enter to continue · Esc to cancel": both are choices here. */}
+      {billing && <li>
+        <div className="question-option-row">
+          <button type="button" className="question-option" aria-pressed={false} disabled={blocked} data-permission-cancel="Escape" onClick={() => void act({ kind: 'cancel' })}>
+            <span className="question-mark key" aria-hidden="true">Esc</span>
+            <span className="question-option-copy"><strong>{t('cards.autoModeBillingCancel')}</strong><small>{t('cards.autoModeBillingCancelHint')}</small>
+              <small lang="en" className="permission-native-label">cancel</small></span>
+          </button>
+        </div>
+      </li>}
     </ul>
     {unconfirmed && <p className="question-error" role="alert">{t('cards.resultUnconfirmed')}</p>}
     {!unconfirmed && result?.token === p.token && result.error && <p className="question-error" role="alert">{result.error}</p>}
     <div className="question-actions">
-      <button type="button" disabled={blocked} onClick={() => void act({ kind: 'cancel' })}><X size={13} aria-hidden="true" />{keyed ? t('cards.autoModeStopEsc') : t('cards.cancelEsc')}</button>
+      {!billing && <button type="button" disabled={blocked} onClick={() => void act({ kind: 'cancel' })}><X size={13} aria-hidden="true" />{keyed ? t('cards.autoModeStopEsc') : t('cards.cancelEsc')}</button>}
       {pending && !unconfirmed && <span role="status">{t('cards.confirmingScreen')}</span>}
     </div>
   </section>;

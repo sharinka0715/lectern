@@ -1,7 +1,7 @@
 import type { SessionStatus } from '../shared/types';
 import { diagnostic, summarize } from '../diagnostics';
 import { parseCacheConfirmationLines } from './model-switch-confirmation';
-import { AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudgeLines, showsAutoModeUnavailable, type AutoModeNudge } from './auto-mode-screen';
+import { AUTO_MODE_BILLING_TITLE, AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudgeLines, showsAutoModeBillingNotice, showsAutoModeUnavailable, type AutoModeNudge } from './auto-mode-screen';
 import { nativeTaskPanel } from './native-task-screen';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 import { t } from '../shared/i18n';
@@ -196,6 +196,9 @@ function classifyLines(allLines: string[]): SessionScreenClassification {
   // never an idle input box.
   if (showsAutoModeUnavailable(allLines) || (lines.some((line, index) => index >= lines.length - 40 && line.trim() === AUTO_MODE_UNAVAILABLE_TITLE)
     && has(3, /\b(?:Enter to stay in auto mode|Esc to cancel)\b/))) return { status: 'waiting', detail: t('core.waitingAutoModeUnavailable') };
+  // The classifier billing notice (2.1.300–2.1.310 through a gateway) holds it the same way.
+  if (showsAutoModeBillingNotice(allLines) || (lines.some((line, index) => index >= lines.length - 40 && line.trim() === AUTO_MODE_BILLING_TITLE)
+    && has(3, /\b(?:Enter to continue|Esc to cancel)\b/))) return { status: 'waiting', detail: t('core.waitingAutoModeBilling') };
   const theme = has(64, /^\s*Choose the text style that looks best with your terminal\.?\s*$/)
     && has(64, /^\s*❯\s*(?:✔\s*)?(?:\d+\.\s*)?(?:Auto|Dark|Light)\b/);
   if (theme) return { status: 'waiting', detail: t('core.waitingTheme') };
