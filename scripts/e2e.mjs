@@ -13,6 +13,30 @@ const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: userDa
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 let app;
+/** Watches the open transcript in the page: problems lists every moment it went empty,
+ * was remounted (a new scroll container) or replaced a rendered bubble. */
+function watchTranscript(page) {
+  return page.evaluateHandle(() => {
+    const scroll = document.querySelector('.conversation-scroll');
+    const bubbles = [...scroll.querySelectorAll('.message')];
+    const text = () => scroll.querySelector('.conversation')?.innerText ?? '';
+    const initialText = text(), problems = new Set();
+    let fewestReplies = Infinity;
+    const sample = () => {
+      const shown = document.querySelector('.conversation-scroll');
+      if (shown !== scroll) problems.add('the transcript was remounted');
+      const replies = shown?.querySelectorAll('.message-assistant').length ?? 0;
+      fewestReplies = Math.min(fewestReplies, replies);
+      if (!replies) problems.add('the transcript went empty');
+      if (bubbles.some(node => !node.isConnected)) problems.add('a rendered bubble was replaced');
+    };
+    const observer = new MutationObserver(sample);
+    observer.observe(document.body, { childList: true, subtree: true });
+    sample();
+    const read = () => ({ problems: [...problems], fewestReplies, bubbles: bubbles.length, text: text(), initialText });
+    return { read, finish: () => { sample(); observer.disconnect(); return read(); } };
+  });
+}
 try {
   app = await electron.launch({ args: ['.', '--demo'], env, timeout: 60000 });
   const page = await app.firstWindow();
@@ -121,6 +145,9 @@ try {
   await page.locator('.terminal-panel pre').waitFor();
   assert.deepEqual(await closeButton.boundingBox(), closeAt, 'opening the terminal panel moved 关闭对话');
   // Closing asks first: focus starts on Cancel, and Esc or Cancel keeps Claude running.
+  // From the first click until the chat is saved history, the transcript stays as it is.
+  const transcriptProbe = await watchTranscript(page);
+  const transcriptSeen = () => transcriptProbe.evaluate(probe => probe.read());
   const confirmDialog = page.locator('dialog.confirm-action[open]');
   await closeButton.click();
   await confirmDialog.waitFor();
@@ -134,15 +161,39 @@ try {
   await page.waitForTimeout(500);
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'true', 'cancelling keeps the session running');
   assert.equal(await page.getByRole('button', { name: '续接会话', exact: true }).count(), 0);
-  await closeButton.click();
-  await confirmDialog.getByRole('button', { name: '关闭对话', exact: true }).click();
+  let seen = await transcriptSeen();
+  assert.deepEqual(seen.problems, [], 'cancelling the confirmation leaves the transcript alone');
+  assert.equal(seen.text, seen.initialText, 'cancelling the confirmation leaves the transcript alone');
+  // A close that fails (the demo machine refuses the close command) changes nothing either.
+  await app.evaluate(() => { process.env.LECTERN_DEMO_FAIL_TAG = 'tmux.close_session'; });
+  try {
+    await closeButton.click();
+    await confirmDialog.getByRole('button', { name: '关闭对话', exact: true }).click();
+    await page.locator('.error-banner', { hasText: 'Rehearsed failure: tmux.close_session' }).waitFor();
+  } finally { await app.evaluate(() => { delete process.env.LECTERN_DEMO_FAIL_TAG; }); }
+  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'true', 'a failed close keeps the session running');
+  assert.equal(await page.getByRole('button', { name: '续接会话', exact: true }).count(), 0);
+  seen = await transcriptSeen();
+  assert.deepEqual(seen.problems, [], 'a failed close leaves the transcript alone');
+  assert.equal(seen.text, seen.initialText, 'a failed close leaves the transcript alone');
+  // On a slow machine (every command waits, as through an SSH relay) the close takes
+  // seconds. All along, the chat shows its messages: never empty, never remounted,
+  // until the resume bar replaces the input box.
+  await app.evaluate(() => { process.env.LECTERN_DEMO_LATENCY_MS = '300'; });
   const resume = page.getByRole('button', { name: '续接会话', exact: true });
-  await resume.waitFor();
-  // The bar shows (its button disabled) as soon as the pane is gone, while 关闭对话
-  // still reopens the conversation as history, which remounts the transcript.
-  // Let that finish, so the observer below sees only what 续接会话 does.
-  await page.waitForFunction(() => [...document.querySelectorAll('.resume-bar button')].some(b => b.textContent.includes('续接会话') && !b.disabled));
+  try {
+    await closeButton.click();
+    await confirmDialog.getByRole('button', { name: '关闭对话', exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('.resume-bar button')].some(b => b.textContent.includes('续接会话') && !b.disabled),
+      null, { timeout: 40000 });
+  } finally { await app.evaluate(() => { delete process.env.LECTERN_DEMO_LATENCY_MS; }); }
+  seen = await transcriptProbe.evaluate(probe => probe.finish());
+  assert.deepEqual(seen.problems, [], 'closing keeps the transcript on screen (no blank frame, no remount)');
+  assert.equal(seen.fewestReplies, 2);
+  assert.equal(await page.locator('.message-assistant').count(), 2);
   assert.equal(await input.isDisabled(), true);
+  assert.match(await input.getAttribute('placeholder'), /续接/, 'the disabled input box says why');
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'false');
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-persisted'), 'true');
   // Resuming keeps the loaded transcript: the same bubbles stay mounted, never an empty pane.

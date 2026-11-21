@@ -20,7 +20,7 @@ import { basename, posix } from 'node:path';
 import type { SettingSwitchMode, DirectoryTrustDecision, DirectoryTrustResult, DirectoryTrustSnapshot, HistoryScan, HistoryTarget, ReplyBaselines, TranscriptPosition, NativeStatusLineObservation, PaneInfo, SessionInfo, SessionSettingKind, SessionSettingSnapshot, TerminalFrame, TerminalInput, TerminalKey, Workspace, WorkspaceDirectoryPage, WorkspaceDiscovery, WorkspaceEndpoint } from '../shared/types';
 import { TERMINAL_KEYS } from '../shared/types';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
-import { Transport, quoteShell as q, validateWorkspace } from './transport';
+import { Transport, quoteShell as q, validateWorkspace, type TransportOptions } from './transport';
 import { uploadAttachment } from './attachment-upload';
 import { gitChanges, privacyGuarded } from './git-changes';
 import type { AnswerPrompt } from './ssh-login';
@@ -77,7 +77,7 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
   }
 }
 export interface LaunchPreferences { enableWorkflows: boolean }
-export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string }
+export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'] }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
 export interface ReadResult { nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
@@ -184,7 +184,7 @@ export class Backend {
   // One host check per machine (kind, host, port); a definite answer stays until a recheck.
   private readonly hostChecks = new Map<string, Promise<HostCheck>>();
   constructor(private readonly options: BackendOptions = {}) {
-    this.transport = new Transport(options.sshConfigPath);
+    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal });
     if (!options.claudeCommand) this.endpointBilling = new EndpointBillingCache(this.transport);
     this.artifacts = new WorkspaceArtifacts(this.transport);
     this.completions = new ComposerCompletions(this.transport, this.artifacts);
@@ -874,7 +874,8 @@ remaining=$(list_target)
 [ -z "$remaining" ] || { echo ${q(t('backend.paneNotClosed'))} >&2; exit 1; }`;
         await this.transport.run(workspace, script, { tag: 'tmux.close_session', timeoutMs: 16000 });
         this.touchWorkspace(workspace.id);
-        this.resetRead(workspace.id, sessionId);
+        // The read cursor stays: the open chat keeps its transcript and its next
+        // read only adds what Claude flushed on exit (a fresh watch resets it anyway).
         this.sessions.delete(this.key(workspace, sessionId));
         const discovery = await this.discover(workspace);
         return discovery.sessions.find(item => item.id === sessionId) ?? null;

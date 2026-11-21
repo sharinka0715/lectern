@@ -239,6 +239,9 @@ export interface TransportOptions {
   channelKinds?: Workspace['kind'][];
   channelLimit?: number;
   channelIdleMs?: number;
+  /** Demo mode rehearses a slow or failing machine: an extra wait before each command
+   * and, for a matching command tag, a failure instead of running it. */
+  rehearsal?: (tag?: string) => { delayMs?: number; error?: string } | undefined;
 }
 const channelStartMs = 15_000;
 /** One-off SSH sessions (and terminal streams) open at once per host. With up to
@@ -261,7 +264,9 @@ export class Transport {
   private sweeper?: ReturnType<typeof setInterval>;
   private readonly sessions = new Map<string, { active: number; waiting: (() => void)[] }>();
   private readonly platforms = new Map<string, Promise<void>>();
+  private readonly rehearsal: TransportOptions['rehearsal'];
   constructor(private readonly sshConfigPath?: string, options: TransportOptions = {}) {
+    this.rehearsal = options.rehearsal;
     // Every new SSH session repeats the handshake (≈300 ms through a relay); a
     // request on an open channel costs one round trip. LECTERN_SSH_CHANNEL=0 opts out.
     const kinds = process.env.LECTERN_SSH_CHANNEL === '0' || process.platform === 'win32' ? [] : options.channelKinds ?? ['ssh'];
@@ -441,6 +446,9 @@ export class Transport {
   }
   async run(workspace: Workspace, script: string, options: CommandOptions = {}): Promise<CommandResult> {
     if (this.disposed) throw new Error('Transport has been disposed');
+    const rehearsal = this.rehearsal?.(options.tag);
+    if (rehearsal?.delayMs && rehearsal.delayMs > 0) await new Promise(resolve => setTimeout(resolve, rehearsal.delayMs));
+    if (rehearsal?.error) throw new Error(rehearsal.error);
     await this.supported(workspace);
     return this.unchecked(workspace, script, options);
   }

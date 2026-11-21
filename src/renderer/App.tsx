@@ -888,8 +888,11 @@ export default function App({view = "primary"}: {view?: ChatView}) {
       }));
       if (sessionRequest.current !== selectionRequest) return;
       setTerminalOpen(false);
-      if (history) await openSession(workspace.id, history.id);
-      else {
+      // Saved history stays on screen: the main process kept this conversation's reader
+      // and already pushed it without its pane. Opening it again would blank the chat
+      // and remount the transcript (keyed by the selection) until a fresh read arrived.
+      if (history && history.id !== sessionId) await openSession(workspace.id, history.id);
+      else if (!history) {
         // Nothing was written, so this chat disappears: its typed text, or a first
         // message still waiting for Claude, goes back to the folder's new chat.
         const key = draftKey(workspace.id, sessionId), pending = launchRef.current?.sessionId === sessionId ? launchRef.current : undefined;

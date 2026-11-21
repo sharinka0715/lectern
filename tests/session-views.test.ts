@@ -128,3 +128,21 @@ test('pointing at many rows reads ahead a few, never evicting opened conversatio
   assert.ok(live().includes('opened') && live().includes('hover-9'));
   assert.equal(live().filter(id => id.startsWith('hover-1')).length, 6);
 });
+
+test('a closed conversation keeps its one reader, and once out of the pane it is evicted first of the 48 cached', async () => {
+  const primary = new Reader();
+  const views = new SessionViews(primary as unknown as Controller, () => {});
+  await views.watch('w', 'closed');
+  const [closed] = primary.created;
+  // Closing turns the same reader's snapshot into history (no pane); nothing reopens it.
+  closed.currentSnapshot = { ...closed.currentSnapshot!, paneId: undefined };
+  assert.equal(views.forSession('w', 'closed'), closed, 'later actions still reach the closed chat');
+  for (let i = 0; i < 48; i++) {
+    await views.watch('w', `live-${i}`);
+    primary.created.at(-1)!.currentSnapshot!.paneId = `%${i}`;
+  }
+  views.release('primary');
+  assert.equal(primary.created.length, 49, 'one reader per conversation');
+  assert.equal(closed.detached, true, 'saved history goes before running conversations');
+  assert.ok(primary.created.slice(1).every(reader => !reader.detached));
+});

@@ -49,6 +49,7 @@ export const FEATURES = [
   { id: 'task-shell-output', title: "Task column: a background shell's command and its output file, appended while it runs" },
   { id: 'task-redirect-output', title: 'Task column: a background shell that redirected into a file shows that file' },
   { id: 'task-monitor-output', title: "Task column: a monitor's output file (where Monitor is offered)" },
+  { id: 'close-in-place', title: 'Close conversation: the transcript stays mounted and turns into history' },
   { id: 'history-paging', title: 'Reopen a closed session: first page, then older history' },
   { id: 'resume', title: 'Resume a closed session (--resume) and continue' },
   { id: 'auto-mode-resume', title: 'A resumed session starts in auto mode (status bar)' },
@@ -683,7 +684,7 @@ export const SCENARIOS = [
   },
   {
     id: 'history',
-    features: ['history-paging', 'rename-inactive', 'resume', 'auto-mode-resume'],
+    features: ['close-in-place', 'history-paging', 'rename-inactive', 'resume', 'auto-mode-resume'],
     timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, folders, check } = ctx;
@@ -704,12 +705,23 @@ export const SCENARIOS = [
       await ui.waitReply('ccm-small-done', { timeout: 60_000 });
       await ui.waitStatus('idle', 30_000);
       const id = await ui.activeSessionId();
-      await ui.closeChat();
-      await page.locator('.resume-bar').waitFor({ timeout: 30_000 });
+      await check('close-in-place', async () => {
+        // The same bubbles stay while the chat turns into resumable history: never blank, no reload.
+        const shown = await page.locator(sel.assistant).last().elementHandle();
+        await page.evaluate(() => {
+          window.ccmTranscriptEmptied = false;
+          new MutationObserver(() => { if (!document.querySelector('.conversation-scroll .message-assistant')) window.ccmTranscriptEmptied = true; })
+            .observe(document.body, { childList: true, subtree: true });
+        });
+        await ui.closeChat();
+        await page.locator('.resume-bar').waitFor({ timeout: 30_000 });
+        assert.equal(await shown.evaluate(node => node.isConnected), true, 'closing reloaded the transcript');
+        assert.equal(await page.evaluate(() => window.ccmTranscriptEmptied), false, 'closing blanked the transcript');
+      });
       await check('history-paging', async () => {
-        // Leave and reopen: the reader starts from the newest page again.
-        await ui.openDraft(folders.perm.name);
-        await page.locator(sel.row(id)).click();
+        // A fresh read starts from the newest page. Leaving and coming back would show the
+        // cached reader with every page it holds; reloading the window reopens it in place.
+        await page.reload();
         await ui.waitReply('ccm-small-done', { timeout: 30_000 });
         await page.locator('.history-page-control button').waitFor({ timeout: 30_000 });
         assert.equal(await page.locator(`${sel.user}:has-text("First long turn")`).count(), 0, 'the oldest turn is not on the first page');

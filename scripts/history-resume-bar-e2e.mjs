@@ -89,6 +89,36 @@ async function observeRefreshes(cycles, expectBanner) {
   } finally { await probe.dispose(); }
 }
 
+// The transcript while 关闭对话 runs: a new scroll container, an empty pane or a lost
+// anchor message is a problem; how far that message and the input area moved.
+function observeClose() {
+  return page.evaluateHandle(() => {
+    const viewport = document.querySelector(".conversation-scroll"), dock = document.querySelector(".composer-area");
+    const anchor = [...viewport.querySelectorAll(".message")].find(el =>
+      el.getBoundingClientRect().bottom > viewport.getBoundingClientRect().top);
+    const top = anchor.getBoundingClientRect().top, dockTop = dock.getBoundingClientRect().top;
+    const problems = new Set(), observed = { maxMessageShiftPx: 0, maxDockMovePx: 0 };
+    function sample() {
+      const shown = document.querySelector(".conversation-scroll");
+      if (shown !== viewport) problems.add("remounted");
+      if (!shown?.querySelector(".message-assistant")) problems.add("empty");
+      if (!anchor.isConnected) problems.add("anchor message replaced");
+      else observed.maxMessageShiftPx = Math.max(observed.maxMessageShiftPx, Math.abs(anchor.getBoundingClientRect().top - top));
+      observed.maxDockMovePx = Math.max(observed.maxDockMovePx, Math.abs(dock.getBoundingClientRect().top - dockTop));
+    }
+    const mutations = new MutationObserver(sample), resize = new ResizeObserver(sample);
+    mutations.observe(document.body, { childList: true, subtree: true, attributes: true });
+    resize.observe(viewport);
+    resize.observe(dock);
+    viewport.addEventListener("scroll", sample);
+    sample();
+    return { finish: () => {
+      sample(); mutations.disconnect(); resize.disconnect(); viewport.removeEventListener("scroll", sample);
+      return { ...observed, problems: [...problems] };
+    } };
+  });
+}
+
 try {
   const executable = process.argv[2];
   app = await _electron.launch({ args: executable ? ["--demo"] : [".", "--demo"], env,
@@ -133,11 +163,30 @@ try {
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.sessionLive === "true" &&
     document.querySelector('textarea')?.disabled === false);
   await resume.waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: "关闭当前对话", exact: true }).click();
-  await page.locator("dialog.confirm-action[open]").getByRole("button", { name: "关闭对话", exact: true }).click();
-  await resume.waitFor();
+  // Closing while reading earlier messages, on a slow machine: the transcript stays
+  // mounted, never empty, and in place (only the input area changes below it).
+  const beforeCloseWheel = await viewport.evaluate(el => el.scrollTop);
+  await viewport.hover();
+  await page.mouse.wheel(0, -400);
+  await page.waitForFunction(top =>
+    Math.abs(document.querySelector(".conversation-scroll").scrollTop - (top - 400)) <= 1, beforeCloseWheel);
+  await page.getByRole("button", { name: "滚动到最新消息" }).waitFor();
+  const closeProbe = await observeClose();
+  await app.evaluate(() => { process.env.LECTERN_DEMO_LATENCY_MS = "300"; });
+  try {
+    await page.getByRole("button", { name: "关闭当前对话", exact: true }).click();
+    await page.locator("dialog.confirm-action[open]").getByRole("button", { name: "关闭对话", exact: true }).click();
+    await page.waitForFunction(() => [...document.querySelectorAll(".resume-bar button")].some(b => b.textContent.includes("续接会话") && !b.disabled),
+      null, { timeout: 40000 });
+  } finally { await app.evaluate(() => { delete process.env.LECTERN_DEMO_LATENCY_MS; }); }
+  report.closedReadingEarlier = await closeProbe.evaluate(probe => probe.finish());
+  await closeProbe.dispose();
+  const closed = report.closedReadingEarlier;
+  assert.deepEqual(closed.problems, [], "Closing blanked or remounted the transcript");
+  assert.ok(closed.maxMessageShiftPx <= closed.maxDockMovePx + 1, "Visible message moved more than the input area did while closing");
   assert.equal(await row(archiveId).getAttribute("data-session-live"), "false");
   assert.ok(await input.isDisabled());
+  assert.ok(await page.getByRole("button", { name: "滚动到最新消息" }).isVisible(), "closing keeps the reading position");
   report.resumedAndClosed = true;
   assert.deepEqual(errors, []);
   for (const phase of [report.atLatest, report.readingEarlier, report.live]) {

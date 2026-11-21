@@ -71,6 +71,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Scrolling back to the launch of an earlier subagent shown in the subagent column switched the column to another one; it now stays.'],
       ['对话刚开始或刚续接时分叉，若 Claude Code 恰好追加说明（如首次 auto mode 介绍）会报「画面已变化」；现在重读后继续，画面真变了仍不发键。',
         'Forking a just-started or resumed chat failed with "screen changed" if Claude Code added a note (like its auto mode intro) just then; it now rereads and goes on, and a real change still sends no keys.'],
+      ['「关闭对话」后对话区会先变空白再重新载入，SSH 机器上空白更久，滚动位置也会跳走；现在原有内容一直留在原处，直接变成可续接的历史。',
+        'After "Close conversation" the chat went blank and reloaded (longer on SSH machines), losing the scroll position; it now stays in place and turns into resumable history.'],
     ],
   },
   {

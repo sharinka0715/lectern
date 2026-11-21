@@ -366,6 +366,60 @@ test('external pane exit ends a live preview without inventing a saved assistant
   } finally { await cleanup(); }
 });
 
+test('closing keeps the transcript in the same watch and shows it as history; a failed close changes nothing', { timeout: 5000 }, async () => {
+  let reads = 0, closed = false, readsAtClose = 0;
+  const records = [
+    { type: 'user', uuid: 'u1', sessionId: 'chat', message: { content: 'Question' } },
+    { type: 'assistant', uuid: 'a1', sessionId: 'chat', message: { content: [{ type: 'text', text: 'Answer' }], stop_reason: 'end_turn' } },
+  ];
+  // The cursor continues after a close: later reads only add what Claude wrote on exit.
+  const { controller, cleanup } = await fakeController(async id => {
+    const jsonl = reads++ ? [] : records;
+    return closed ? { ...readResult(id, jsonl), active: false, session: { id, title: id, mapping: 'unbound' }, screen: '' }
+      : { ...readResult(id, jsonl), panePid: 42 };
+  });
+  let failure: Error | undefined;
+  Object.assign(controller.backend, { closeSession: async () => {
+    if (failure) throw failure;
+    closed = true; readsAtClose = reads;
+    return { id: 'chat', title: 'chat', mapping: 'unbound', status: 'history', path: '/tmp/chat.jsonl' };
+  } });
+  const published: SessionSnapshot[] = [];
+  controller.on('snapshot', snapshot => published.push(snapshot));
+  try {
+    const initial = await controller.watchSession('test', 'chat');
+    assert.equal(initial.paneId, '%1');
+    const ids = initial.messages.map(message => message.id);
+    assert.equal(ids.length, 2);
+    published.length = 0;
+    failure = new Error('close refused');
+    await assert.rejects(controller.closeSession('test', 'chat', '%1', 42), /close refused/);
+    assert.equal(controller.currentSnapshot?.paneId, '%1', 'a failed close leaves the chat live');
+    assert.deepEqual(controller.currentSnapshot?.messages.map(message => message.id), ids);
+    failure = undefined;
+    const history = await controller.closeSession('test', 'chat', '%1', 42);
+    assert.equal(history?.id, 'chat');
+    assert.ok(reads > readsAtClose, 'the close read the conversation once more before returning');
+    const shown = controller.currentSnapshot!;
+    assert.equal(shown.sessionId, 'chat', 'the watch stays');
+    assert.equal(shown.paneId, undefined);
+    assert.equal(shown.status, 'idle');
+    assert.deepEqual(shown.messages.map(message => message.id), ids, 'the same bubbles, not a reload');
+    assert.equal(published.at(-1), shown, 'published as history before the close returns');
+    assert.ok(published.every(snapshot => snapshot.messages.length === 2), 'never an empty transcript');
+  } finally { await cleanup(); }
+});
+
+test('closing a conversation that saved nothing stops watching it', async () => {
+  const { controller, cleanup } = await fakeController(async id => ({ ...readResult(id), panePid: 7 }));
+  Object.assign(controller.backend, { closeSession: async () => null });
+  try {
+    await controller.watchSession('test', 'empty');
+    assert.equal(await controller.closeSession('test', 'empty', '%1', 7), null);
+    assert.equal(controller.currentSnapshot, undefined);
+  } finally { await cleanup(); }
+});
+
 test('opening inactive JSONL history does not report a fabricated interruption', async () => {
   const { controller, cleanup } = await fakeController(async id => ({
     ...readResult(id, [

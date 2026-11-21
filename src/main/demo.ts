@@ -32,6 +32,10 @@ export async function setupDemo(root: string, fixturePath = 'scripts/mock-claude
     tmuxSocket: socket,
     claudeCommand: process.env.LECTERN_NODE_BINARY || 'node',
     claudeArgs: [path.join(root, fixturePath), '--fixture-config', config],
+    // Read on every command, so a test can slow the machine down (as over SSH) or
+    // fail one kind of command mid-run.
+    rehearsal: tag => ({ delayMs: Number(process.env.LECTERN_DEMO_LATENCY_MS) || 0,
+      error: tag && tag === process.env.LECTERN_DEMO_FAIL_TAG ? `Rehearsed failure: ${tag}` : undefined }),
   });
   await backend.resumeSession(workspace, id);
   return {

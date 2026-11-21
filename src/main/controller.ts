@@ -261,13 +261,22 @@ export class Controller extends EventEmitter {
     }
     if (this.sending || this.settingOperation || this.trustOperation) throw new Error(t('controller.typingWaitToClose'));
     this.sending = true;
+    let history: Awaited<ReturnType<Backend['closeSession']>>;
     try {
-      const history = await this.backend.closeSession(watch.workspace, sessionId, paneId, panePid);
+      history = await this.backend.closeSession(watch.workspace, sessionId, paneId, panePid);
       this.manualRecoveries.delete(this.recoveryKey(watch.workspace, sessionId));
       this.settingsCache.observe(sessionSettingsTarget(watch.workspace), sessionId, undefined, false);
-      if (this.watch === watch) this.unwatchSession();
-      return history;
     } finally { this.sending = false; }
+    if (this.watch !== watch) return history;
+    // Nothing was saved: the conversation is gone and its pane returns to a new chat.
+    if (!history) { this.unwatchSession(); return history; }
+    // Saved history stays in this watch, like after a resume: one read now finds the
+    // pane gone and publishes the same transcript as history, so the open chat never
+    // blanks or reloads. Its JSONL cursor continues with what Claude wrote on exit.
+    watch.manualRecovery = false;
+    // The close itself succeeded; a failed read shows on the chat and retries like any poll.
+    await this.refresh(workspaceId, sessionId).catch(error => diagnostic.event('controller.close.refresh_failed', { error: errorDetails(error) }, 'warn'));
+    return history;
   }
   async bindSession(id: string, sessionId: string, paneId: string) {
     const workspace = this.store.get(id);

@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { shellEnvironment } from '../src/backend/transport';
+import { Transport, shellEnvironment } from '../src/backend/transport';
+import type { Workspace } from '../src/shared/types';
 const exec = promisify(execFile);
 
 test('non-interactive PATH uses a unique nvm installation and refuses ambiguity without sourcing profiles', { skip: process.platform === 'win32' ? 'POSIX shell fixture; Windows runs no local commands' : false }, async () => {
@@ -31,4 +32,20 @@ test('non-interactive PATH uses a unique nvm installation and refuses ambiguity 
     assert.equal(shellEnvironment().includes('.zshrc'), false);
     assert.equal(shellEnvironment().includes('source '), false);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a rehearsal (demo mode) slows every command and fails the named one before it runs', { skip: process.platform === 'win32' ? 'POSIX shell fixture; Windows runs no local commands' : false }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'lectern-rehearsal-'));
+  const transport = new Transport(undefined, { rehearsal: tag => ({ delayMs: 60, error: tag === 'refused' ? 'Rehearsed failure: refused' : undefined }) });
+  const local: Workspace = { id: 'local', name: 'Local', kind: 'local', cwd: dir };
+  try {
+    const started = Date.now();
+    assert.equal((await transport.run(local, 'printf ok')).stdout.toString(), 'ok');
+    assert.ok(Date.now() - started >= 55, 'the command waited first');
+    await assert.rejects(transport.run(local, `touch ${join(dir, 'ran')}`, { tag: 'refused' }), /Rehearsed failure: refused/);
+    await assert.rejects(stat(join(dir, 'ran')), 'a refused command never runs');
+  } finally {
+    await transport.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
