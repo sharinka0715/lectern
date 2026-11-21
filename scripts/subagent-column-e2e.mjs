@@ -157,7 +157,7 @@ try {
   assert.match(facts, /已续接 1 次/);
   await page.waitForTimeout(1500);
   assert.equal(await finished.locator('.subagent-detail-head small').innerText(), facts, 'an ended run no longer counts time');
-  assert.match(await column.locator('.task-column-bar small').innerText(), /1 运行中 · 1 完成/);
+  assert.match(await column.locator('.task-column-bar .activity-tally').innerText(), /1 运行中 · 1 完成/);
 
   // Closing the column leaves the chat as it was.
   await column.locator('.task-column-bar button').click();

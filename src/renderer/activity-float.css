@@ -1,5 +1,7 @@
-/* The chat's activity card, floating at the top right of its conversation. */
-.activity-float-anchor { position: absolute; top: 12px; right: 14px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end;
+/* The chat's activity card, floating at the top right of its conversation. ActivityFloat
+   reads the width and the right inset: the card opens by itself only where both fit
+   beside the conversation column. */
+.activity-float-anchor { --activity-float-width: 336px; position: absolute; top: 12px; right: 14px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end;
   max-width: calc(100% - 28px); max-height: calc(100% - 24px - var(--dock-inset, 0px)); pointer-events: none; }
 .activity-float, .activity-float-pill {
   /* Cream, like the user's bubbles: a shade warmer than the page, not white. */
@@ -8,7 +10,7 @@
   pointer-events: auto;
 }
 .activity-float {
-  display: flex; flex-direction: column; width: 288px; max-width: 100%; max-height: 100%; overflow: auto;
+  display: flex; flex-direction: column; width: var(--activity-float-width); max-width: 100%; max-height: 100%; overflow: auto;
   border: 1px solid var(--line-strong); border-radius: 14px; background: var(--float-bg); color: var(--text);
   box-shadow: 0 1px 2px rgb(60 44 22 / 6%), 0 8px 24px rgb(60 44 22 / 9%); font-size: var(--text-label);
 }
@@ -29,16 +31,22 @@
 .activity-float-section + .activity-float-section { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 4px; }
 .activity-float-section:last-of-type { padding-bottom: 6px; }
 .activity-float-row { display: flex; align-items: center; gap: 2px; }
+/* The heading (icon, name, summary), then the chevron. A summary that does not fit beside
+   the name moves whole to a second line, right-aligned; only where even that line is too
+   narrow do its parts wrap (Tally), never cut. The name is cut only when it alone is too wide. */
 .activity-float-toggle {
-  display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 0 8px; border-radius: 8px;
+  display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 3px 8px; border-radius: 8px;
   background: transparent; color: var(--text); text-align: left;
 }
+.activity-float-heading { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
 .activity-float-toggle:not(:disabled):hover { background: var(--hover); }
 .activity-float-toggle:disabled { cursor: default; opacity: 1; }
 .activity-float-icon { display: inline-flex; flex: none; color: var(--muted); }
-.activity-float-title { flex: none; font-weight: 560; }
-.activity-float-summary { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; overflow: hidden; color: var(--muted);
-  font-size: var(--text-meta); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; }
+.activity-float-title { flex: 0 1 auto; min-width: 0; overflow: hidden; font-weight: 560; white-space: nowrap; text-overflow: ellipsis; }
+.activity-float-summary { display: flex; flex: 1 1 auto; justify-content: flex-end; align-items: center; gap: 6px; min-width: min-content; color: var(--muted);
+  font-size: var(--text-meta); font-variant-numeric: tabular-nums; line-height: 1.4; text-align: end; }
+.activity-float-count { white-space: nowrap; }
+.activity-float-summary .activity-float-dots { margin-right: 6px; }
 .activity-float-chevron { flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform .15s ease; }
 .activity-float-section[data-open] .activity-float-chevron { transform: none; }
 .activity-float-refresh { flex: none; width: 26px; height: 26px; color: var(--muted); }
@@ -104,4 +112,4 @@
 .activity-float-pill:hover { color: var(--text); }
 .activity-float-pill b { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: var(--text-caption); }
 .activity-float-pill small { color: var(--muted); font-size: var(--text-caption); }
-@container chatpane (max-width: 520px) { .activity-float { width: min(264px, 100%); } }
+@container chatpane (max-width: 520px) { .activity-float-anchor { --activity-float-width: 312px; } }

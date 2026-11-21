@@ -39,7 +39,7 @@ export const backend = {
   repliedCanType: ['Claude 已回复，可以输入', 'Claude has replied; you can type'],
   backgroundAgents: ['后台子代理或工作流仍在运行', 'Background subagents or workflows are still running'],
   processingRequest: ['Claude 正在处理请求', 'Claude is processing the request'],
-  backgroundShell: ['后台终端仍在运行', 'A background shell is still running'],
+  backgroundShell: ['终端仍在运行', 'A background shell is still running'],
   claudeIdle: ['Claude 空闲', 'Claude is idle'],
   statusUnread: ['尚未读取此终端的当前状态', "This terminal's current state has not been read yet"],
   loginCancelled: ['已取消 SSH 登录', 'SSH sign-in cancelled.'],

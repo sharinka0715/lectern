@@ -6,16 +6,20 @@
 @container chatpane (max-width: 899px) {
   .task-column { position: absolute; inset: 0 0 0 auto; width: min(440px, 86cqw); z-index: 44; box-shadow: var(--shadow-pop); }
 }
-.task-column-bar { display: flex; align-items: center; gap: 7px; height: 48px; flex-shrink: 0; padding: 0 10px 0 16px; border-bottom: 1px solid var(--line);
-  font-size: var(--text-ui); font-weight: 600; }
+/* Icon, name, tally, close button: the tally's widest part always fits, the name gets
+   its full width next, and the tally takes the rest, its parts wrapping whole (Tally). */
+.task-column-bar { display: grid; grid-template-columns: auto minmax(0, max-content) minmax(min-content, 1fr) auto; align-items: center; gap: 7px;
+  height: 48px; flex-shrink: 0; padding: 0 10px 0 16px; border-bottom: 1px solid var(--line); font-size: var(--text-ui); font-weight: 600; }
 .task-column-bar > svg { color: var(--secondary-text); }
-.task-column-bar small { color: var(--muted); font-size: var(--text-meta); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-column-bar button { margin-left: auto; -webkit-app-region: no-drag; }
+.task-column-title, .task-group-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.task-column-bar .activity-tally { grid-column: 3; color: var(--muted); font-size: var(--text-meta); font-weight: 500; line-height: 1.4; }
+.task-column-bar button { grid-column: 4; -webkit-app-region: no-drag; }
 
 .task-column-list { margin: 0; padding: 4px 6px 6px; max-height: min(34%, 280px); overflow-y: auto; flex-shrink: 0; border-bottom: 1px solid var(--line); }
 .task-group ul { list-style: none; margin: 0; padding: 0; }
-.task-group h3 { display: flex; align-items: center; gap: 6px; margin: 6px 9px 2px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
-.task-group h3 small { margin-left: auto; font-weight: 500; }
+.task-group h3 { display: grid; grid-template-columns: auto minmax(0, max-content) minmax(min-content, 1fr); align-items: center; gap: 6px;
+  margin: 6px 9px 2px; color: var(--muted); font-size: var(--text-caption); font-weight: 600; }
+.task-group h3 .activity-tally { font-weight: 500; line-height: 1.4; }
 .task-column-list button { width: 100%; display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 5px 9px; border-radius: 7px;
   background: transparent; color: var(--text); text-align: left; font-size: var(--text-label); }
 .task-column-list button:hover { background: var(--hover); }

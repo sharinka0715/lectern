@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, PanelRight, Radio, Square, Terminal, TextSelect } from 'lucide-react';
 import { copyWithToast, showContextMenu } from './ContextMenu';
 import { selectionWithin } from './message-menus';
-import { runningMs, type SessionActivity } from '../shared/activity';
+import { activityTallyParts, runningMs, type SessionActivity } from '../shared/activity';
 import { ShellCode } from './ShellCode';
 import './activity.css';
 import { localeTag, t } from '../shared/i18n';
@@ -72,4 +72,19 @@ export function ActivityCard({ item, now, expand = item.status === 'running', on
       {item.summary && <p className="activity-result">{item.summary}</p>}
     </div>}
   </article>;
+}
+
+/**
+ * A tally ("2 running · 1 done") whose parts wrap whole to the next line instead
+ * of being cut. Lines keep to `align`; the separator beside a part lies outside
+ * the part's margin box, so where it would end (or start) a line it falls outside
+ * the box and is clipped (activity.css). `lead`, the status dots, stays with the
+ * first part.
+ */
+export function Tally({ items, align = 'end', lead }: { items: readonly Pick<SessionActivity, 'status'>[]; align?: 'start' | 'end'; lead?: ReactNode }) {
+  const parts = activityTallyParts(items);
+  const separator = <span className="activity-tally-separator"> · </span>;
+  return <span className="activity-tally" data-align={align}>{parts.map((part, index) => <span key={index} className="activity-tally-part">
+    {align === 'start' && index > 0 && separator}{index === 0 && lead}{part}{align === 'end' && index < parts.length - 1 && separator}
+  </span>)}</span>;
 }

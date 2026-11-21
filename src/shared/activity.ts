@@ -42,7 +42,7 @@ export interface BackgroundCounts {
   unknownShells?: boolean;
 }
 
-/** "1 个后台终端", "2 个子代理", …: the parts with a count, in a fixed order. */
+/** "1 个终端", "2 个子代理", …: the parts with a count, in a fixed order. */
 export function backgroundParts(counts: BackgroundCounts | undefined): string[] {
   if (!counts) return [];
   const parts = [counts.shells && t('core.backgroundShells', { count: counts.shells }), counts.agents && t('core.subagents', { count: counts.agents }),
@@ -62,13 +62,16 @@ export function runningMs(item: SessionActivity, now: number): number | undefine
   return (item.priorRunMs ?? 0) + Math.max(0, (item.endedAt ? Date.parse(item.endedAt) : now) - Date.parse(start));
 }
 
-/** A section header of the activity card: "2 运行中 · 3 完成" (a resumed subagent runs again). */
-export function activityTally(items: readonly Pick<SessionActivity, 'status'>[]): string {
+/** The parts of a section header's tally: "2 运行中", "3 完成" (a resumed subagent runs again). */
+export function activityTallyParts(items: readonly Pick<SessionActivity, 'status'>[]): string[] {
   const running = items.filter(item => item.status === 'running').length;
   const failed = items.filter(item => item.status === 'failed').length, ended = items.length - running;
   return [running && t('activity.running', { count: running }),
-    ended && (failed ? t('activity.endedFailed', { ended, failed }) : t('activity.completed', { count: ended }))].filter(Boolean).join(' · ');
+    ended && (failed ? t('activity.endedFailed', { ended, failed }) : t('activity.completed', { count: ended }))].filter((part): part is string => !!part);
 }
+
+/** A section header of the activity card: "2 运行中 · 3 完成". */
+export const activityTally = (items: readonly Pick<SessionActivity, 'status'>[]) => activityTallyParts(items).join(' · ');
 
 /** Claude Code shows a foreground shell inline in the transcript; only background
  * shells (run_in_background, or moved there with Ctrl+B) are tasks of their own. */

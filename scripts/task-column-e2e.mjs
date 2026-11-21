@@ -6,6 +6,9 @@
 // <tmp> at a private folder). The activity card's "查看详情" opens the column: the full
 // command and the output, appended while it runs; a shell that redirected into a file
 // shows that file; a monitor shows its events; Chinese and English labels; light and dark.
+// The activity card opens by itself only where it fits beside the conversation column, and
+// every tally in its section headers and in the column shows whole, in one pane and in
+// splits (screenshots: test-results/activity-card-*.png).
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -22,6 +25,52 @@ delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL; delete env.TMUX; de
 const exe = process.argv[2];
 const at = offset => new Date(Date.now() - 60_000 + offset * 1000).toISOString();
 const ids = { build: 'bbuild0001', train: 'btrain0001', watch: 'bwatch0001', long: 'blong00001' };
+
+/** Run in the page: each tally ("2 running · 1 done") as laid out, under the name beside it.
+ * A part's own text box must lie within the tally's box, which clips; a separator counts as
+ * shown unless it lies wholly outside that box. */
+function layoutOfTallies(tallies) {
+  return tallies.map(tally => {
+    const clip = tally.getBoundingClientRect(), frame = tally.closest('.activity-float, .task-column').getBoundingClientRect();
+    const name = tally.parentElement.closest('.activity-float-toggle, h3, .task-column-bar').querySelector('.activity-float-title, .task-group-label, .task-column-title');
+    const parts = [...tally.querySelectorAll('.activity-tally-part')].map(part => {
+      const text = [...part.childNodes].find(node => node.nodeType === Node.TEXT_NODE), range = document.createRange();
+      range.selectNodeContents(text);
+      const box = range.getBoundingClientRect(), slot = part.querySelector('.activity-tally-separator'), separator = slot?.getBoundingClientRect();
+      // The dot itself, for the space on either side of it.
+      const dot = slot && document.createRange();
+      if (dot) { const node = slot.firstChild; dot.setStart(node, node.textContent.indexOf('·')); dot.setEnd(node, node.textContent.indexOf('·') + 1); }
+      return { text: text.textContent, inside: box.left >= clip.left - 0.5 && box.right <= clip.right + 0.5, top: Math.round(box.top),
+        left: box.left, right: box.right, dot: dot && { left: dot.getBoundingClientRect().left, right: dot.getBoundingClientRect().right },
+        separator: !separator ? 'none' : separator.right <= clip.left + 0.5 || separator.left >= clip.right - 0.5 ? 'clipped' : 'shown' };
+    });
+    return { name: name.textContent, nameWhole: name.scrollWidth <= name.clientWidth, align: tally.dataset.align, width: Math.round(clip.width),
+      below: clip.top >= name.getBoundingClientRect().bottom - 1,
+      lines: new Set(parts.map(part => part.top)).size, within: clip.left >= frame.left - 0.5 && clip.right <= frame.right + 0.5, parts };
+  });
+}
+/** Every tally in `scope` shows each count whole, parts wrapping whole onto more lines; a
+ * separator shows only between two parts on one line; the name beside it is whole. */
+async function checkTallies(scope, expected, where) {
+  const tallies = await scope.locator('.activity-tally').evaluateAll(layoutOfTallies);
+  assert.deepEqual(Object.fromEntries(tallies.map(tally => [tally.name, tally.parts.map(part => part.text)])), expected, `${where}: the tallies`);
+  for (const tally of tallies) {
+    const detail = `${where}, ${tally.name}: ${JSON.stringify(tally)}`;
+    assert.ok(tally.nameWhole && tally.within, `${detail}: the name is whole and the tally within its frame`);
+    tally.parts.forEach((part, index) => {
+      assert.ok(part.inside, `${detail}: "${part.text}" is not cut`);
+      const neighbour = tally.parts[tally.align === 'end' ? index + 1 : index - 1];
+      if (part.separator !== 'none') assert.equal(part.separator === 'shown', neighbour.top === part.top, `${detail}: separators only between parts on one line`);
+      if (part.separator !== 'shown') return;
+      // A shown dot sits midway between the two counts (its glyph box may be a full em wide).
+      const [before, after] = tally.align === 'end' ? [part, neighbour] : [neighbour, part];
+      const gaps = [part.dot.left - before.right, after.left - part.dot.right];
+      assert.ok(gaps.every(gap => gap >= -0.5) && Math.abs(gaps[0] - gaps[1]) <= 1.5, `${detail}: the dot is centred between the counts (${gaps})`);
+    });
+  }
+  // Logged as "name width/lines", with "↓" where the tally sits on its own line below the name.
+  return tallies.map(tally => `${tally.name} ${tally.width}px/${tally.lines}${tally.below ? '↓' : ''}`).join(', ');
+}
 let app;
 try {
   app = await _electron.launch({ args: exe ? ['--demo'] : ['.', '--demo'], ...(exe && { executablePath: path.resolve(exe) }), env, timeout: 60_000 });
@@ -69,6 +118,40 @@ try {
     result('toolu_long', { stdout: '', stderr: '', backgroundTaskId: ids.long }, `Command running in background with ID: ${ids.long}.`),
     record('assistant', { message: { id: 'msg_tasks_started', role: 'assistant', model: 'fixture', stop_reason: 'end_turn', content: [{ type: 'text', text: '三个任务已在后台运行。' }] } }, 4),
   ]));
+
+  // Without a choice the card opens by itself only where it fits beside the conversation
+  // column (its width and inset come from the CSS): with the sidebar hidden, a window 40 px
+  // wider than the column plus two cards and insets has room for it, 40 px narrower does not.
+  const fit = () => page.evaluate(() => {
+    const anchor = document.querySelector('.activity-float-anchor'), area = anchor.parentElement, style = getComputedStyle(anchor);
+    const column = area.querySelector('.conversation').getBoundingClientRect(), shown = document.querySelector('.activity-float')?.getBoundingClientRect();
+    const width = parseFloat(style.getPropertyValue('--activity-float-width'));
+    return { width, room: area.getBoundingClientRect().right - parseFloat(style.right) - column.right, columnRight: column.right, card: shown?.toJSON() };
+  });
+  const windowWidth = async width => {
+    await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0]?.setContentSize(width, 940), width);
+    await page.waitForFunction(width => innerWidth === width, width);
+  };
+  await page.getByRole('button', { name: '收起侧栏', exact: true }).click();
+  const needed = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--conversation-width'))) + 2 * (336 + 14);
+  for (const [width, roomy] of [[needed + 40, true], [needed - 40, false]]) {
+    await windowWidth(width);
+    await page.locator(roomy ? '.activity-float' : '.activity-float-pill').waitFor();
+    const state = await fit();
+    assert.equal(state.width, 336, 'the card is 336 px wide');
+    assert.equal(state.room >= state.width, roomy, `at ${width} px the card ${roomy ? 'fits' : 'does not fit'} beside the column: ${JSON.stringify(state)}`);
+    if (!roomy) continue;
+    assert.ok(state.card.left >= state.columnRight - 1 && Math.abs(state.card.width - state.width) < 1, `the card opens beside the column: ${JSON.stringify(state)}`);
+    // The file preview takes the room: the card folds, and opens again when the preview closes.
+    await page.getByRole('button', { name: '浏览工作目录', exact: true }).first().click();
+    await page.locator('.artifact-drawer').waitFor();
+    await page.locator('.activity-float-pill').waitFor();
+    assert.ok((await fit()).room < 336, 'with the preview open the card has no room');
+    await page.getByRole('button', { name: '关闭文件预览', exact: true }).click();
+    await page.locator('.activity-float').waitFor();
+  }
+  await page.getByRole('button', { name: '展开侧栏', exact: true }).click();
+  await windowWidth(1480);
 
   // The activity card: Chinese names for the kinds; "查看详情" opens the column on the build.
   const card = page.locator('.activity-float');
@@ -149,6 +232,18 @@ try {
   await detail.locator('[data-exit-code="0"]').waitFor();
   await detail.locator('.task-output', { hasText: /done\s*$/ }).waitFor();
   assert.ok(!(await detail.locator('.task-output').innerText()).includes('[exited'), 'the native trailer is not output');
+  // The long one fails: the shells' tally is now the longest, "1 running · 2 ended (1 failed)".
+  const failed = notice(ids.long, 'toolu_long', 'failed', 'Background command "打印长输出" failed with exit code 1');
+  await appendFile(main, lines([{ type: 'queue-operation', operation: 'enqueue', sessionId: sid, timestamp: at(31), content: failed },
+    record('user', { origin: { kind: 'task-notification' }, promptSource: 'system', message: { role: 'user', content: failed } }, 31)]));
+  await column.locator('.task-column-list button[data-task-key="toolu_long"][data-state="failed"]').waitFor();
+  const tallies = {
+    zh: { '终端': ['1 运行中', '2 结束（1 失败）'], '监控': ['1 运行中'] },
+    en: { 'Background shells': ['1 running', '2 ended (1 failed)'], Monitors: ['1 running'] },
+  };
+  await card.waitFor();
+  console.log(`tallies, zh, column open: card ${await checkTallies(card, tallies.zh, 'card, zh')}; column ${
+    await checkTallies(column, { '后台任务': ['2 运行中', '2 结束（1 失败）'], ...tallies.zh }, 'column, zh')}`);
   await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(results, 'task-column-light.png') });
@@ -170,6 +265,8 @@ try {
   await section('Background shells').waitFor();
   await section('Monitors').waitFor();
   assert.equal(await page.locator('article.activity-card[data-activity-id="toolu_build"] .activity-title small').innerText(), 'Shell');
+  console.log(`tallies, en, column open: card ${await checkTallies(card, tallies.en, 'card, en')}; column ${
+    await checkTallies(column, { 'Background tasks': ['2 running', '2 ended (1 failed)'], ...tallies.en }, 'column, en')}`);
   await page.screenshot({ path: path.join(results, 'task-column-en.png') });
   await page.evaluate(() => window.desktop.setLocalePreference('zh-CN'));
   await column.locator('.task-column-bar span', { hasText: '后台任务' }).waitFor();
@@ -177,9 +274,52 @@ try {
   // Closing the column leaves the chat as it was.
   await column.locator('.task-column-bar button').click();
   await column.waitFor({ state: 'detached' });
+
+  // The card by itself, in one pane, in a split and in the narrowest split (a narrower card),
+  // in both languages: every section header shows its whole tally. Screenshots in both themes.
+  const shots = [];
+  const layouts = async (layout, schemes = ['light', 'dark']) => {
+    for (const locale of ['zh-CN', 'en']) {
+      const lang = locale === 'en' ? 'en' : 'zh';
+      await page.evaluate(locale => window.desktop.setLocalePreference(locale), locale);
+      await section(lang === 'en' ? 'Background shells' : '终端').waitFor();
+      const width = await card.evaluate(node => Math.round(node.getBoundingClientRect().width));
+      console.log(`tallies, ${lang}, ${layout} (card ${width}px): ${await checkTallies(card, tallies[lang], `card, ${lang}, ${layout}`)}`);
+      for (const scheme of schemes) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.waitForTimeout(300);
+        shots.push(path.join(results, `activity-card-${layout}-${lang}-${scheme}.png`));
+        await page.screenshot({ path: shots.at(-1) });
+      }
+      await page.emulateMedia({ colorScheme: 'light' });
+      if (layout !== 'single') continue;
+      shots.push(path.join(results, `activity-card-alone-${lang}.png`));
+      await card.screenshot({ path: shots.at(-1) });
+    }
+    await page.evaluate(() => window.desktop.setLocalePreference('zh-CN'));
+    await section('终端').waitFor();
+  };
+  const expand = async () => {
+    await page.waitForTimeout(500);
+    if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
+    await card.waitFor();
+  };
+  await expand();
+  await layouts('single');
+  await page.getByRole('button', { name: '并排打开对话', exact: true }).click();
+  await page.locator('.split-workspace.divided[data-direction="columns"]').waitFor();
+  await expand();
+  await layouts('split');
+  // The narrowest side-by-side split (770 px; narrower stacks the panes): each pane is under 520 px.
+  const sidebarWidth = await page.locator('.sidebar').evaluate(node => node.getBoundingClientRect().width);
+  await windowWidth(Math.ceil(sidebarWidth) + 790);
+  await page.locator('.split-workspace.divided[data-direction="columns"]').waitFor();
+  await expand();
+  assert.equal(await card.evaluate(node => Math.round(node.getBoundingClientRect().width)), 312, 'a pane under 520 px has the narrower card');
+  await layouts('narrow-split', ['light']);
   assert.deepEqual(errors, []);
   console.log('PASS: "查看详情" opens the task column; a running shell shows its full command and appended output, a shell that redirected into a file shows that file, a monitor its output; the exit code comes from the native trailer; Chinese 终端/监控 and English Shell/Monitor labels.');
-  console.log(`Screenshots: ${['light', 'dark', 'en'].map(name => path.join(results, `task-column-${name}.png`)).join(', ')}`);
+  console.log(`Screenshots: ${['light', 'dark', 'en'].map(name => path.join(results, `task-column-${name}.png`)).concat(shots).join(', ')}`);
 } catch (error) {
   const page = app?.windows()[0];
   if (page) await page.screenshot({ path: path.join(results, 'task-column-failure.png') }).catch(() => {});

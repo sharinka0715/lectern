@@ -122,7 +122,7 @@ export const activity = {
   taskColumn: ['后台任务', 'Background tasks'],
   taskList: ['这个对话的后台任务', "This conversation's background tasks"],
   closeTaskColumn: ['关闭后台任务栏', 'Close the task column'],
-  taskNone: ['这个对话还没有子代理、后台终端或监控。', 'This conversation has no subagents, background shells or monitors yet.'],
+  taskNone: ['这个对话还没有子代理、终端或监控。', 'This conversation has no subagents, background shells or monitors yet.'],
   viewDetails: ['查看详情', 'View details'],
   viewDetailsTitle: ['在右侧后台任务栏查看「{title}」的命令和输出', 'Show the command and output of “{title}” in the task column'],
   startedAt: ['开始于 {time}', 'started {time}'],

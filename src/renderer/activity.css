@@ -32,3 +32,16 @@
 .activity-output h4 { font-weight:500; margin:10px 0 4px; }
 .activity-empty { text-align:center; padding:46px 8px; color:var(--muted); font-size:var(--text-ui); }
 .activity-toolbar-count { display:inline-grid; place-items:center; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--accent); color:var(--on-accent); font-size:var(--text-caption); font-variant-numeric:tabular-nums; }
+/* A tally ("2 running · 1 done", see Tally): whole parts wrap to the next line. Each
+   separator has a fixed slot outside its part's margin box (a negative margin, given
+   back to the neighbouring part), so where a line ends (or starts) it lies outside the
+   box and is clipped. Breaks fall between the parts, which are atomic inlines. */
+.activity-tally { --tally-separator: 1.25em; display: block; min-width: min-content; overflow: hidden; white-space: normal; text-align: end; }
+.activity-tally[data-align="start"] { text-align: start; }
+.activity-tally-part { display: inline-block; white-space: nowrap; }
+/* Centred even where the font's middle dot is full-width (Noto Sans CJK): the spaces around it overflow evenly. */
+.activity-tally-separator { display: inline-flex; justify-content: center; width: var(--tally-separator); white-space: pre; }
+.activity-tally[data-align="end"] .activity-tally-part:has(> .activity-tally-separator) { margin-right: calc(-1 * var(--tally-separator)); }
+.activity-tally[data-align="end"] .activity-tally-part + .activity-tally-part { margin-left: var(--tally-separator); }
+.activity-tally[data-align="start"] .activity-tally-part:has(> .activity-tally-separator) { margin-left: calc(-1 * var(--tally-separator)); }
+.activity-tally[data-align="start"] .activity-tally-part:has(+ .activity-tally-part) { margin-right: var(--tally-separator); }

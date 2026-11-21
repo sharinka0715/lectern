@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Activity, Bot, ChevronDown, FileDiff, FileImage, GitBranch, Laptop, Loader2, Minus, PanelRight, Paperclip, Radio, RefreshCw, Server, Terminal } from "lucide-react";
-import { activityTally, type ActivityKind, type SessionActivity } from "../shared/activity";
+import type { ActivityKind, SessionActivity } from "../shared/activity";
 import type { GitChange, GitChangesResult, MessageAttachment } from "../shared/types";
-import { ActivityCard } from "./ActivityPanel";
+import { ActivityCard, Tally } from "./ActivityPanel";
 import { AttachmentThumbnail } from "./AttachmentThumbnail";
 import "./activity-float.css";
 import { t, type MessageKey } from '../shared/i18n';
@@ -48,8 +48,8 @@ function Section({ icon, title, summary, open, onToggle, children, action }: {
   return <section className="activity-float-section" data-open={open || undefined}>
     <div className="activity-float-row">
       <button type="button" className="activity-float-toggle" aria-expanded={onToggle ? open : undefined} disabled={!onToggle} onClick={onToggle}>
-        <span className="activity-float-icon">{icon}</span><span className="activity-float-title">{title}</span>
-        {summary !== undefined && <span className="activity-float-summary">{summary}</span>}
+        <span className="activity-float-heading"><span className="activity-float-icon">{icon}</span><span className="activity-float-title">{title}</span>
+          {summary !== undefined && <span className="activity-float-summary">{summary}</span>}</span>
         {onToggle && <ChevronDown size={13} className="activity-float-chevron" aria-hidden="true" />}
       </button>
       {action}
@@ -100,12 +100,14 @@ export function ActivityFloat(props: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [roomy, setRoomy] = useState(true);
   useLayoutEffect(() => {
-    const area = root.current?.parentElement;
-    if (!area) return;
-    // Open by default only where it does not cover the conversation column.
+    const anchor = root.current, area = anchor?.parentElement;
+    if (!anchor || !area) return;
+    // Open by default only where it does not cover the conversation column: the card's
+    // width and its inset from the edge come from activity-float.css.
     const measure = () => {
       const column = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--conversation-width")) || 800;
-      setRoomy((area.clientWidth - column) / 2 >= 300);
+      const style = getComputedStyle(anchor), card = parseFloat(style.getPropertyValue("--activity-float-width")) || 336;
+      setRoomy((area.clientWidth - column) / 2 >= card + (parseFloat(style.right) || 0));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -155,7 +157,7 @@ export function ActivityFloat(props: Props) {
       {git.result?.kind === "guarded" && !repo && <Section icon={<FileDiff size={14} />} title={t('activity.changes')} open={false} summary={t('activity.guarded')}
         action={<button type="button" className="activity-float-link" onClick={() => void load(true)}>{t('activity.read')}</button>} />}
       {repo && <Section icon={<FileDiff size={14} />} title={t('activity.changes')} open={section === "changes"} onToggle={repo.total ? () => toggle("changes") : undefined}
-        summary={repo.total ? <>{t('activity.fileCount', { count: repo.total })}<span className="activity-added">+{repo.added}</span><span className="activity-removed">−{repo.removed}</span></> : t('activity.noChanges')}
+        summary={repo.total ? <><span className="activity-float-count">{t('activity.fileCount', { count: repo.total })}</span><span className="activity-added">+{repo.added}</span><span className="activity-removed">−{repo.removed}</span></> : t('activity.noChanges')}
         action={<button type="button" className="icon-button activity-float-refresh" aria-label={t('activity.rereadChanges')} title={t('activity.rereadChanges')} onClick={() => void load(true)}>
           {git.loading ? <Loader2 size={13} className="rotating" /> : <RefreshCw size={13} />}</button>}>
         <ul className="activity-float-files">{repo.files.map(file => {
@@ -176,7 +178,7 @@ export function ActivityFloat(props: Props) {
         const Icon = kindIcons[kind];
         const open = props.onOpenTask;
         return <Section key={kind} icon={<Icon size={14} />} title={t(kindLabels[kind])} open={section === kind} onToggle={() => toggle(kind)}
-          summary={<><Dots items={list} />{activityTally(list)}</>}
+          summary={<Tally items={list} lead={<Dots items={list} />} />}
           action={open && <button type="button" className="icon-button activity-float-refresh" aria-label={t('activity.openSubagents')} title={t('activity.openSubagents')}
             data-open-kind={kind} onClick={() => open(undefined, kind)}><PanelRight size={13} /></button>}>
           {list.map(item => <ActivityCard key={item.id} item={item} now={now} expand={false} onOpen={open && (() => open(item))} />)}
