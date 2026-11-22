@@ -35,6 +35,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.2',
+    features: [],
+    fixes: [
+      ['续接进度和失败提示只随对应会话显示，切换分屏或同时续接其他会话时仍可独立重试。',
+        'Resume progress and failures stay with each conversation, so you can retry after moving between panes or resuming another chat.'],
+    ],
+  },
+  {
     version: '0.2.1',
     features: [
       ['粘贴、拖入或选择的文件在输入框里显示为附件卡片，可单独移除，不再往文字里插入长路径。',
