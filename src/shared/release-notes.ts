@@ -35,6 +35,17 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.2',
+    features: [
+      ['侧栏可将所有本地和 SSH 项目的会话合在一起，按最近更新或进行中优先排序。',
+        'The sidebar can list conversations across local and SSH projects by recency or with active conversations first.'],
+    ],
+    fixes: [
+      ['切到其他会话后，侧栏会继续显示原会话的回复状态，并在回复完成后更新。',
+        'The sidebar keeps showing a reply in progress after you switch conversations and updates when the reply finishes.'],
+    ],
+  },
+  {
     version: '0.2.1',
     features: [
       ['粘贴、拖入或选择的文件在输入框里显示为附件卡片，可单独移除，不再往文字里插入长路径。',
