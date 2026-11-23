@@ -114,6 +114,10 @@ export class MessageDisplay {
   /** The Claude Code version that wrote this session's latest record. */
   get cliVersion() { return this.version; }
   private version?: string;
+  /** The newest model reply of this conversation in the records read (ms, its `timestamp`):
+   * any branch, not synthetic or API error records (main/quota-as-of.ts). */
+  get lastReplyAt() { return this.lastReply; }
+  private lastReply?: number;
 
   private get foreground() { return this.pendingCount ? this.turns.at(-1) : this.current; }
 
@@ -188,6 +192,7 @@ export class MessageDisplay {
     this.seenPeerMessages.clear();
     this.usage.reset();
     this.decoder.reset();
+    this.lastReply = undefined;
     this.command = undefined;
     this.restoring = false;
     this.turns = [];
@@ -294,6 +299,11 @@ export class MessageDisplay {
     this.activity.ingest(records);
     for (const record of records) {
       if (!record.isSidechain && record.sessionId === this.sessionId && typeof record.version === 'string' && /^\d+\.\d+\.\d+[\w.+-]{0,24}$/.test(record.version)) this.version = record.version;
+      if (record.type === 'assistant' && !record.isSidechain && record.sessionId === this.sessionId && !record.isApiErrorMessage && record.isUnmetered !== true
+        && (record.message as JsonRecord | undefined)?.model !== '<synthetic>' && typeof record.timestamp === 'string') {
+        const at = Date.parse(record.timestamp);
+        if (Number.isFinite(at) && at > (this.lastReply ?? 0)) this.lastReply = at;
+      }
       if (record.type !== 'queue-operation' || record.isSidechain || record.sessionId !== this.sessionId) continue;
       if (record.operation === 'enqueue' && typeof record.content === 'string') {
         this.queuedInputs.push(record.content);

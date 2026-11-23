@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SessionTelemetryDisplay, usageLevel } from '../src/renderer/SessionTelemetryDisplay';
 import type { SessionSnapshot } from '../src/shared/types';
+import { setLocale } from '../src/shared/i18n';
 
 const statusLine = { sessionId: 'sample', modelId: 'test-model', contextWindowSize: 1000000 };
 const contextUsage: NonNullable<SessionSnapshot['contextUsage']> = {
@@ -120,4 +121,41 @@ test('subscription windows show when they refill, and rings turn from green to b
   assert.doesNotMatch(native({ fiveHour: { usedPercentage: 10 } }), /quota-reset/);
   // The permission mode carries its icon.
   assert.match(render({ executionMode: { mode: 'auto', label: '自动', source: 'native-footer', evidence: 'auto mode on' } }), /data-execution-mode="auto"[^>]*><svg[^>]*lucide-zap/);
+});
+
+test('each quota hover card says how recent its figures are, in the chosen zone and both languages', () => {
+  const now = Date.now() / 1000;
+  const detail = (html: string, label: string) => {
+    const tag = new RegExp(`<span[^>]*data-quota-window="${label}"[^>]*>`).exec(html)![0];
+    return /data-tip-detail="([^"]*)"/.exec(tag)![1].replace(/&#x27;/g, "'");
+  };
+  const windows = { fiveHour: { usedPercentage: 40, resetsAt: Math.ceil(now) + 3600 }, sevenDay: { usedPercentage: 60, resetsAt: Math.ceil(now) + 3 * 86400 } };
+  const shown = (asOf: number | undefined, timeZone?: string) => renderToStaticMarkup(createElement(SessionTelemetryDisplay,
+    { statusLineManaged: true, timeZone, statusLine: { ...statusLine, ...windows, ...(asOf !== undefined && { quotaAsOf: asOf }) } }));
+  // Earlier today in UTC (or yesterday right after midnight): the time, then the offset; both windows share it.
+  const recent = Math.floor(now) - 60;
+  const html = shown(recent, 'UTC');
+  const clock = new Date(recent * 1000).toISOString().slice(11, 16);
+  for (const label of ['5h', '7d']) {
+    assert.match(detail(html, label), new RegExp(`\\n截至 (昨天 )?${clock} GMT\\+0。\\n这是该对话最近一次模型请求时的用量：Claude Code 只在发出请求时更新`));
+    assert.match(html, new RegExp(`data-quota-window="${label}" data-quota-as-of="${recent}"`));
+  }
+  // Two days ago in Shanghai: the date.
+  const older = Math.floor(now) - 2 * 86400;
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(older * 1000);
+  const get = (type: string) => parts.find(part => part.type === type)!.value;
+  assert.match(detail(shown(older, 'Asia/Shanghai'), '7d'), new RegExp(`截至 ${get('month')}/${get('day')} ${get('hour')}:${get('minute')} GMT\\+8。`));
+  // Not known: said so, never the time of the read.
+  const unknown = detail(shown(undefined), '5h');
+  assert.match(unknown, /截至时间未知：打开这个对话之前就已有。/);
+  assert.doesNotMatch(unknown, /截至 /);
+  assert.match(shown(undefined), /data-quota-as-of=""/);
+  // The reset passed: still dated.
+  assert.match(detail(native({ fiveHour: { usedPercentage: 90, resetsAt: 1 }, quotaAsOf: recent }), '5h'), /上报的重置时间已过[^]*\n截至 /);
+  setLocale('en');
+  try {
+    const english = shown(recent, 'UTC');
+    assert.match(detail(english, '5h'), new RegExp(`\\nAs of (yesterday )?${clock} GMT\\+0\\.\\nThis is the usage as of this conversation's latest model request`));
+    assert.match(detail(shown(undefined), '7d'), /As of: unknown, from before this conversation was opened\./);
+  } finally { setLocale('zh-CN'); }
 });

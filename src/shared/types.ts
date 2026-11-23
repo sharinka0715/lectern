@@ -180,6 +180,8 @@ export interface NativeStatusLineObservation {
   promptCache?: { ttl?: '5m' | '1h'; expiresAt?: number; warm?: boolean; cachingObserved?: boolean };
   fiveHour?: SubscriptionWindow;
   sevenDay?: SubscriptionWindow;
+  /** Unix epoch seconds: the 5h and 7d figures are at least this recent (main/quota-as-of.ts). Absent: not known. */
+  quotaAsOf?: number;
   /** Native gateway spend_limit or custom route observed in the live callback environment. */
   nonSubscriptionRoute?: 'gateway' | 'custom';
   sessionId: string;

@@ -30,6 +30,7 @@ import { QuestionInputUnconfirmed } from '../backend/native-question-actions';
 import { answeredQuestionId, earlyQuestion, observeQuestion, ownQuestion, pendingQuestionId, type OwnedQuestion, type WatchedQuestion } from './session-question';
 import { SessionSettingsCache, type SessionSettingsHandle } from './session-settings-cache';
 import { ModelCatalogs } from './model-catalogs';
+import { sightQuota, type QuotaSighting } from './quota-as-of';
 import { effortsFor, isEffortLevel, isModelValue, type LaunchChoices, type ModelCatalogState } from '../shared/model-catalog';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import type { DirectoryTrustDecision, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, SubagentListing, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
@@ -133,7 +134,10 @@ export class Controller extends EventEmitter {
   private readonly statusLines = new WeakMap<SessionSettingsHandle, NonNullable<SessionSnapshot['statusLine']>>();
   private readonly statusLineManaged = new WeakSet<SessionSettingsHandle>();
   constructor(readonly store: WorkspaceStore, readonly backend: Backend, private readonly settingsCache = new SessionSettingsCache(),
-    private readonly turnMemory = new Map<string,TurnMemory>(), private readonly catalogs = new ModelCatalogs(backend)) {
+    private readonly turnMemory = new Map<string,TurnMemory>(), private readonly catalogs = new ModelCatalogs(backend),
+    // What was seen of each Claude Code process's 5h/7d figures (quota-as-of.ts), shared with
+    // siblings so that a conversation reopened in another reader keeps it.
+    private readonly quotaSightings = new WeakMap<SessionSettingsHandle, QuotaSighting>()) {
     super();
     this.catalogs.on('change', this.onCatalogChange);
   }
@@ -185,7 +189,7 @@ export class Controller extends EventEmitter {
     else this.schedulePoll(watch, 0);
   }
   private readsInBackground(watch: Watch) { return !!watch.snapshot.paneId && !watch.failures; }
-  sibling() { return new Controller(this.store, this.backend, this.settingsCache, this.turnMemory, this.catalogs); }
+  sibling() { return new Controller(this.store, this.backend, this.settingsCache, this.turnMemory, this.catalogs, this.quotaSightings); }
   async saveWorkspace(workspace: Workspace) {
     validateWorkspace(workspace);
     const previous = this.store.list().find(item => item.id === workspace.id);
@@ -592,6 +596,8 @@ export class Controller extends EventEmitter {
     try {
       const forceViewport = !!(freshViewport || watch.terminalVisible || watch.snapshot.terminalControl || settingBusyAtRead || watch.snapshot.status === 'working');
       const listing = listsFolder(watch, Date.now()), elsewhere = looksElsewhere(watch, listing);
+      // Before the read: figures it returns are no newer than they were then (quota-as-of.ts).
+      const readAt = Date.now();
       const result = await this.backend.readSession(watch.workspace, watch.sessionId, forceViewport, watch.display.activity.targets(), true, !!watch.terminalVisible, true, listing, elsewhere);
       const applied = this.watch === watch;
       // Incremental chunks must not be deduplicated by hash: two equal byte
@@ -685,7 +691,11 @@ export class Controller extends EventEmitter {
       let statusLine: SessionSnapshot['statusLine'];
       if (handle && statusLineManaged && result.statusLine?.sessionId === watch.sessionId) {
         if (settingRevisionAtRead === this.settingRevision && !settingBusy) {
-          statusLine = result.statusLine;
+          const sighting = sightQuota(this.quotaSightings.get(handle), result.statusLine,
+            { lastReply: watch.display.lastReplyAt, processStart: result.nativeStartedAt }, readAt);
+          this.quotaSightings.set(handle, sighting);
+          statusLine = sighting.asOf !== undefined && (result.statusLine.fiveHour || result.statusLine.sevenDay)
+            ? { ...result.statusLine, quotaAsOf: Math.floor(sighting.asOf / 1000) } : result.statusLine;
           const previous = this.statusLines.get(handle);
           if (previous && previous.modelId !== statusLine.modelId) this.settingsCache.invalidateSelection(handle, 'model');
           else if (previous && previous.effort !== statusLine.effort) this.settingsCache.invalidateSelection(handle, 'effort');
