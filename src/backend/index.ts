@@ -39,7 +39,7 @@ import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './mo
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
 import { composerFrameGuard, animatedLabelText, guardWindow } from './composer-frame-guard';
-import { notRunError, performTurnAction, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
+import { notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
 import type { NativePermissionScreen, PermissionAction } from '../shared/native-permission';
@@ -1444,7 +1444,8 @@ ${after}`;
       if (target && position) {
         const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
         const cursor = this.cursors.get(this.key(workspace,sessionId));
-        if (cursor?.inode !== position.inode || cursor?.offset !== position.offset) throw new Error(t('backend.rewindHistoryChanged'));
+        // Read on since the rewind was chosen (nothing sent yet): the caller reads again first.
+        if (cursor?.inode !== position.inode || cursor?.offset !== position.offset) throw new RewindRecordChanged();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       return performTurnAction(this.settingDriver(workspace, sessionId, {historyGuard}), paneId, panePid, action, target, assertCurrent);
@@ -1595,15 +1596,17 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
       // send-keys. A transport error after dispatch never authorizes a retry.
       const guardedNavigation = (contexts.includes('ModelPicker') && ['Up', 'Down', 'Home', 'End', 'PageUp', 'PageDown', 'Escape'].includes(key))
         || (contexts.includes('EffortSlider') && ['Left', 'Right', 'Escape'].includes(key));
-      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent
+      const recordChecked = !!options.historyGuard && recordBound;
+      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent || recordChecked
         ? 'LECTERN_MENU_KEY_NOT_SENT_' + randomUUID() : undefined;
       const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort' : 'exact';
-      // The transcript revision guard runs first: for a question or permission answer its
-      // failure is printed as a receipt that nothing was sent (TranscriptChangedNoKeys).
-      // Ctrl+U only takes out a command Lectern itself typed (withdrawCommand); it is bound to
-      // the frame showing it, not to the transcript revision a rewind was chosen from.
-      const recordGuard = !options.historyGuard || !recordBound ? '' : options.assertCurrent && rejectedNavigation
-        ? receiptOnFailure(options.historyGuard, rejectedNavigation + RECORD_CHANGED) : options.historyGuard;
+      // The transcript revision guard runs first: its failure is printed as a receipt that
+      // nothing was sent (TranscriptChangedNoKeys), for a question or permission answer and for
+      // a rewind's keys alike (the rewind is then chosen again from a fresh read).
+      // Ctrl+U only takes out a command Lectern itself typed (withdrawCommand), and Esc closes the
+      // rewind menu Lectern opened (`close`): both are bound to the frame they act on, not to
+      // the transcript revision a rewind was chosen from.
+      const recordGuard = recordChecked ? receiptOnFailure(options.historyGuard!, rejectedNavigation + RECORD_CHANGED) : '';
       options.assertCurrent?.();
       return read(settle, recordGuard + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
     };
@@ -1635,13 +1638,13 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
         const keys: Record<typeof action, [string, string[]]> = {
           queue: ['ctrl+x enter', ['C-x','Enter']], steer: ['ctrl+x ctrl+s', ['C-x','C-s']],
           stop: ['Escape',['Escape']], up: ['Up',['Up']], down: ['Down',['Down']],
-          accept: ['Enter',['Enter']], cancel: ['Escape',['Escape']], submit: ['Enter',['Enter']], clear: ['ctrl+c',['C-c']],
+          accept: ['Enter',['Enter']], cancel: ['Escape',['Escape']], close: ['Escape',['Escape']], submit: ['Enter',['Enter']], clear: ['ctrl+c',['C-c']],
           erase: ['ctrl+u', ['C-u']], switchSession: ['Enter', ['Enter']],
         };
         const [binding, tmuxKeys] = keys[action];
-        const contexts: Parameters<NativeKeybindings['guard']>[2] = ['up','down','accept','cancel'].includes(action) ? ['Select','Confirmation'] : ['Chat'];
+        const contexts: Parameters<NativeKeybindings['guard']>[2] = ['up','down','accept','cancel','close'].includes(action) ? ['Select','Confirmation'] : ['Chat'];
         const tail = footerOnly && turnComposer(viewport)?.tailLines;
-        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession', action !== 'erase');
+        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession', action !== 'erase' && action !== 'close');
       },
       pasteForTurn: async (text, footerOnly) => {
         if (!last) throw new Error(t('backend.nativeInputUnchecked'));

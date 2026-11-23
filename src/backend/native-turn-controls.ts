@@ -9,7 +9,9 @@ import { keysNotSent, TranscriptChangedNoKeys } from './native-settings';
 interface TurnFrame { paneId: string; panePid: number; viewport: string; nativeStatus?: string }
 export interface TurnDriver {
   frame(): Promise<TurnFrame>;
-  keyForTurn(key: 'queue' | 'steer' | 'stop' | 'up' | 'down' | 'accept' | 'cancel' | 'submit' | 'clear' | 'erase' | 'switchSession', footerOnly?: boolean): Promise<void>;
+  /** `close` is Esc in the rewind menu like `cancel`, but not bound to the transcript revision
+   * a rewind was chosen from: Lectern closes the menu it opened after the rewind failed. */
+  keyForTurn(key: 'queue' | 'steer' | 'stop' | 'up' | 'down' | 'accept' | 'cancel' | 'close' | 'submit' | 'clear' | 'erase' | 'switchSession', footerOnly?: boolean): Promise<void>;
   pasteForTurn(text: string, footerOnly: boolean): Promise<void>;
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -71,8 +73,14 @@ export function sameDraft(rendered: string, text: string) { return visible(rende
 // What the native /rewind completion says: 2.1.300–2.1.321, then 2.1.326–2.1.330.
 const rewindDescription = /^(?:Restore the code and\/or conversation to a previous point|Restore earlier code, conversation, or both)$/;
 
+/** `prompts` is Claude Code's whole /rewind list as Lectern reads it from the transcript, labels
+ * oldest first (MessageDisplay.rewindPoints: prompts and listed local commands); `index` the target. */
 export interface RewindTarget { index: number; prompts: string[] }
 const mismatch = () => new Error(t('native.rewindMismatch'));
+/** The transcript changed after the rewind was chosen, before its next key, and the terminal is
+ * back as it was (nothing typed, or the typed /rewind or the opened menu taken out again): nothing
+ * was rewound, and choosing again from a fresh read is safe. */
+export class RewindRecordChanged extends Error { constructor() { super(t('native.rewindRecordChanged')); } }
 // Compare the actual native list offsets, not text lookup or a GUI page index.
 // Native list labels have one line; the confirmation quote has up to three.
 // A truncated label is usable only if its visible prefix identifies one distinct
@@ -121,45 +129,67 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     sendGuarded(() => driver.pasteForTurn(text, footerOnly), () => waitFor(still));
   const onMenu = (menu: RewindMenu) => (frame: TurnFrame) => readRewind(frame.viewport)?.signature === menu.signature;
   const withdraw = (command: string) => withdrawCommand(driver, command, async () => (await inspect()).viewport);
+  // Lectern opened the menu for a rewind it could not finish: back out again (Esc from the
+  // confirmation to the list, then out of the list; Esc never restores anything) and wait for the
+  // idle, empty input box /rewind was typed into. The error says whether that worked.
+  const closeOpenedMenu = async (error: unknown) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    try {
+      for (let step = 0; step < 3; step++) {
+        const menu = readRewind((await inspect()).viewport);
+        if (!menu) break;
+        await press('close', undefined, onMenu(menu));
+        await waitFor(f => !onMenu(menu)(f));
+      }
+      await waitFor(f => !readRewind(f.viewport) && f.nativeStatus !== 'waiting' && isIdleEmptyComposer(f.viewport));
+    } catch { return new Error(t('native.rewindMenuLeftOpen', { detail })); }
+    return error instanceof TranscriptChangedNoKeys ? new RewindRecordChanged() : new Error(t('native.rewindMenuClosed', { detail }));
+  };
   if (action?.kind === 'rewindTo' || action?.kind === 'restore' && target) {
     if (!target) throw mismatch();
     const text = target.prompts[target.index];
     if (!text) throw mismatch();
     const confirmation = (menu?: RewindMenu) => menu?.stage === 'confirm' && checkpointText(menu.message ?? '', text, target.prompts);
-    let frame = await inspect();
-    if (action.kind === 'rewindTo') {
-      await performTurnAction(driver, pane, pid, {kind:'openRewind'});
-      frame = await inspect();
-    } else {
-      const opened = readRewind(frame.viewport);
-      if (!confirmation(opened) || opened!.signature !== action.signature) throw mismatch();
-      // Even identical prompts produce identical confirmation pages. Return to
-      // the list and verify the actual focused ordinal before any restore.
-      await press('cancel', undefined, onMenu(opened!));
-      frame = await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint');
-    }
-    let menu = readRewind(frame.viewport);
-    if (!menu) throw mismatch();
-    let position = checkpointPosition(menu, target);
-    if (action.kind === 'restore' && position !== target.index) throw mismatch();
-    while (position !== target.index) {
+    // From the list on `frame`, move to the target's row and open its confirmation: one row
+    // per key, the whole visible list re-aligned with the target's list after each.
+    const chooseCheckpoint = async (frame: TurnFrame) => {
+      let menu = readRewind(frame.viewport);
+      if (!menu) throw mismatch();
+      let position = checkpointPosition(menu, target);
+      if (action.kind === 'restore' && position !== target.index) throw mismatch();
+      while (position !== target.index) {
+        assertCurrent?.();
+        const delta = Math.sign(target.index - position);
+        const old = menu;
+        await press(delta < 0 ? 'up' : 'down', undefined, onMenu(old));
+        frame = await waitFor(f => readRewind(f.viewport)?.signature !== old.signature);
+        menu = readRewind(frame.viewport);
+        if (!menu || checkpointPosition(menu, target) !== position + delta) throw mismatch();
+        position += delta;
+      }
       assertCurrent?.();
-      const delta = Math.sign(target.index - position);
-      const old = menu;
-      await press(delta < 0 ? 'up' : 'down', undefined, onMenu(old));
-      frame = await waitFor(f => readRewind(f.viewport)?.signature !== old.signature);
+      await press('accept', undefined, onMenu(menu));
+      frame = await waitFor(f => readRewind(f.viewport)?.stage === 'confirm');
       menu = readRewind(frame.viewport);
-      if (!menu || checkpointPosition(menu, target) !== position + delta) throw mismatch();
-      position += delta;
+      if (!confirmation(menu)) throw mismatch();
+      return menu!;
+    };
+    if (action.kind === 'rewindTo') {
+      // Only a transcript change refused before /rewind was typed, or with it taken out again, is "nothing done".
+      try { await performTurnAction(driver, pane, pid, {kind:'openRewind'}); }
+      catch (error) { throw error instanceof TranscriptChangedNoKeys ? new RewindRecordChanged() : error; }
+      try { await chooseCheckpoint(await inspect()); }
+      catch (error) { throw await closeOpenedMenu(error); }
+      return;
     }
+    const opened = readRewind((await inspect()).viewport);
+    if (!confirmation(opened) || opened!.signature !== action.signature) throw mismatch();
+    // Even identical prompts produce identical confirmation pages. Return to
+    // the list and verify the actual focused ordinal before any restore.
+    await press('cancel', undefined, onMenu(opened!));
+    const menu = await chooseCheckpoint(await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint'));
     assertCurrent?.();
-    await press('accept', undefined, onMenu(menu));
-    frame = await waitFor(f => readRewind(f.viewport)?.stage === 'confirm');
-    menu = readRewind(frame.viewport);
-    if (!confirmation(menu)) throw mismatch();
-    if (action.kind === 'rewindTo') return;
-    assertCurrent?.();
-    return performTurnAction(driver, pane, pid, {kind:'restore',signature:menu!.signature}, undefined, assertCurrent);
+    return performTurnAction(driver, pane, pid, {kind:'restore',signature:menu.signature}, undefined, assertCurrent);
   }
   const initial = await inspect();
   const editor = turnComposer(initial.viewport);
@@ -234,7 +264,10 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     try { await press(opening || restored ? 'submit' : action.kind === 'queue' ? 'queue' : 'steer', !opening, submitted); }
     catch (error) {
       if (!opening || !keysNotSent(error)) throw error;
-      throw notRunError(text, await withdraw(text), true);
+      const cleared = await withdraw(text);
+      // The transcript changed under a rewind's Enter: once /rewind is out again, nothing was done.
+      if (cleared && error instanceof TranscriptChangedNoKeys) throw error;
+      throw notRunError(text, cleared, true);
     }
     if (opening) await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint');
     return;

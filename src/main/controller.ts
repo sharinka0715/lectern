@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { TurnAction } from '../shared/turn-controls';
-import { checkpointPosition, type RewindTarget } from '../backend/native-turn-controls';
+import { checkpointPosition, RewindRecordChanged, type RewindTarget } from '../backend/native-turn-controls';
 import { canInterruptTurn, readRewind, turnComposer } from '../core/turn-controls';
 import { Backend, validateWorkspace, type HistoryCursor } from '../backend';
 import { repairSlices } from '../backend/transcript-pages';
@@ -963,34 +963,49 @@ export class Controller extends EventEmitter {
     this.sending = this.turnBusy = true;
     this.settingRevision++;
     try {
-      let selectedUuid: string | undefined, target: RewindTarget | undefined, assertCurrent: (() => void) | undefined;
-      if (action.kind === 'rewindTo' || action.kind === 'checkpoint' || action.kind === 'restore') {
-        // The native index counts the whole active branch, never the current
-        // JSONL page. Drain older pages before matching even a recent duplicate.
-        while (watch.older) {
-          if (this.watch !== watch) throw new Error(t('controller.rewindSwitched'));
-          await this.loadEarlierMessages(workspaceId, sessionId, watch.older.ticket);
+      let selectedUuid: string | undefined, target: RewindTarget | undefined, result: Awaited<ReturnType<Backend['turnAction']>>;
+      for (let attempt = 1; ; attempt++) {
+        let assertCurrent: (() => void) | undefined;
+        if (action.kind === 'rewindTo' || action.kind === 'checkpoint' || action.kind === 'restore') {
+          // The native index counts the whole active branch, never the current
+          // JSONL page. Drain older pages before matching even a recent duplicate.
+          while (watch.older) {
+            if (this.watch !== watch) throw new Error(t('controller.rewindSwitched'));
+            await this.loadEarlierMessages(workspaceId, sessionId, watch.older.ticket);
+          }
+          // Claude Code's list: the prompts, and the local commands it lists between them (rewindPoints).
+          const branch = watch.display.rewindPoints();
+          selectedUuid = action.kind === 'rewindTo' ? action.uuid : action.kind === 'restore' ? memory.checkpointUuid
+            : menu && Number.isInteger(action.index) ? branch?.[(menu.before ?? 0) + action.index!]?.uuid : undefined;
+          const index = branch?.findIndex(point => point.uuid === selectedUuid) ?? -1;
+          if (!branch || !selectedUuid || index < 0 || branch.filter(point => point.uuid === selectedUuid).length !== 1 || watch.display.historyIncomplete)
+            throw new Error(t('controller.rewindTargetUnverified'));
+          const chosen = target = { index, prompts: branch.map(point => point.text) };
+          const position = watch.snapshot.transcriptPosition;
+          assertCurrent = () => {
+            if (this.watch !== watch || watch.failures || watch.snapshot.paneId !== pane || watch.snapshot.panePid !== pid ||
+                (position && (position.inode !== watch.snapshot.transcriptPosition?.inode || position.offset !== watch.snapshot.transcriptPosition?.offset) &&
+                  JSON.stringify(watch.display.rewindPoints()) !== JSON.stringify(branch)))
+              throw new Error(t('controller.rewindBranchChanged'));
+          };
+          assertCurrent();
+          if (action.kind === 'checkpoint' && menu) checkpointPosition(menu, chosen);
         }
-        const users = () => watch.display.getMessages().filter(m => m.role === 'user' && m.rewindUuid);
-        const branch = users();
-        selectedUuid = action.kind === 'rewindTo' ? action.uuid : action.kind === 'restore' ? memory.checkpointUuid
-          : menu && Number.isInteger(action.index) ? branch[(menu.before ?? 0) + action.index!]?.rewindUuid : undefined;
-        const index = branch.findIndex(m => m.rewindUuid === selectedUuid);
-        if (!selectedUuid || index < 0 || branch.filter(m => m.rewindUuid === selectedUuid).length !== 1 || watch.display.historyIncomplete)
-          throw new Error(t('controller.rewindTargetUnverified'));
-        target = { index, prompts: branch.map(m => m.text) };
-        const position = watch.snapshot.transcriptPosition;
-        assertCurrent = () => {
-          if (this.watch !== watch || watch.failures || watch.snapshot.paneId !== pane || watch.snapshot.panePid !== pid ||
-              (position && (position.inode !== watch.snapshot.transcriptPosition?.inode || position.offset !== watch.snapshot.transcriptPosition?.offset) &&
-                JSON.stringify(users().map(m => [m.rewindUuid,m.text])) !== JSON.stringify(branch.map(m => [m.rewindUuid,m.text]))))
-            throw new Error(t('controller.rewindBranchChanged'));
-        };
-        assertCurrent();
-        if (action.kind === 'checkpoint' && menu) checkpointPosition(menu, target);
+        if (action.kind === 'openRewind' || action.kind === 'rewindTo') { memory.pickerOpen = true; memory.checkpointUuid = undefined; this.turnMemory.set(turnKey,memory); }
+        try {
+          result = await this.backend.turnAction(watch.workspace,sessionId,pane,pid,action,target,assertCurrent,watch.snapshot.transcriptPosition);
+          break;
+        } catch (error) {
+          // Claude Code wrote to the transcript after the message was chosen (a rename's records
+          // some 250 ms after its title, say), and the terminal is back as it was: nothing was
+          // rewound. Read the transcript again and choose the same message once more.
+          if (action.kind !== 'rewindTo' || attempt > 1 || !(error instanceof RewindRecordChanged) || this.watch !== watch) throw error;
+          diagnostic.event('controller.rewind.reread', { watchId: watch.id, sessionId });
+          await new Promise(resolve => setTimeout(resolve, 250));
+          await this.refresh(workspaceId, sessionId);
+          if (this.watch !== watch) throw error;
+        }
       }
-      if (action.kind === 'openRewind' || action.kind === 'rewindTo') { memory.pickerOpen = true; memory.checkpointUuid = undefined; this.turnMemory.set(turnKey,memory); }
-      const result = await this.backend.turnAction(watch.workspace,sessionId,pane,pid,action,target,assertCurrent,watch.snapshot.transcriptPosition);
       if (action.kind === 'checkpoint' || action.kind === 'rewindTo') memory.checkpointUuid = selectedUuid;
       if (action.kind === 'stop') {
         watch.compactSamples.interrupt();

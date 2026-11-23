@@ -416,6 +416,31 @@ export class MessageDisplay {
     return confirmed.length ? confirmed : visible.slice(-1);
   }
 
+  /**
+   * Claude Code's /rewind list for the current branch, oldest first: every prompt Lectern
+   * offers to rewind to, and between them the local commands it lists too, for which Lectern
+   * shows no message. A one-step `/model sonnet` or `/effort low` (how Lectern switches) and an
+   * `/effort` slider closed with Esc write a `<command-name>` user record that no reply follows;
+   * Claude Code lists it as "/model sonnet", "/effort low", "/effort" (2.1.300–2.1.330), while
+   * /rename, /context and a /model picker closed with Esc write system records it does not list.
+   * Their texts are the labels the native list shows. Undefined when a rewindable prompt is not
+   * on the branch read, so the list cannot be vouched for.
+   */
+  rewindPoints(): { uuid: string; text: string }[] | undefined {
+    const prompts = new Map(this.turns.filter(turn => turn.user && this.rewindable(turn)).map(turn => [turn.userUuid!, turn.user!.text]));
+    const turnUsers = new Set(this.turns.map(turn => turn.userUuid));
+    const points: { uuid: string; text: string }[] = [];
+    for (const row of this.transcript.activeRows()) {
+      const prompt = prompts.get(row.key);
+      if (prompt !== undefined) {
+        points.push({ uuid: row.key, text: prompt });
+        prompts.delete(row.key);
+      } else if (row.kind === 'command' && !turnUsers.has(row.key) && (!this.tipUsers || this.tipUsers.has(row.key))) {
+        points.push({ uuid: row.key, text: row.text ?? '' });
+      }
+    }
+    return prompts.size ? undefined : points;
+  }
   checkpointUuid(menu: RewindMenu, index: number) {
     const users = this.turns.filter(turn => turn.user && this.rewindable(turn));
     const rows = menu.rows.filter(row => row.label !== '(current)');

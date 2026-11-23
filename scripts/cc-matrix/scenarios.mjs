@@ -4,7 +4,7 @@
 // script answers. Rows (features) are what the coverage table reports.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { sel } from './app.mjs';
@@ -46,7 +46,7 @@ export const FEATURES = [
   { id: 'interrupt', title: 'Interrupt a reply (stop button)' },
   { id: 'compact', title: '/compact with a message queued during compaction' },
   { id: 'rename', title: 'Rename a running session (/rename)' },
-  { id: 'rewind-renamed', title: 'Rewind in a session renamed to a name too wide for the input box border, with a wrapped skill description among the /rewind completions' },
+  { id: 'rewind-renamed', title: 'Rewind past one-step /model and /effort switches, right after renaming the session to a name too wide for the input box border, with a wrapped skill description among the /rewind completions' },
   { id: 'session-settings', title: 'Switch model and effort in a running session' },
   { id: 'statusline', title: 'Status line: model, context usage, billing route' },
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
@@ -878,37 +878,33 @@ export const SCENARIOS = [
         await rename(await ui.activeSessionId(), 'Matrix renamed session');
       });
       await check('rewind-renamed', async () => {
-        // A chat of its own: Claude Code lists the inline /model and /effort above as rewind
-        // points too, which Lectern's list does not (a separate gap).
-        api.script('rw-one', () => ({ text: 'First answer (ccm-rw-one).' }));
-        api.script('rw-two', () => ({ text: 'Second answer (ccm-rw-two).' }));
-        await startChat(ctx, folders.main, 'Rewind check one ccm:rw-one');
-        await ui.waitReply('ccm-rw-one');
-        await ui.waitStatus('idle', 30_000);
-        await ui.send('Rewind check two ccm:rw-two');
-        await ui.waitReply('ccm-rw-two');
+        // The chat above: Lectern switched model and effort in one step after its first prompt
+        // (session-settings) and switches effort again now, the last thing before the rewind.
+        // Claude Code lists each switch as a rewind point between the prompts; Lectern's own list
+        // has to line up with its list row by row to choose the second prompt.
+        await pickSetting(ctx, 'effort', [/^\s*high\b/i, /^\s*medium\b/i]);
+        await page.waitForFunction(selector => /high|medium/i.test(document.querySelector(selector)?.textContent ?? ''), '.session-settings:not(.draft-settings) [data-setting-kind="effort"]', { timeout: 30_000 });
         await ui.waitStatus('idle', 30_000);
         const id = await ui.activeSessionId();
-        // Wider than the input box's upper border can hold: cut there with an ellipsis.
+        // Wider than the input box's upper border can hold: cut there with an ellipsis. Claude Code
+        // writes the rename's records some 250 ms after its title, so the rewind chosen right away
+        // can be refused for a changed transcript: Lectern then reads it again and rewinds anyway.
         await rename(id, '矩阵回退测试 ' + '很长的会话名称'.repeat(12));
-        // Claude Code writes the rename's command records after its title (2.1.330: some 250 ms
-        // later). A rewind chosen before the app has read them is refused as a changed history,
-        // as it should be: wait until the file is still, then for a poll.
         const jsonl = (await sandbox.projectFiles()).find(file => file.includes(id));
-        for (let size = -1, still = 0; still < 10; await delay(250)) {
-          const now = (await stat(jsonl)).size;
-          still = now === size ? still + 1 : 0;
-          size = now;
-        }
-        await delay(2500);
-        ctx.note('rewind-renamed-border', (await ui.screen()).split('\n').filter(line => / ─\s*$/u.test(line)).map(line => line.trimEnd()));
+        const commands = (await readJsonl(jsonl)).filter(r => r.type === 'user' && !r.isMeta && /^<command-name>/.test(textOf(r.message?.content).trim()))
+          .map(r => textOf(r.message.content).replace(/\s+/g, ' ').replace(/<command-name>(\S+)<\/command-name>.*<command-args>(.*)<\/command-args>/, '$1 $2').trim());
+        ctx.note('rewind-renamed-commands', commands);
+        assert.ok(commands.some(c => c.startsWith('/model')) && commands.filter(c => c.startsWith('/effort')).length >= 2, 'the switches are command records Claude Code lists');
         await page.locator('.rewind-launch').click();
         const picker = page.locator('dialog.rewind-picker');
-        await picker.locator('.rewind-choices button', { hasText: 'Rewind check two ccm:rw-two' }).click();
+        await picker.locator('.rewind-choices button', { hasText: 'Next turn ccm:after-settings' }).click();
         // The native menu opened (the typed /rewind was recognized and submitted) and reached its confirmation.
         await page.locator('.rewind-panel .rewind-confirm').click({ timeout: 45_000 });
-        await page.waitForFunction(([selector, text]) => document.querySelector(selector)?.value === text, [sel.composer, 'Rewind check two ccm:rw-two'], { timeout: 30_000 });
-        await page.waitForFunction(selector => ![...document.querySelectorAll(selector)].some(node => node.textContent.includes('Rewind check two')), sel.user, { timeout: 30_000 });
+        await page.waitForFunction(([selector, text]) => document.querySelector(selector)?.value === text, [sel.composer, 'Next turn ccm:after-settings'], { timeout: 30_000 });
+        await page.waitForFunction(selector => ![...document.querySelectorAll(selector)].some(node => node.textContent.includes('Next turn ccm:after-settings')), sel.user, { timeout: 30_000 });
+        assert.ok([...await page.locator(sel.user).allTextContents()].some(text => text.includes('Session settings check')), 'the first prompt stays');
+        // The restored prompt is back in the input box, under the cut name.
+        ctx.note('rewind-renamed-border', (await ui.screen()).split('\n').filter(line => / ─\s*$/u.test(line)).map(line => line.trimEnd()));
       });
       await rm(skill, { recursive: true, force: true });
     },

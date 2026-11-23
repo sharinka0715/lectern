@@ -320,6 +320,15 @@ export class TranscriptStore {
     return [...this.nodes.values()].filter(row => !shown.has(row.key));
   }
 
+  /** The selected branch since the compaction that holds it, oldest first: the rows
+   * Claude Code draws its /rewind list from. Only reads: the projection state stays as the
+   * last change left it. */
+  activeRows(): TranscriptRow[] {
+    const { preserved, anchor, incomplete } = this;
+    try { return this.branch(); }
+    finally { this.preserved = preserved; this.anchor = anchor; this.incomplete = incomplete; }
+  }
+
   /** A native restore can redraw immediately and persist its new branch on the next send. */
   rewindBefore(key: string): TranscriptChange | undefined {
     const row = this.nodes.get(key);

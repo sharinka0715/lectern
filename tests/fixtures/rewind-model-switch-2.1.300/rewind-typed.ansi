@@ -1,0 +1,40 @@
+
+[31m ▐[40m▛███▛█[39m[49m   [1mClaude Code[0m[39m[49m [2m[37mv2.1.300[0m[39m[49m                             
+[31m▝▜[40m█████[49m█▀[39m  [2m[37mHaiku 5.5 with high effort · API Usage Billing[0m[39m[49m   
+[31m ▝▝   ▝▝ [39m  [2m[37m/home/dev/project[0m[39m[49m                
+
+[31m▎[39m [1mAuto mode is now Claude Code's default permission mode.[0m[39m[49m                                                               
+[31m▎[39m [2m[37mAuto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and [0m[39m[49m    
+[31m▎[39m [2m[37mprompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.[0m[39m[49m                      
+[31m▎[39m [2m[37mhttps://code.claude.com/docs/en/permission-modes[0m[39m[49m                                                                      
+
+[37m[40m❯ [97mSummarize the build script ccm:one[39m                                                                                    
+
+[97m[49m●[39m Fake answer.                
+
+[2m[37m✻[0m[39m[49m [2m[37mWorked for 0s · done 8:10 AM[0m[39m[49m                                                                                          
+
+[37m[40m❯[39m [97m/model sonnet[39m                                                                                                         
+[2m[37m[49m  ⎿  [0m[39m[49mSet model to [97mSonnet 5.5[39m and saved as your default for new sessions                                                 
+
+[37m[40m❯[39m [97m/effort low[39m                                                                                                           
+[2m[37m[49m  ⎿  [0m[39m[49mSet effort level to low (saved as your default for new sessions): Quick, straightforward implementation with       
+     minimal overhead                                                                                                   
+
+[37m[40m❯ [97mNow list the tests ccm:two[39m                                                                                            
+
+[97m[49m●[39m Fake answer.                                              
+
+[2m[37m✻[0m[39m[49m [2m[37mChurned for 0s · done 8:10 AM[0m[39m[49m                                                                                         
+
+[37m[40m❯[39m [97m/effort high[39m                                                                                                          
+[2m[37m[49m  ⎿  [0m[39m[49mSet effort level to high (saved as your default for new sessions): Comprehensive implementation with extensive     
+     testing and documentation
+                                                            
+[37m[40m❯[39m [97m/model haiku[39m                                                                                                          
+
+[49m  [97m❯ /[1mrewind[0m[97m[49m                     Restore the code and/or conversation to a previous point[39m                                
+[37m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m❯ [97m/rewind[7m[39m [0m[39m[49m                                                  
+[37m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [93m⏵⏵ auto mode on[2m[37m (shift+tab to cycle)[0m[39m[49m                                                                                  

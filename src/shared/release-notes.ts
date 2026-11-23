@@ -65,6 +65,12 @@ export const releaseNotes: ReleaseNote[] = [
         'The first rewind after resuming a conversation no longer fails with "The conversation history file has changed".'],
       ['在对话框上按 Esc 中断本轮后，对话不再一直显示「正在回复」。',
         'After Esc on a dialog stops the turn, the conversation no longer stays "replying".'],
+      ['切换过模型或推理强度的对话，从界面回退不再报「原生回退记录与当前分支无法精确对齐」。',
+        'Rewinding from the app works again after switching model or effort: Claude Code lists /model and /effort among the rewind points, and Lectern now lines up with its list.'],
+      ['回退在原生菜单打开后失败时，Lectern 会关掉自己打开的菜单，并说明没有回退。',
+        'When a rewind fails after the terminal\'s rewind menu opened, Lectern closes the menu it opened, leaves the input box as it was and says nothing was rewound.'],
+      ['改名等操作后马上回退不再报「会话历史文件已变化」，Lectern 会重读一次再回退。',
+        'Rewinding right after a rename no longer fails with "The conversation history file has changed": Lectern reads the conversation again and retries once.'],
     ],
   },
   {
