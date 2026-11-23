@@ -52,11 +52,12 @@ import {
   type ConnectionProfile,
 } from "./desktop-state";
 import { dateTimeText, t, type LocalePreference, type MessageKey } from '../shared/i18n';
-import { promptCacheTtlChoice, promptCacheTtlChoices, type PromptCacheTtlChoice } from '../shared/prompt-cache';
+import { promptCacheTtlPreset, promptCacheTtlPresets, type PromptCacheTtlPreset } from '../shared/prompt-cache';
 import type { LocaleState } from '../shared/types';
 
-const cacheTtlLabels: Record<PromptCacheTtlChoice, MessageKey> = {
-  '': 'prefs.cacheTtlDefault', '5m': 'prefs.cacheTtl5m', '1h': 'prefs.cacheTtl1h',
+const cacheTtlLabels: Record<PromptCacheTtlPreset, MessageKey> = {
+  default: 'prefs.cacheTtlDefault', 'both-5m': 'prefs.cacheTtlBoth5m', 'both-1h': 'prefs.cacheTtlBoth1h',
+  'main-1h-other-5m': 'prefs.cacheTtlMain1hOther5m',
 };
 
 const previewSample = () => `${t('prefs.sampleCode')}
@@ -394,21 +395,13 @@ export function PreferencesDialog({
               </label>
               <p>{t('prefs.workflowsHelp')}</p>
               <label>
-                {t('prefs.cacheTtlMain')}
-                <select aria-label={t('prefs.cacheTtlMain')} value={settings.promptCacheTtl}
-                  onChange={e => setDesktop({ promptCacheTtl: promptCacheTtlChoice(e.target.value) })}>
-                  {promptCacheTtlChoices.map(choice => <option key={choice} value={choice}>{t(cacheTtlLabels[choice])}</option>)}
+                {t('prefs.cacheTtl')}
+                <select aria-label={t('prefs.cacheTtl')} value={settings.promptCacheTtlPreset}
+                  onChange={e => setDesktop({ promptCacheTtlPreset: promptCacheTtlPreset(e.target.value) })}>
+                  {promptCacheTtlPresets.map(preset => <option key={preset} value={preset}>{t(cacheTtlLabels[preset])}</option>)}
                 </select>
               </label>
-              <p>{t('prefs.cacheTtlMainHelp')}</p>
-              <label>
-                {t('prefs.cacheTtlOther')}
-                <select aria-label={t('prefs.cacheTtlOther')} value={settings.subagentPromptCacheTtl}
-                  onChange={e => setDesktop({ subagentPromptCacheTtl: promptCacheTtlChoice(e.target.value) })}>
-                  {promptCacheTtlChoices.map(choice => <option key={choice} value={choice}>{t(cacheTtlLabels[choice])}</option>)}
-                </select>
-              </label>
-              <p>{t('prefs.cacheTtlOtherHelp')}</p>
+              <p>{t('prefs.cacheTtlDefaultHelp')}</p>
               <p>{t('prefs.cacheTtlHelp')}</p>
               <QuitPreferenceSetting resetKey={quitReset} />
               <button className="pref-action" onClick={() => {

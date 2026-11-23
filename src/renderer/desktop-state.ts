@@ -3,7 +3,7 @@ import type { ChatView } from "../shared/types";
 import { DEFAULT_HISTORY_PAGE_MIB, historyPageSizeMiB } from '../shared/history-paging';
 import { markNavigated } from "./ssh-machines";
 import { validTimeZone } from "./quota-time";
-import { promptCacheTtlChoice, type PromptCacheTtlChoice } from "../shared/prompt-cache";
+import { promptCacheTtlPreset, promptCacheTtlPresetOf, type PromptCacheTtlPreset } from "../shared/prompt-cache";
 
 export interface ChatTarget {
   workspaceId: string;
@@ -73,9 +73,8 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   settingSwitch: "inline" | "menu";
   /** Lectern-launched sessions turn on dynamic workflows so /effort offers Ultracode. */
   enableWorkflows: boolean;
-  /** Prompt-cache lifetimes for the Claude processes Lectern starts; "" is Claude Code's default. */
-  promptCacheTtl: PromptCacheTtlChoice;
-  subagentPromptCacheTtl: PromptCacheTtlChoice;
+  /** Prompt-cache lifetimes for the Claude processes Lectern starts; "default" sets nothing. */
+  promptCacheTtlPreset: PromptCacheTtlPreset;
   historyPageMiB: number;
   showCacheTtl: boolean;
   showSubscriptionQuota: boolean;
@@ -104,7 +103,7 @@ export const defaultAppearance = {
   showSubscriptionQuota: true,
   quotaTimeZone: "",
 } as const;
-export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtl: "", subagentPromptCacheTtl: "" } as const;
+export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtlPreset: "default" } as const;
 const defaults: DesktopState = {
   ...defaultAppearance,
   ...defaultSessionOptions,
@@ -176,8 +175,9 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       replyDetail: p.replyDetail === "individual" ? "individual" : defaultAppearance.replyDetail,
       settingSwitch: p.settingSwitch === "menu" ? "menu" : defaultSessionOptions.settingSwitch,
       enableWorkflows: p.enableWorkflows !== false,
-      promptCacheTtl: promptCacheTtlChoice(p.promptCacheTtl),
-      subagentPromptCacheTtl: promptCacheTtlChoice(p.subagentPromptCacheTtl),
+      // Development builds of 0.2.2 stored two separate choices; a pair that is a preset carries over.
+      promptCacheTtlPreset: "promptCacheTtlPreset" in p ? promptCacheTtlPreset(p.promptCacheTtlPreset)
+        : promptCacheTtlPresetOf(p.promptCacheTtl, p.subagentPromptCacheTtl),
       historyPageMiB: historyPageSizeMiB(p.historyPageMiB),
       showCacheTtl: p.showCacheTtl !== false,
       showSubscriptionQuota: p.showSubscriptionQuota !== false,

@@ -191,9 +191,9 @@ function ChatPane({ view, resumes, setResume }: {
   }, [primary, prefs.theme]);
   useEffect(() => {
     if (primary) void window.desktop?.setLaunchPreferences?.({ enableWorkflows: prefs.enableWorkflows,
-      promptCacheTtl: prefs.promptCacheTtl, subagentPromptCacheTtl: prefs.subagentPromptCacheTtl })
+      promptCacheTtlPreset: prefs.promptCacheTtlPreset })
       .catch(error => reportActionError(error, "同步会话启动选项失败"));
-  }, [primary, prefs.enableWorkflows, prefs.promptCacheTtl, prefs.subagentPromptCacheTtl]);
+  }, [primary, prefs.enableWorkflows, prefs.promptCacheTtlPreset]);
   const [info, setInfo] = useState<AppInfo>({
     platform: "",
     version: "",

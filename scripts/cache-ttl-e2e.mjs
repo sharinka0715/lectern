@@ -1,13 +1,17 @@
 // npm run build && node scripts/cache-ttl-e2e.mjs [packaged-executable]
 // Settings → Session's prompt-cache lifetimes reach the Claude Code that Lectern starts
 // (installed Claude Code, isolated CLAUDE_CONFIG_DIR and tmux, the matrix's loopback fake
-// API; no real model request). The user's own settings turn on ENABLE_PROMPT_CACHING_1H, so
-// Claude Code's default is 1 hour for both kinds of request: "Claude Code default" must
-// leave it at that, "5 minutes" must take effect against it. For each choice a new chat asks
-// the model to start a subagent; the `cache_control` markers of the main conversation's and
-// the subagent's requests must carry the chosen `ttl`, and the status bar's cache chip must
-// show the main conversation's lifetime (statusLine `prompt_cache`). Screenshots of the
-// Session page in Chinese and English go to test-results/cache-ttl/.
+// API; no real model request). One choice with four values: the default (Lectern sets
+// nothing), both 5 minutes, both 1 hour, main conversation 1 hour with the other requests
+// 5 minutes. For each a new chat asks the model to start a subagent; the `cache_control`
+// markers of the main conversation's and the subagent's requests must carry the expected
+// `ttl`, the status bar's cache chip must show the main conversation's lifetime (statusLine
+// `prompt_cache`), and the chat's Claude process must have exactly the preset's variables in
+// its --settings (none for the default). The user's own settings first turn on
+// ENABLE_PROMPT_CACHING_1H, so Claude Code's default is 1 hour for both: the default must
+// leave it at that, "both 5 minutes" must take effect against it; then they drop it, so the
+// default is the API key's 5 minutes and "both 1 hour" must take effect against that.
+// Screenshots of the Session page in Chinese and English go to test-results/cache-ttl/.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -34,8 +38,10 @@ let app, page;
 try {
   await Promise.all([profile, config, cwd, shots].map(dir => mkdir(dir, { recursive: true })));
   await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: [key.slice(-20)], rejected: [] } }));
-  await writeFile(path.join(config, 'settings.json'), JSON.stringify({
-    env: { ANTHROPIC_API_KEY: key, ANTHROPIC_BASE_URL: api.url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1', ENABLE_PROMPT_CACHING_1H: '1' } }));
+  /** The user's own settings; with `hour`, ENABLE_PROMPT_CACHING_1H makes 1 hour Claude Code's default. */
+  const userSettings = hour => writeFile(path.join(config, 'settings.json'), JSON.stringify({
+    env: { ANTHROPIC_API_KEY: key, ANTHROPIC_BASE_URL: api.url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1', ...(hour && { ENABLE_PROMPT_CACHING_1H: '1' }) } }));
+  await userSettings(true);
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'cache', name: '缓存', kind: 'local', cwd, claudeDir: config }]));
   // The Agent call is one auto mode checks: locally here (the fake API is a gateway).
   const env = { ...process.env, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics') };
@@ -46,47 +52,54 @@ try {
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   page = await app.firstWindow();
   page.setDefaultTimeout(30000);
+  const tmuxOut = args => execFileSync('tmux', args, { env: tmuxEnv, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+  /** Lectern's panes: [pane id, pid of the Claude process it runs]. */
+  const lecternPanes = () => {
+    try { return tmuxOut(['list-panes', '-a', '-F', '#{pane_id} #{pane_pid} #{session_name}']).split('\n').filter(line => / lectern-/.test(line)).map(line => line.split(' ')); } catch { return []; }
+  };
   const pane = () => {
     try {
-      const id = execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{session_name}'], { env: tmuxEnv, stdio: ['ignore', 'pipe', 'ignore'] }).toString().split('\n').filter(line => / lectern-/.test(line)).at(-1)?.split(' ')[0];
-      return id ? execFileSync('tmux', ['capture-pane', '-p', '-t', id], { env: tmuxEnv, stdio: ['ignore', 'pipe', 'ignore'] }).toString() : '(no pane)';
+      const id = lecternPanes().at(-1)?.[0];
+      return id ? tmuxOut(['capture-pane', '-p', '-t', id]) : '(no pane)';
     } catch { return '(no tmux)'; }
   };
 
   const settings = page.getByRole('dialog', { name: '设置' });
-  const main = settings.getByRole('combobox', { name: '主对话的提示缓存时长' });
-  const other = settings.getByRole('combobox', { name: '子代理等其他请求的缓存时长' });
+  const select = settings.getByRole('combobox', { name: '提示缓存时长' });
   const openSession = async () => {
     await page.getByRole('button', { name: '界面与连接设置' }).click();
     await settings.waitFor();
     await settings.locator('nav').getByRole('button', { name: '会话', exact: true }).click();
-    await main.waitFor();
+    await select.waitFor();
   };
-  const stored = () => page.evaluate(() => { const p = JSON.parse(localStorage.getItem('lectern.desktop.preferences.v1') ?? '{}'); return [p.promptCacheTtl, p.subagentPromptCacheTtl]; });
-  const choose = async (mainTtl, otherTtl) => {
+  const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('lectern.desktop.preferences.v1') ?? '{}').promptCacheTtlPreset);
+  const choose = async preset => {
     await openSession();
-    await main.selectOption(mainTtl);
-    await other.selectOption(otherTtl);
-    assert.deepEqual(await stored(), [mainTtl, otherTtl], 'the choice is saved on this computer');
+    await select.selectOption(preset);
+    assert.equal(await stored(), preset, 'the choice is saved on this computer');
     await page.keyboard.press('Escape');
     await settings.waitFor({ state: 'detached' });
   };
 
   console.log('stage: settings page');
   await openSession();
-  assert.equal(await main.inputValue(), '', 'Claude Code default to begin with');
-  assert.equal(await other.inputValue(), '');
-  assert.deepEqual(await main.locator('option').allInnerTexts(), ['跟随 Claude Code 默认', '5 分钟', '1 小时']);
-  assert.deepEqual(await other.locator('option').allInnerTexts(), ['跟随 Claude Code 默认', '5 分钟', '1 小时']);
-  for (const text of ['Claude 订阅在套餐额度内时为 1 小时', '默认都是 5 分钟', 'FORCE_PROMPT_CACHING_5M=1', '已在运行的对话不变']) await settings.getByText(text, { exact: false }).waitFor();
-  await other.scrollIntoViewIfNeeded();
+  assert.equal(await select.inputValue(), 'default', 'the default to begin with');
+  assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(o => o.value)), ['default', 'both-5m', 'both-1h', 'main-1h-other-5m']);
+  assert.deepEqual(await select.locator('option').allInnerTexts(),
+    ['默认（由 Claude Code 决定）', '主对话 5 分钟，其他请求 5 分钟', '主对话 1 小时，其他请求 1 小时', '主对话 1 小时，其他请求 5 分钟']);
+  for (const text of ['选默认时 Lectern 不做设置', '按你用的是订阅还是 API 决定', 'Claude 订阅的套餐额度内为 1 小时', '其他请求都是 5 分钟', '普通输入的 2 倍', 'FORCE_PROMPT_CACHING_5M=1', '已在运行的对话不变']) {
+    await settings.getByText(text, { exact: false }).waitFor();
+  }
+  await select.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(shots, 'settings-session-zh.png') });
   await page.keyboard.press('Escape');
   await settings.waitFor({ state: 'detached' });
 
   const input = page.getByRole('textbox', { name: '发送给 Claude 的消息' });
-  /** A new chat that starts a subagent; the cache lifetimes its requests asked for. */
+  /** A new chat that starts a subagent; the cache lifetimes its requests asked for, and the
+   * cache variables Lectern put in its Claude process's --settings (null: not set). */
   const chat = async label => {
+    const known = new Set(lecternPanes().map(([id]) => id));
     await page.getByRole('button', { name: '在 缓存 新建对话' }).click();
     await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'));
     const before = api.requests.length;
@@ -101,8 +114,16 @@ try {
     }
     // Which conversation a request belongs to goes by its script (2.1.330 offers subagents Agent too).
     const ttls = script => [...new Set(mine().filter(r => r.script === script).flatMap(r => r.cacheTtl))].sort();
-    return { main: ttls('ttl'), subagent: ttls('ttl-child') };
+    const fresh = lecternPanes().filter(([id]) => !known.has(id));
+    assert.equal(fresh.length, 1, `${label}: one new pane`);
+    // The pane runs `exec claude …`, so its pid is Claude Code's; -ww: the whole command line.
+    const args = execFileSync('ps', ['-ww', '-o', 'args=', '-p', fresh[0][1]]).toString();
+    assert.match(args, /--settings /, `${label}: Claude Code's command line`);
+    const variable = name => new RegExp(`"${name}":"([^"]*)"`).exec(args)?.[1] ?? null;
+    const launched = { main: variable('CLAUDE_CODE_PROMPT_CACHE_TTL'), other: variable('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL') };
+    return { main: ttls('ttl'), subagent: ttls('ttl-child'), launched };
   };
+  const unset = { main: null, other: null };
   /** The status bar's cache chip: its lifetime (hover card) and the time left it counts down. */
   const chip = async ttl => {
     const cache = page.locator('.composer-context .telemetry-cache');
@@ -114,37 +135,54 @@ try {
     return clock ? Number(clock[1]) : Number(hours[1]) * 60 + Number(hours[2]);
   };
 
-  console.log('stage: Claude Code default');
-  // Nothing injected: the user's own ENABLE_PROMPT_CACHING_1H decides (1 hour for both).
-  assert.deepEqual(await chat('默认缓存'), { main: ['1h'], subagent: ['1h'] });
-  assert.ok(await chip('1h') >= 50, 'about an hour left');
+  const hour = async () => assert.ok(await chip('1h') >= 50, 'about an hour left');
+  const minutes = async () => assert.ok(await chip('5m') <= 5, 'at most five minutes left');
 
-  console.log('stage: main 5m, others 1h');
-  await choose('5m', '1h');
-  assert.deepEqual(await chat('主对话五分钟'), { main: ['5m'], subagent: ['1h'] });
-  assert.ok(await chip('5m') <= 5, 'at most five minutes left');
+  console.log('stage: default, user settings with ENABLE_PROMPT_CACHING_1H');
+  // Lectern sets nothing: the user's own ENABLE_PROMPT_CACHING_1H decides (1 hour for both).
+  assert.deepEqual(await chat('默认缓存'), { main: ['1h'], subagent: ['1h'], launched: unset });
+  await hour();
 
-  console.log('stage: main 1h, others 5m');
-  await choose('1h', '5m');
-  assert.deepEqual(await chat('主对话一小时'), { main: ['1h'], subagent: ['5m'] });
-  assert.ok(await chip('1h') >= 50, 'about an hour left');
+  console.log('stage: both 5 minutes');
+  await choose('both-5m');
+  assert.deepEqual(await chat('都用五分钟'), { main: ['5m'], subagent: ['5m'], launched: { main: '5m', other: '5m' } });
+  await minutes();
 
-  console.log('stage: restore defaults, English page');
+  console.log('stage: main 1 hour, others 5 minutes');
+  await choose('main-1h-other-5m');
+  assert.deepEqual(await chat('主对话一小时'), { main: ['1h'], subagent: ['5m'], launched: { main: '1h', other: '5m' } });
+  await hour();
+
+  console.log('stage: restore defaults, user settings without ENABLE_PROMPT_CACHING_1H');
   await openSession();
   await settings.getByRole('button', { name: '恢复默认', exact: true }).click();
-  assert.equal(await main.inputValue(), '');
-  assert.equal(await other.inputValue(), '');
-  assert.deepEqual(await stored(), ['', '']);
+  assert.equal(await select.inputValue(), 'default');
+  assert.equal(await stored(), 'default');
+  await page.keyboard.press('Escape');
+  await settings.waitFor({ state: 'detached' });
+  await userSettings(false);
+  // Lectern still sets nothing; with an API key Claude Code's own default is 5 minutes for both.
+  assert.deepEqual(await chat('默认五分钟'), { main: ['5m'], subagent: ['5m'], launched: unset });
+  await minutes();
+
+  console.log('stage: both 1 hour');
+  await choose('both-1h');
+  assert.deepEqual(await chat('都用一小时'), { main: ['1h'], subagent: ['1h'], launched: { main: '1h', other: '1h' } });
+  await hour();
+
+  console.log('stage: English page');
+  await openSession();
   await settings.locator('nav').getByRole('button', { name: '外观', exact: true }).click();
   await settings.getByRole('combobox', { name: '界面语言' }).selectOption('en');
   await page.waitForFunction(() => document.documentElement.lang === 'en-US');
   const english = page.getByRole('dialog', { name: 'Settings' });
   await english.locator('nav').getByRole('button', { name: 'Session', exact: true }).click();
-  const englishMain = english.getByRole('combobox', { name: 'Prompt cache lifetime for the main conversation' });
-  const englishOther = english.getByRole('combobox', { name: 'Prompt cache lifetime for subagents and other requests' });
-  await englishMain.selectOption('1h');
-  assert.deepEqual(await englishOther.locator('option').allInnerTexts(), ['Claude Code default', '5 minutes', '1 hour']);
-  await englishOther.scrollIntoViewIfNeeded();
+  const englishSelect = english.getByRole('combobox', { name: 'Prompt cache lifetimes' });
+  assert.equal(await englishSelect.inputValue(), 'both-1h');
+  assert.deepEqual(await englishSelect.locator('option').allInnerTexts(), ['Default (Claude Code decides)',
+    'Main conversation 5 minutes, other requests 5 minutes', 'Main conversation 1 hour, other requests 1 hour', 'Main conversation 1 hour, other requests 5 minutes']);
+  for (const text of ['With Default, Lectern sets nothing', 'subscription or the API', 'FORCE_PROMPT_CACHING_5M=1']) await english.getByText(text, { exact: false }).waitFor();
+  await englishSelect.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(shots, 'settings-session-en.png') });
   const version = /Claude Code v(\d+\.\d+\.\d+)/.exec(pane())?.[1];
   console.log(JSON.stringify({ ok: true, claude: version, requests: api.requests.length }));

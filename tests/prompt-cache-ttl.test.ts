@@ -5,35 +5,45 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Backend, quoteShell, runCommand } from '../src/backend';
-import { launchPreferences, promptCacheTtlChoice } from '../src/shared/prompt-cache';
+import { launchPreferences, promptCacheTtlPreset, promptCacheTtlPresetOf, promptCacheTtlPresets, promptCacheTtls } from '../src/shared/prompt-cache';
 import { defaultSessionOptions, loadDesktopState } from '../src/renderer/desktop-state';
 import type { Workspace } from '../src/shared/types';
 
-test('a prompt-cache choice is 5m, 1h or the default; anything else is the default', () => {
-  for (const value of ['5m', '1h'] as const) assert.equal(promptCacheTtlChoice(value), value);
-  for (const value of ['', '30m', '1H', 60, null, undefined, {}]) assert.equal(promptCacheTtlChoice(value), '');
-  assert.deepEqual(launchPreferences(undefined), { enableWorkflows: true, promptCacheTtl: '', subagentPromptCacheTtl: '' });
-  assert.deepEqual(launchPreferences({ enableWorkflows: false, promptCacheTtl: '1h', subagentPromptCacheTtl: 'x' as never }),
-    { enableWorkflows: false, promptCacheTtl: '1h', subagentPromptCacheTtl: '' });
+test('the prompt-cache setting is one of four presets; anything else is the default', () => {
+  assert.deepEqual(promptCacheTtlPresets, ['default', 'both-5m', 'both-1h', 'main-1h-other-5m']);
+  for (const preset of promptCacheTtlPresets) assert.equal(promptCacheTtlPreset(preset), preset);
+  for (const value of ['', '5m', '1h', 'main-5m-other-1h', 'Both-5m', 60, null, undefined, {}]) assert.equal(promptCacheTtlPreset(value), 'default');
+  // What each preset means for the main conversation and the other requests.
+  assert.equal(promptCacheTtls('default'), undefined);
+  assert.deepEqual(promptCacheTtls('both-5m'), { main: '5m', other: '5m' });
+  assert.deepEqual(promptCacheTtls('both-1h'), { main: '1h', other: '1h' });
+  assert.deepEqual(promptCacheTtls('main-1h-other-5m'), { main: '1h', other: '5m' });
+  assert.equal(promptCacheTtls('main-5m-other-1h'), undefined);
+  assert.deepEqual(launchPreferences(undefined), { enableWorkflows: true, promptCacheTtlPreset: 'default' });
+  assert.deepEqual(launchPreferences({ enableWorkflows: false, promptCacheTtlPreset: 'both-1h' }), { enableWorkflows: false, promptCacheTtlPreset: 'both-1h' });
+  assert.deepEqual(launchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'x' as never }), { enableWorkflows: true, promptCacheTtlPreset: 'default' });
 });
 
-test('the cache lifetimes are stored with the other session options and default to Claude Code\'s', () => {
-  const read = (value: unknown) => loadDesktopState({ getItem: () => JSON.stringify(value) });
-  assert.equal(read({}).promptCacheTtl, '');
-  assert.equal(read({}).subagentPromptCacheTtl, '');
-  const saved = read({ promptCacheTtl: '1h', subagentPromptCacheTtl: '5m', enableWorkflows: false });
-  assert.equal(saved.promptCacheTtl, '1h');
-  assert.equal(saved.subagentPromptCacheTtl, '5m');
-  assert.equal(saved.enableWorkflows, false, 'other session options are kept');
-  const broken = read({ promptCacheTtl: '2h', subagentPromptCacheTtl: 5 });
-  assert.equal(broken.promptCacheTtl, '');
-  assert.equal(broken.subagentPromptCacheTtl, '');
+test('the preset is stored with the other session options; the two old choices carry over only as a preset', () => {
+  const read = (value: unknown) => loadDesktopState({ getItem: () => JSON.stringify(value) }).promptCacheTtlPreset;
+  assert.equal(read({}), 'default');
+  for (const preset of promptCacheTtlPresets) assert.equal(read({ promptCacheTtlPreset: preset }), preset);
+  assert.equal(read({ promptCacheTtlPreset: '2h' }), 'default');
+  assert.equal(loadDesktopState({ getItem: () => JSON.stringify({ promptCacheTtlPreset: 'both-5m', enableWorkflows: false }) }).enableWorkflows, false, 'other session options are kept');
+  // Development builds of 0.2.2 stored the main conversation's and the other requests' lifetimes separately.
+  assert.equal(read({ promptCacheTtl: '', subagentPromptCacheTtl: '' }), 'default');
+  assert.equal(read({ promptCacheTtl: '5m', subagentPromptCacheTtl: '5m' }), 'both-5m');
+  assert.equal(read({ promptCacheTtl: '1h', subagentPromptCacheTtl: '1h' }), 'both-1h');
+  assert.equal(read({ promptCacheTtl: '1h', subagentPromptCacheTtl: '5m' }), 'main-1h-other-5m');
+  for (const [main, other] of [['5m', '1h'], ['1h', ''], ['', '5m'], ['2h', 5]]) assert.equal(read({ promptCacheTtl: main, subagentPromptCacheTtl: other }), 'default', `${main}+${other}`);
+  assert.equal(promptCacheTtlPresetOf(undefined, undefined), 'default');
+  // The new key wins over leftovers of the old ones.
+  assert.equal(read({ promptCacheTtlPreset: 'default', promptCacheTtl: '1h', subagentPromptCacheTtl: '1h' }), 'default');
   // "Restore defaults" on the Session page writes defaultSessionOptions.
-  assert.equal(defaultSessionOptions.promptCacheTtl, '');
-  assert.equal(defaultSessionOptions.subagentPromptCacheTtl, '');
+  assert.equal(defaultSessionOptions.promptCacheTtlPreset, 'default');
 });
 
-test('new and resumed chats get the chosen cache lifetimes in --settings; the default adds nothing', { skip: process.platform === 'win32', timeout: 40_000 }, async t => {
+test('new and resumed chats get the chosen preset\'s cache lifetimes in --settings; the default adds nothing', { skip: process.platform === 'win32', timeout: 40_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-cache-ttl-')));
   const config = join(root, 'config');
   const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root, claudeDir: config };
@@ -77,7 +87,7 @@ test('new and resumed chats get the chosen cache lifetimes in --settings; the de
     assert.equal(first.resume, false);
     assert.equal('env' in first.settings, false, 'the default leaves the cache lifetimes to Claude Code');
 
-    backend.setLaunchPreferences({ enableWorkflows: true, promptCacheTtl: '1h', subagentPromptCacheTtl: '5m' });
+    backend.setLaunchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'main-1h-other-5m' });
     const chosen = await backend.createSession(workspace);
     const [created] = await launches(chosen.id, 1);
     assert.deepEqual(created.settings.env, { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '5m' });
@@ -89,15 +99,19 @@ test('new and resumed chats get the chosen cache lifetimes in --settings; the de
     assert.equal(resumed.resume, true);
     assert.deepEqual(resumed.settings.env, created.settings.env);
 
-    // Back to the default: a resume adds nothing again; only the subagent choice: only its variable.
-    backend.setLaunchPreferences({ enableWorkflows: true, promptCacheTtl: '', subagentPromptCacheTtl: '' });
+    // Back to the default: a resume adds nothing again.
+    backend.setLaunchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'default' });
     await resume(chosen.id);
     const [, again] = await launches(chosen.id, 2);
     assert.equal(again.resume, true);
     assert.equal('env' in again.settings, false);
-    backend.setLaunchPreferences({ enableWorkflows: true, subagentPromptCacheTtl: '1h' });
-    const other = await backend.createSession(workspace);
-    assert.deepEqual((await launches(other.id, 1))[0].settings.env, { CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '1h' });
+    // A combination that is not offered (main 5m, others 1h) is the default too; a preset sets both.
+    backend.setLaunchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'main-5m-other-1h' as never });
+    const odd = await backend.createSession(workspace);
+    assert.equal('env' in (await launches(odd.id, 1))[0].settings, false);
+    backend.setLaunchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'both-5m' });
+    const short = await backend.createSession(workspace);
+    assert.deepEqual((await launches(short.id, 1))[0].settings.env, { CLAUDE_CODE_PROMPT_CACHE_TTL: '5m', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '5m' });
   } finally {
     await backend.dispose();
     await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
