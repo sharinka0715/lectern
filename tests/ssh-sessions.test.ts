@@ -228,15 +228,64 @@ test('without a user master, switching back keeps Lectern\'s own master for the 
   assert.match((await lines('calls')).at(-1)!, /ControlPath=\/tmp\/lectern-ssh-/);
 });
 
-/** Connections to a test sshd (its `user@notty` processes) and the sessions open on them (their direct children). */
-async function serverSessions(listener: number): Promise<{ connections: number; sessions: number }> {
-  const rows = await new Promise<string>(resolve => execFile('ps', ['-A', '-o', 'pid=,ppid=,args='], { maxBuffer: 16 * 1024 * 1024 }, (_error, stdout) => resolve(String(stdout))));
+/**
+ * sshd's own processes by `ps` args: the listener and each connection's monitor, login and user processes. OpenSSH before 9.8
+ * titles them `sshd: user@notty`, `sshd: user [priv]`; 9.8+ runs them as `sshd-session` and `sshd-auth`
+ * (`sshd-session: user@notty`); where a title is not set, ps shows the path they were started with
+ * (`/usr/libexec/sshd-session -D -f … -R`), or `(sshd-session)` when it cannot read the arguments.
+ */
+const sshdProcess = /^\(?(?:\S*\/)?sshd(?:-session|-auth)?(?:[:\s)]|$)/;
+/**
+ * Connections to a test sshd and the sessions open on them, from `ps -A -o pid=,ppid=,args=` rows. Within the listener's
+ * process tree, a session is a process of the user's (the shell or command sshd started for it) whose parent is one of sshd's
+ * own; that parent is its connection. Titles differ by version and platform (see `sshdProcess`), so only the tree is relied on.
+ * The listener and the `[priv]` monitors only have sshd children; a connection with no session open is not counted.
+ */
+function countServerSessions(rows: string, listener: number): { connections: number; sessions: number } {
   const processes = rows.split('\n').map(line => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line)).filter(Boolean).map(m => ({ pid: Number(m![1]), ppid: Number(m![2]), args: m![3] }));
   const ours = new Set([listener]);
   for (let grew = true; grew;) { grew = false; for (const p of processes) if (!ours.has(p.pid) && ours.has(p.ppid)) { ours.add(p.pid); grew = true; } }
-  const connections = new Set(processes.filter(p => ours.has(p.pid) && /^sshd: \S+@notty/.test(p.args)).map(p => p.pid));
-  return { connections: connections.size, sessions: processes.filter(p => connections.has(p.ppid)).length };
+  const daemon = new Set(processes.filter(p => ours.has(p.pid) && sshdProcess.test(p.args)).map(p => p.pid));
+  const sessions = processes.filter(p => ours.has(p.pid) && !daemon.has(p.pid) && daemon.has(p.ppid));
+  return { connections: new Set(sessions.map(p => p.ppid)).size, sessions: sessions.length };
 }
+async function serverSessions(listener: number): Promise<{ connections: number; sessions: number }> {
+  const rows = await new Promise<string>(resolve => execFile('ps', ['-A', '-o', 'pid=,ppid=,args='], { maxBuffer: 16 * 1024 * 1024 }, (_error, stdout) => resolve(String(stdout))));
+  return countServerSessions(rows, listener);
+}
+
+test('sessions on a test sshd are counted whether sshd titles its processes `sshd:`, `sshd-session:` or not at all', () => {
+  const ps = (...rows: [number, number, string][]) => rows.map(([pid, ppid, args]) => `${String(pid).padStart(6)} ${String(ppid).padStart(6)} ${args}`).join('\n') + '\n';
+  const config = '-D -e -f /tmp/lectern-sessions-real-x/sshd_config';
+  // OpenSSH before 9.8 (Linux): root has no separate user process; another user has a monitor and a user process.
+  assert.deepEqual(countServerSessions(ps(
+    [1, 0, '/sbin/init'], [100, 1, `sshd: /usr/sbin/sshd ${config} [listener] 0 of 10-100 startups`],
+    [110, 100, 'sshd: root@notty'], [111, 110, 'bash -c cat >/dev/null'], [112, 110, 'sh -s'], [113, 112, 'sleep 0.3'],
+    [114, 110, 'sshd: root@notty'], // forked for a session, not yet its shell
+    [120, 100, 'sshd: dev [priv]'], [121, 120, 'sshd: dev@notty'], [122, 121, 'cat'],
+    [130, 100, 'sshd: dev [priv]'], [131, 130, 'sshd: dev [net]'], // still logging in
+    [900, 1, 'sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups'], [901, 900, 'sshd: dev [priv]'], [902, 901, 'sshd: dev@pts/0'], [903, 902, '-bash'],
+  ), 100), { connections: 2, sessions: 3 });
+  // OpenSSH 9.8+ (Linux, 10.2p1 on the CI runner): sshd-session and sshd-auth.
+  assert.deepEqual(countServerSessions(ps(
+    [1, 0, '/sbin/init'], [100, 1, `sshd: /usr/sbin/sshd ${config} [listener] 0 of 10-100 startups`],
+    [110, 100, 'sshd-session: runner [priv]'], [111, 110, 'sshd-session: runner@notty'],
+    [112, 111, 'bash -c cat >/dev/null'], [113, 111, 'bash -c cat >/dev/null'], [114, 111, 'sh -s'], [115, 114, 'sleep 0.3'], [116, 111, 'sleep 29.123'],
+    [117, 111, 'sshd-session: runner@notty'],
+    [120, 100, 'sshd-session: runner [priv]'], [121, 120, 'sshd-auth: runner [net]'],
+    [900, 1, 'sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups'], [901, 900, 'sshd-session: dev [priv]'], [902, 901, 'sshd-session: dev@pts/0'], [903, 902, '-bash'],
+  ), 100), { connections: 1, sessions: 4 });
+  // Titles not set: the paths sshd started them with, or only the name in parentheses.
+  assert.deepEqual(countServerSessions(ps(
+    [1, 0, '/sbin/launchd'], [100, 60, `/usr/sbin/sshd ${config}`],
+    [110, 100, `/usr/libexec/sshd-session ${config} -R`], [111, 110, `/usr/libexec/sshd-session ${config} -R`],
+    [112, 111, 'zsh -c cat >/dev/null'], [113, 111, 'cat'], [114, 111, 'sh -s'], [115, 114, 'sleep 0.3'],
+    [120, 100, '(sshd-session)'], [121, 120, '(sshd-session)'], [122, 121, 'sh -c sleep 29.123'], // a second connection
+    [130, 100, `/usr/libexec/sshd-session ${config} -R`], [131, 130, '/usr/libexec/sshd-auth -R'],
+    [200, 1, '/usr/sbin/sshd -i'], [201, 200, '/usr/libexec/sshd-session -i -R'], [202, 201, '/usr/libexec/sshd-session -i -R'], [203, 202, '-zsh'],
+  ), 100), { connections: 2, sessions: 4 });
+  assert.deepEqual(countServerSessions('', 100), { connections: 0, sessions: 0 });
+});
 
 test('real OpenSSH with MaxSessions 8: Lectern stays within it alone, and within 4 beside the user\'s own sessions; timed-out commands end on the server', { timeout: 90_000, ...posix }, async t => {
   const { spawn, execFile: exec } = await import('node:child_process');
