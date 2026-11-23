@@ -510,10 +510,11 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     setDraft(d => d || launch.text);
     setLaunch(undefined);
   }
-  // Pasted or dropped files become @-mentions; on an SSH machine they are uploaded first.
-  // The input box shows them as cards and only the text in the textarea (the draft keeps both).
+  // Pasted or dropped files become @-mentions where the caret is; on an SSH machine they are
+  // uploaded first. The input box shows each mention as a chip in the text and the files as
+  // cards above it; the draft keeps the mentions.
   const attachments = useComposerAttachments({ workspace, sessionId, enabled: canType && !rewindOpen,
-    draft, inputRef, setDraft,
+    draft, inputRef, setDraft, openFile: path => openArtifact({ path }),
     showing: (ws, sid) => mounted.current && selected.current.workspaceId === ws && selected.current.sessionId === sid,
     stash: (ws, sid, update) => { const key = draftKey(ws, sid); unsentDrafts.set(key, update(unsentDrafts.get(key) ?? "")); },
     onError: showToast });
@@ -1687,6 +1688,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             }}
           >
             {attachments.strip}
+            <div className="composer-input">
             <textarea
               ref={inputRef}
               aria-label={t('app.messageLabel')}
@@ -1700,13 +1702,13 @@ export default function App({view = "primary"}: {view?: ChatView}) {
                 launching: launch?.phase === "creating", pendingFirst: !!launch && launch.phase !== "creating",
                 hostBlocked: hostBlocked ? t('hostTools.composerBlocked', { ...machineParams(hostName), tools: toolList(hostLacks) }) : undefined,
               })}
-              {...completion.inputProps}
+              {...attachments.inputProps(completion.inputProps)}
               onPaste={attachments.onPaste}
               value={attachments.text}
               disabled={!canType}
               rows={1}
               onKeyDown={(event) => {
-                if (completion.onKeyDown(event) || imeOwnsKey(event.nativeEvent)) return;
+                if (completion.onKeyDown(event) || imeOwnsKey(event.nativeEvent) || attachments.onKeyDown(event)) return;
                 // Shift + either Enter starts a new line. macOS has no native newline for
                 // Shift + keypad Enter, so both insert it here (undoable, like typing).
                 if (isEnterKey(event) && event.shiftKey) {
@@ -1722,6 +1724,8 @@ export default function App({view = "primary"}: {view?: ChatView}) {
                 }
               }}
             />
+            {attachments.layer}
+            </div>
             {completion.popup}
             <div className="composer-toolbar">
             <button type="button" className="composer-attach" aria-label={t('app.addFile')} disabled={!canType || rewindOpen}

@@ -34,40 +34,6 @@ export function isUploadedAttachment(path: string): boolean {
   return /\/lectern-attachments-\d+\/[A-Za-z0-9]{8}\/[^/]+$/.test(path);
 }
 
-/**
- * The composer's text and attached files share one draft string: the files are
- * @-mentions after the text (`text @a @b `), exactly what Claude Code is sent.
- * The input box shows `text` and the files as cards.
- */
-export function joinDraft(text: string, files: string[]): string {
-  if (!files.length) return text;
-  return (text ? text + ' ' : '') + files.map(mentionFor).join(' ') + ' ';
-}
-
-/** The inverse of joinDraft. Mentions of attached files anywhere in the draft become files, each once. */
-export function splitDraft(draft: string, attached: (path: string) => boolean): { text: string; files: string[] } {
-  const mentions = findMentions(draft).filter(mention => attached(mention.path));
-  if (!mentions.length) return { text: draft, files: [] };
-  const files: string[] = [];
-  let text = '', from = 0;
-  for (const mention of mentions) {
-    // The space joinDraft put before a mention goes with it; a mention with
-    // none before it (at the start or after a line break) takes the one after.
-    const before = mention.start - 1 >= from && draft[mention.start - 1] === ' ';
-    text += draft.slice(from, before ? mention.start - 1 : mention.start);
-    from = mention.end + (!before && draft[mention.end] === ' ' ? 1 : 0);
-    if (!files.includes(mention.path)) files.push(mention.path);
-  }
-  const rest = draft.slice(from);
-  return { text: text + (rest === ' ' ? '' : rest), files };
-}
-
-/** Files added to the draft after those it already has. */
-export function addDraftFiles(draft: string, files: string[], attached: (path: string) => boolean): string {
-  const parts = splitDraft(draft, attached);
-  return joinDraft(parts.text, [...parts.files, ...files.filter(file => !parts.files.includes(file))]);
-}
-
 /** Whether a mention (as typed, maybe relative) names an attachment's recorded path (absolute, maybe resolved). */
 export function samePath(recorded: string, mentioned: string): boolean {
   // macOS: /var and /tmp are /private/var and /private/tmp.

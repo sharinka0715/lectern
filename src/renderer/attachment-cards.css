@@ -73,3 +73,41 @@ button.attachment-card:hover { background: var(--hover); }
 .attachment-chip-icon { position: relative; display: grid; place-items: center; flex: none; width: 1.15em; height: 1.15em; overflow: hidden; border-radius: 3px; }
 .attachment-chip-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 .attachment-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* The number on an image card in the input box, the same as its chips' ("图片1"). */
+.attachment-card-badge {
+  position: absolute; left: 4px; bottom: 4px; z-index: 1; max-width: calc(100% - 8px); box-sizing: border-box; padding: 1px 4px;
+  overflow: hidden; border-radius: 4px; background: rgb(0 0 0 / 58%); color: #fff;
+  font-size: 10px; font-weight: 600; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; pointer-events: none;
+}
+
+/* Attachments in the input box's text. The textarea holds a run of figure spaces for each
+   chip; this layer over it repeats the text with the same font, width and wrapping (the text
+   transparent) and draws each chip on its spaces. The layer only ever scrolls with the textarea. */
+.composer-input { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.composer-chip-layer {
+  position: absolute; top: 0; left: 0; height: 100%; box-sizing: border-box; margin: 0; padding: 0;
+  overflow-x: hidden; overflow-y: scroll; scrollbar-width: none; pointer-events: none;
+  color: transparent; font: inherit; font-size: var(--text-body); line-height: var(--composer-line-height, 1.35);
+  letter-spacing: normal; word-spacing: normal; text-indent: 0; text-transform: none; text-align: start; tab-size: 8;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+}
+.composer-chip { position: relative; }
+.composer-chip-face {
+  position: absolute; top: 50%; left: 1px; right: 1px; height: 1.42em; box-sizing: border-box; transform: translateY(-50%);
+  display: flex; align-items: center; gap: .3em; padding: 0 .5em 0 .3em; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent); border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised)); color: var(--accent);
+  font-size: .86em; font-weight: 500; line-height: 1; white-space: nowrap; cursor: default; pointer-events: auto; user-select: none;
+}
+.composer-chip-face:hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised)); }
+.composer-chip[data-selected] .composer-chip-face {
+  border-color: var(--accent); background: color-mix(in srgb, var(--accent) 24%, var(--surface-raised));
+}
+.composer-chip-icon {
+  position: relative; display: grid; place-items: center; flex: none; width: 1.15em; height: 1.15em; overflow: hidden; border-radius: 3px;
+}
+.composer-chip-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.composer-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.composer-chip-face[data-state="uploading"] { color: var(--muted); }
+.composer-input textarea:disabled + .composer-chip-layer .composer-chip-face { opacity: .6; pointer-events: none; }

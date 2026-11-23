@@ -37,6 +37,10 @@ export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.2',
     features: [
+      ['输入框里插入的图片和文件留在插入位置，显示为「图片1」这样的整体卡片，可整体选中、删除和剪切粘贴。',
+        'Images and files added to the input box stay where you put them as chips like "Image 1": select, delete, cut and paste them whole; sending or copying gives the @path.'],
+      ['输入框上方的图片缩略图标出与卡片相同的编号，点开可看大图。',
+        'Image thumbnails above the input box carry the same numbers as their chips and open larger with a click or the keyboard.'],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',

@@ -5,30 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attachmentName, uploadAttachment } from '../src/backend/attachment-upload';
 import { Transport } from '../src/backend/transport';
-import { addDraftFiles, attachmentKind, findMentions, isUploadedAttachment, joinDraft, mentionFor, messageAttachmentLayout, pasteAttaches, samePath, splitDraft } from '../src/shared/attachments';
+import { attachmentKind, findMentions, isUploadedAttachment, mentionFor, messageAttachmentLayout, pasteAttaches, samePath } from '../src/shared/attachments';
 import type { Workspace } from '../src/shared/types';
 
 test('a path becomes an @-mention, quoted when it has spaces or symbols', () => {
   assert.equal(mentionFor('/tmp/lectern-attachments-501/a1/截图.png'), '@/tmp/lectern-attachments-501/a1/截图.png');
   assert.equal(mentionFor('/Users/me/My Files/report (1).pdf'), '@"/Users/me/My Files/report (1).pdf"');
-});
-
-test('the draft keeps attached files as mentions after the text, exactly what is sent', () => {
-  const attached = (path: string) => path.startsWith('/up/');
-  assert.equal(joinDraft('看看这张图', ['/up/a.png', '/up/b c.txt']), '看看这张图 @/up/a.png @"/up/b c.txt" ');
-  assert.equal(joinDraft('', ['/up/a.png']), '@/up/a.png ');
-  assert.equal(joinDraft('只有文字', []), '只有文字');
-  // The input box shows the text alone, whatever it ends with; the files come back in order.
-  for (const text of ['', '看看', '看看 ', '第一行\n', '@src/app.ts 和 @other', '  ']) {
-    for (const files of [[], ['/up/a.png'], ['/up/a.png', '/up/b c.txt']]) {
-      assert.deepEqual(splitDraft(joinDraft(text, files), attached), { text, files }, JSON.stringify({ text, files }));
-    }
-  }
-  // Mentions typed elsewhere (a quote appended after the files, an older draft) still become files, each once.
-  assert.deepEqual(splitDraft('说明 @/up/a.png\n\n> 引用\n\n', attached), { text: '说明\n\n> 引用\n\n', files: ['/up/a.png'] });
-  assert.deepEqual(splitDraft('@/up/a.png 先看 @/up/a.png 再说', attached), { text: '先看 再说', files: ['/up/a.png'] });
-  assert.deepEqual(splitDraft('读 @src/app.ts', attached), { text: '读 @src/app.ts', files: [] });
-  assert.equal(addDraftFiles('先说明 @/up/a.png ', ['/up/a.png', '/up/b.png'], attached), '先说明 @/up/a.png @/up/b.png ');
 });
 
 test('mentions are found as Claude Code reads them: at the start or after whitespace, quoted when needed', () => {

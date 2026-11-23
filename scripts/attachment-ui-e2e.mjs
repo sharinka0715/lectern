@@ -1,7 +1,8 @@
 // npm run build && node scripts/attachment-ui-e2e.mjs [packaged-executable]
-// Files dropped onto or pasted into a chat become @-mentions: a file from disk by
-// its own path (Claude Code runs on this computer), clipboard data after it is
-// copied into the machine's temporary directory. The keypad Enter sends.
+// Files dropped onto or pasted into a chat become @-mentions where the caret is, shown
+// as chips in the text and cards above it: a file from disk by its own path (Claude
+// Code runs on this computer), clipboard data after it is copied into the machine's
+// temporary directory. The keypad Enter sends. (Chips themselves: composer-chips-e2e.)
 // Demo mode: no real model. (SSH uploads: tests/ssh.test.ts over real OpenSSH.)
 import assert from "node:assert/strict";
 import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -45,6 +46,39 @@ try {
     return canvas.toDataURL("image/png").split(",")[1];
   }), "base64");
 
+  // Spreadsheet cells carry a picture of themselves too: that paste stays text.
+  await settled();
+  await input.fill("");
+  const handled = await input.evaluate((element, bytes) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "A1\tB1");
+    data.items.add(new File([new Uint8Array(bytes)], "image.png", { type: "image/png" }));
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, [...png]);
+  assert.equal(handled, false);
+  await page.waitForTimeout(500);
+  await assert.rejects(readdir(uploads), "nothing was uploaded");
+
+  // Shift + either Enter starts a new line instead of sending, also when an
+  // input method reports the keypad Enter as its own key (229).
+  await input.fill("第一行");
+  await input.press("Shift+NumpadEnter");
+  await input.pressSequentially("第二行");
+  await input.press("Shift+Enter");
+  await input.pressSequentially("第三行");
+  await input.evaluate(element => {
+    const event = new KeyboardEvent("keydown", { key: "Process", code: "NumpadEnter", shiftKey: true, bubbles: true, cancelable: true });
+    Object.defineProperty(event, "keyCode", { get: () => 229 });
+    element.dispatchEvent(event);
+  });
+  assert.equal(await input.inputValue(), "第一行\n第二行\n第三行\n");
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator(".message-user").filter({ hasText: "第一行" }).count(), 0, "Shift + Enter does not send");
+
+  // The message to send: its text first, the files then go where the caret is (after it).
+  await input.fill("小键盘发送一");
   // A file from disk, dropped on the chat: mentioned by its own path, quoted for the space.
   const document1 = path.join(root, "资料 1.txt");
   await writeFile(document1, "从磁盘拖入\n");
@@ -59,11 +93,13 @@ try {
   await page.locator(".composer.composer-drop").waitFor();
   assert.equal(await page.locator(".composer").getAttribute("data-drop-hint"), "松开以引用文件");
   await page.dispatchEvent(".main-area", "drop", { dataTransfer: dropped });
-  // A card in the input box (full path on hover), not a path in the text.
+  // A card in the input box (full path on hover), and a chip instead of the path in the text.
   const cards = page.locator(".composer-attachments [data-attachment-card]");
   const cardCount = n => page.waitForFunction(n => document.querySelectorAll(".composer-attachments [data-attachment-card]").length === n, n);
+  const chipNames = () => page.locator(".composer-chip-face").evaluateAll(nodes => nodes.map(node => node.dataset.chipLabel));
   await cardCount(1);
-  assert.equal(await input.inputValue(), "");
+  // The text keeps a chip for it where the caret was, named like the file.
+  assert.deepEqual(await chipNames(), ["资料 1.txt"]);
   assert.deepEqual([await cards.first().getAttribute("data-tip"), await cards.first().getAttribute("data-tip-detail"), await cards.first().getAttribute("data-attachment-card")],
     ["资料 1.txt", document1, "file"]);
   assert.match(await cards.first().innerText(), /资料 1\.txt\s+TXT/);
@@ -84,11 +120,11 @@ try {
   await page.getByRole("button", { name: "移除 资料 1.txt", exact: true }).click();
   await cardCount(1);
   assert.equal(await cards.first().getAttribute("data-tip"), "notes.md");
+  assert.deepEqual(await chipNames(), ["notes.md"], "its chip left the text with it");
 
   // A screenshot from the clipboard has no path: it is copied to the temporary directory,
   // shown meanwhile as an uploading card, then as its own thumbnail.
   await settled();
-  await input.fill("看图：");
   await page.evaluate(() => {
     window.uploadingSeen = 0;
     new MutationObserver(() => { window.uploadingSeen = Math.max(window.uploadingSeen, document.querySelectorAll('.composer-attachments [data-state="uploading"]').length); })
@@ -102,7 +138,7 @@ try {
   await cardCount(2);
   await page.waitForFunction(() => !document.querySelector('.composer-attachments [data-state="uploading"]'));
   assert.equal(await page.evaluate(() => window.uploadingSeen), 1, "the upload showed as one uploading card");
-  assert.equal(await input.inputValue(), "看图：", "the text stays as typed");
+  assert.deepEqual(await chipNames(), ["notes.md", "图片1"], "the image's chip follows the file's");
   const shot = cards.nth(1);
   assert.deepEqual([await shot.getAttribute("data-attachment-card"), await shot.getAttribute("data-thumbnail"), await shot.getAttribute("data-tip")],
     ["image", "image", "image.png"]);
@@ -111,45 +147,13 @@ try {
   assert.deepEqual(await readFile(pasted), png);
   await page.locator(".composer").screenshot({ path: path.join(output, "composer-cards.png") });
 
-  // Spreadsheet cells carry a picture of themselves too: that paste stays text.
-  await settled();
-  await input.fill("");
-  const handled = await input.evaluate((element, bytes) => {
-    const data = new DataTransfer();
-    data.setData("text/plain", "A1\tB1");
-    data.items.add(new File([new Uint8Array(bytes)], "image.png", { type: "image/png" }));
-    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
-    element.dispatchEvent(event);
-    return event.defaultPrevented;
-  }, [...png]);
-  assert.equal(handled, false);
-  await page.waitForTimeout(500);
-  assert.equal((await readdir(uploads)).length, 1, "nothing more was uploaded");
-
-  // Shift + either Enter starts a new line instead of sending, also when an
-  // input method reports the keypad Enter as its own key (229).
-  await input.fill("第一行");
-  await input.press("Shift+NumpadEnter");
-  await input.pressSequentially("第二行");
-  await input.press("Shift+Enter");
-  await input.pressSequentially("第三行");
-  await input.evaluate(element => {
-    const event = new KeyboardEvent("keydown", { key: "Process", code: "NumpadEnter", shiftKey: true, bubbles: true, cancelable: true });
-    Object.defineProperty(event, "keyCode", { get: () => 229 });
-    element.dispatchEvent(event);
-  });
-  assert.equal(await input.inputValue(), "第一行\n第二行\n第三行\n");
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator(".message-user").filter({ hasText: "第一行" }).count(), 0, "Shift + Enter does not send");
-
   // The keypad Enter sends, also when an input method reports it as its own key (229).
-  await input.fill("小键盘发送一");
   await page.locator(".send-button:not([disabled])").waitFor({ timeout: 30000 });
   await input.press("NumpadEnter");
   await page.locator(".message-user").filter({ hasText: "小键盘发送一" }).waitFor();
   await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]').value);
   assert.equal(await page.locator(".composer-attachments").count(), 0, "the cards went out with the message");
-  // Claude Code got the text with the files as @-mentions after it, as before the cards.
+  // Claude Code got the text with the files as @-mentions where their chips were (after it).
   const { transcript, sessionId, cwd } = await page.evaluate(async () => {
     const [ws] = await window.desktop.listWorkspaces();
     const [session] = (await window.desktop.discover(ws.id)).sessions;
@@ -228,12 +232,12 @@ try {
   // Playwright pins the page's color scheme, so the dark theme is emulated rather than set through nativeTheme.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForFunction(() => matchMedia("(prefers-color-scheme: dark)").matches);
+  await input.fill("深色外观");
   await input.evaluate((element, bytes) => {
     const data = new DataTransfer();
     data.items.add(new File([new Uint8Array(bytes)], "image.png", { type: "image/png" }));
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
   }, [...png]);
-  await input.fill("深色外观");
   await cardCount(1);
   const [another] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "添加文件", exact: true }).click()]);
   await another.setFiles(document2);

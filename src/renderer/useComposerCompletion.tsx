@@ -9,7 +9,7 @@ import './composer-completion.css';
 
 interface Options {
   workspaceId: string; sessionId: string; view: ChatView; enabled: boolean;
-  value: string; onValue(value: string): void; inputRef: RefObject<HTMLTextAreaElement | null>;
+  value: string; onValue(value: string, inputType?: string): void; inputRef: RefObject<HTMLTextAreaElement | null>;
 }
 const sources = { builtin: 'composer.sourceBuiltin', user: 'composer.sourceUser', project: 'composer.sourceProject', plugin: 'composer.sourcePlugin', workspace: 'composer.sourceWorkspace' } as const;
 
@@ -91,7 +91,7 @@ export function useComposerCompletion({ workspaceId, sessionId, view, enabled, v
   const inputProps = {
     'aria-autocomplete': 'list' as const, 'aria-controls': items.length ? id : undefined,
     'aria-activedescendant': items.length ? `${id}-option-${index}` : undefined,
-    onChange(event: ChangeEvent<HTMLTextAreaElement>) { setDismissed(''); updateRange(event); onValue(event.currentTarget.value); },
+    onChange(event: ChangeEvent<HTMLTextAreaElement>) { setDismissed(''); updateRange(event); onValue(event.currentTarget.value, (event.nativeEvent as InputEvent).inputType); },
     onSelect: updateRange,
     onFocus(event: SyntheticEvent<HTMLTextAreaElement>) { setFocused(true); setDismissed(''); updateRange(event); },
     onBlur() { setFocused(false); setComposing(false); setResult(undefined); },

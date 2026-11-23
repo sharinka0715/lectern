@@ -32,7 +32,7 @@ export const e2eScripts = [
   'titlebar-ui-e2e', 'manual-ui-e2e', 'artifacts-ui-e2e', 'chat-image-thumbnail-e2e', 'settings-e2e',
   'question-ui-e2e', 'permission-early-e2e', 'trust-ui-e2e', 'session-rename-ui-e2e', 'task-notice-ui-e2e', 'release-notes-ui-e2e',
   'update-ui-e2e', 'i18n-ui-e2e', 'composer-completion-ui', 'file-index-e2e', 'conversation-progress-ui', 'context-menu-e2e',
-  'transcript-render-e2e', 'archive-ui-e2e', 'scroll-anchor-e2e', 'attachment-ui-e2e',
+  'transcript-render-e2e', 'archive-ui-e2e', 'scroll-anchor-e2e', 'attachment-ui-e2e', 'composer-chips-e2e',
   'attachment-thumbnail-e2e', 'subagent-column-e2e', 'task-column-e2e', 'quit-dialog-e2e',
   // These start the installed Claude Code against a loopback fake model (no real request).
   'foreground-shell-e2e', 'permission-ui-e2e', 'background-work-e2e',

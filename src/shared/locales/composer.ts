@@ -35,6 +35,8 @@ export const composer = {
   attachments: ['待发送的附件', 'Attachments to send'],
   uploading: ['上传中…', 'Uploading…'],
   removeAttachment: ['移除 {name}', 'Remove {name}'],
+  imageLabel: ['图片{n}', 'Image {n}'],
+  openImage: ['查看大图：{label}（{name}）', 'View {label} larger ({name})'],
   sourceBuiltin: ['内置命令', 'Built-in'],
   sourceUser: ['个人', 'Personal'],
   sourceProject: ['项目', 'Project'],
