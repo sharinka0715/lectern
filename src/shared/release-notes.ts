@@ -93,6 +93,8 @@ export const releaseNotes: ReleaseNote[] = [
         'A sent message with a tab no longer stays pinned below later turns, repeating the live preview with a lasting "Interrupted" banner.'],
       ['Claude Code 已弹出问答但还没把调用写进会话记录时，聊天里也显示可以作答的问答卡，不必接管终端。',
         'Questions now show as answerable cards even before Claude Code saves the call (common behind a gateway), not only a waiting banner; once saved it stays the same card.'],
+      ['问答卡和权限卡的点击恰逢 Claude Code 写入会话记录时不再被拒、要求重选，而是照常送达。',
+        'A click on a question or permission card just as Claude Code writes to the session no longer asks you to choose again; it goes through.'],
       ['大量使用时 SSH 操作不再长时间卡住，共用你的 SSH 连接时 Lectern 最多占 4 个会话。',
         'SSH operations no longer stall under heavy use: a queued command takes the next free channel, idle channels give way, and Lectern keeps to 4 sessions on a connection it shares with you.'],
       ['超时或取消的 SSH 命令会在服务器上一并结束，会话真正关闭后才让出名额。',

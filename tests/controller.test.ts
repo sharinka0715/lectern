@@ -976,6 +976,38 @@ test('a card read off the screen alone answers like any other, bound to the tran
   } finally { await cleanup(); }
 });
 
+test('a card read off the screen alone, clicked while Claude Code writes its call, takes the call and sends the same answer once more', async () => {
+  const { TranscriptChangedNoKeys } = await import('../src/backend/native-settings');
+  const { controller, cleanup, state, snapshots, call, result } = await earlyDialog();
+  const positions: unknown[] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => {
+    positions.push([args[5], args[7]]);
+    if (positions.length === 1) { state.records = [call]; state.offset = 1300; throw new TranscriptChangedNoKeys(); }
+  };
+  try {
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.equal(card.toolUseId, undefined);
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 1 });
+    assert.deepEqual(positions, [[{ kind: 'choose', number: 1 }, { inode: '42', offset: 400 }], [{ kind: 'choose', number: 1 }, { inode: '42', offset: 1300 }]]);
+    // The call has its result while a late frame still shows the dialog: it was owned, so no card.
+    state.records = [result]; state.offset = 1500;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined);
+    // Refused on each try: sent again once, then reported (nothing was sent).
+    state.screen = '──────────\n❯ \n──────────';
+    await pollNow(controller);
+    state.screen = (await import('node:fs')).readFileSync(new URL('./fixtures/permission-2.1.328/bash.txt', import.meta.url), 'utf8');
+    await pollNow(controller);
+    const next = snapshots.at(-1)!.permission!;
+    let refused = 0;
+    (controller.backend as any).answerPermission = async () => { refused++; throw new TranscriptChangedNoKeys(); };
+    await assert.rejects(controller.answerPermission('test', 'chat', '%1', 77, next.token, { kind: 'cancel' }), TranscriptChangedNoKeys);
+    assert.equal(refused, 2);
+    assert.equal(snapshots.at(-1)!.permission?.token, next.token, 'the card stands for another try');
+  } finally { await cleanup(); }
+});
+
 test('without Claude Code waiting for a permission prompt, a dialog-like screen with no pending call is no card', async () => {
   for (const native of [{}, { status: 'idle' as const }, { status: 'busy' as const }, { status: 'waiting' as const },
     { status: 'waiting' as const, waitingFor: 'dialog open' }, { status: 'waiting' as const, waitingFor: 'input needed' }]) {

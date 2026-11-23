@@ -40,6 +40,7 @@ npm run diagnostics:replay -- /absolute/path/to/saved-diagnostics --session SESS
 | 解析与合并 | 解码字节、半行缓冲、记录类型、跳过或重复原因、屏幕锚点、候选预览、权威正文接管及消息摘要 |
 | 权限卡 | `controller.permission.card`：新卡片或卡片换了归属时记录 `cardId`、所属调用 `toolUseId`（会话记录还没有这次调用、只凭原屏出卡时为空）、`adopted`（会话记录跟上后原卡片认领调用）和原生的 `nativeWaitingFor` |
 | 问答卡 | `controller.question.card`：同上，`cardId` 是问答卡的 `interactionId`；会话记录还没有这次 AskUserQuestion、只凭原屏和原生的「input needed」出卡时 `toolUseId` 为空 |
+| 卡片被拒后重读 | `controller.card.reread`：问答卡或权限卡的点击恰在 Claude Code 往会话记录追加内容（只凭原屏出卡后写入的调用，或调用前后的请求、标题、模式等记录）时被版本守卫拒绝（未发送按键），重读一次后记录：`same` 为真表示重读仍是同一张卡（令牌不变，绑定到新位置，没有调用的卡认领了调用时 `toolUseId` 即该调用），同一个回答再发一次；为假时照旧报错 |
 | SSH 会话名额 | `transport.session.queued`（排队超过 1 秒）、`transport.session.channel_yielded`、`transport.session.unconfirmed`、`transport.ssh.connection_setting`，见下文「SSH 会话名额」 |
 | 展示与故障 | `controller.snapshot`、renderer 应用状态、渲染错误、未处理异常/拒绝、进程退出和 `incident.mark` |
 

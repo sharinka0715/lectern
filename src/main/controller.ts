@@ -27,6 +27,7 @@ import { PermissionInputUnconfirmed } from '../backend/native-permission-actions
 import type { PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
 import { QuestionInputUnconfirmed } from '../backend/native-question-actions';
+import { TranscriptChangedNoKeys } from '../backend/native-settings';
 import { answeredQuestionId, earlyQuestion, observeQuestion, ownQuestion, pendingQuestionId, type OwnedQuestion, type WatchedQuestion } from './session-question';
 import { SessionSettingsCache, type SessionSettingsHandle } from './session-settings-cache';
 import { ModelCatalogs } from './model-catalogs';
@@ -927,7 +928,33 @@ export class Controller extends EventEmitter {
     this.schedulePoll(watch, stalePicker ? 0 : delay, stalePicker || soonFresh);
     });
   }
+  /** Answering checks the record a card was read with (transcriptVersionGuard), so a click while
+   * Claude Code appends to the transcript is refused before any key (TranscriptChangedNoKeys). That
+   * is how a card read off the screen alone met its call (2.1.300 and 2.1.310 write it about 170 ms
+   * after the dialog, longer on a slow disk), and how any card met the request, title and mode records
+   * written around a call. The click was lost: the card came back with a new token. Nothing was
+   * sent, so the card stays unconsumed; read again, and when the read keeps the same card (the same
+   * screen, the same call or now its call; observeQuestion, observePermission: token kept, newer
+   * position) send the same answer once more. Another screen, call or an answered question is a new
+   * card or none, and the refusal stands. */
+  private async rereadOnRefusal(workspaceId: string, sessionId: string, card: () => WatchedQuestion | WatchedPermission | undefined,
+    answer: () => Promise<void>): Promise<void> {
+    const before = card();
+    try { return await answer(); }
+    catch (error) {
+      if (!(error instanceof TranscriptChangedNoKeys) || !before || before.consumed) throw error;
+      await this.refresh(workspaceId, sessionId);
+      const same = card() === before && !before.consumed;
+      diagnostic.event('controller.card.reread', { sessionId, toolUseId: before.owner, same });
+      if (!same) throw error;
+      return answer();
+    }
+  }
   async answerQuestion(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
+    return this.rereadOnRefusal(workspaceId, sessionId, () => this.watch?.question,
+      () => this.answerQuestionOnce(workspaceId, sessionId, paneId, panePid, token, action));
+  }
+  private async answerQuestionOnce(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
     const watch = this.watch;
     const current = watch?.question;
     if (!watch || watch.workspace.id !== workspaceId || watch.sessionId !== sessionId || !current || current.consumed ||
@@ -948,6 +975,8 @@ export class Controller extends EventEmitter {
       await this.backend.answerQuestion(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent);
     } catch (error) {
       if (error instanceof QuestionInputUnconfirmed) current.unconfirmed = true;
+      // Refused before any key: the card stands unless the next read says otherwise (rereadOnRefusal).
+      if (error instanceof TranscriptChangedNoKeys) current.consumed = false;
       throw error;
     } finally {
       this.sending = this.turnBusy = false;
@@ -957,6 +986,10 @@ export class Controller extends EventEmitter {
     }
   }
   async answerPermission(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: PermissionAction) {
+    return this.rereadOnRefusal(workspaceId, sessionId, () => this.watch?.permission,
+      () => this.answerPermissionOnce(workspaceId, sessionId, paneId, panePid, token, action));
+  }
+  private async answerPermissionOnce(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: PermissionAction) {
     const watch = this.watch;
     const current = watch?.permission;
     if (!watch || watch.workspace.id !== workspaceId || watch.sessionId !== sessionId || !current || current.consumed ||
@@ -977,6 +1010,7 @@ export class Controller extends EventEmitter {
       await this.backend.answerPermission(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent);
     } catch (error) {
       if (error instanceof PermissionInputUnconfirmed) current.unconfirmed = true;
+      if (error instanceof TranscriptChangedNoKeys) current.consumed = false;
       throw error;
     } finally {
       this.sending = this.turnBusy = false;

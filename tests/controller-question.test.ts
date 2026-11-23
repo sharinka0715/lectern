@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { Backend, ReadResult } from '../src/backend';
 import { QuestionInputUnconfirmed } from '../src/backend/native-question-actions';
+import { TranscriptChangedNoKeys } from '../src/backend/native-settings';
 import { Controller } from '../src/main/controller';
 import type { WorkspaceStore } from '../src/main/store';
 import type { SessionSnapshot } from '../src/shared/types';
@@ -144,7 +145,7 @@ async function earlyQuestionSession(native: {status?: 'waiting'|'idle'|'busy'; w
     message:{role:'user', content:[{type:'tool_result', tool_use_id:'toolu_ask', content:'User has answered your questions: "Which drink should we serve?"="Juice".'}]}};
   await controller.watchSession(workspace.id, session);
   const composer = '──────────\n❯ \n──────────';
-  return {controller, state, answered, poll, call, result, dialog, multi, composer};
+  return {controller, backend, state, answered, poll, call, result, dialog, multi, composer};
 }
 
 test('会话记录还没有这次调用时，Claude Code 在等回答的原屏问答就出卡；调用写入后同一张卡认领它，答完后迟到的画面不再出卡', async () => {
@@ -203,6 +204,79 @@ test('凭原屏出的问答卡照常作答（绑定读到的会话记录位置�
     state.screen = composer;
     assert.equal((await poll()).question, undefined);
   } finally { await controller.dispose(); }
+});
+
+test('2.1.300 先画多题问答框、约 170 ms 后才写调用：凭原屏的卡片在这期间被点，守卫拒绝后重读、认领调用，同一个回答再发一次', async () => {
+  // cc-matrix question-multi on CI (2.1.300, 2.1.310): the click landed while the call was being
+  // written; the refusal reissued the card with a new token and the answer was lost.
+  const {controller, backend, state, answered, poll, call} = await earlyQuestionSession();
+  const multi = readFileSync(new URL('./fixtures/question-early/2.1.300-multi.txt', import.meta.url), 'utf8');
+  const snacks = {header:'Snacks', question:'Which snacks should we pack?', multiSelect:true, options:[{label:'Fruit', description:'Fresh fruit.'}, {label:'Bread', description:'Fresh bread.'}]};
+  const both = {...call, message:{...call.message, content:[call.message.content[0], {...call.message.content[1],
+    input:{questions:[...(call.message.content[1] as {input:{questions:unknown[]}}).input.questions, snacks]}}]}};
+  const positions: unknown[] = [];
+  let refuse = true;
+  (backend as any).answerQuestion = async (...args: unknown[]) => {
+    positions.push(args[7]);
+    // Claude Code writes the call between the card's read and the keys: nothing is sent.
+    if (refuse) { refuse = false; state.records = [both]; state.offset = 1300; throw new TranscriptChangedNoKeys(); }
+    answered.push(args);
+  };
+  try {
+    state.screen = multi;
+    const card = (await poll()).question!;
+    assert.deepEqual([card.toolUseId, card.tabs.map(tab => tab.label), card.question], [undefined, ['Drink', 'Snacks'], 'Which drink should we serve?']);
+    await controller.answerQuestion(workspace.id, session, '%5', 42, card.token, {kind:'activate', number:1});
+    assert.deepEqual(positions, [{inode:'7', offset:400}, {inode:'7', offset:1300}], 'refused at the old record, sent again at the new one');
+    assert.deepEqual(answered.map(args => args[5]), [{kind:'activate', number:1}], 'the same answer, once');
+    assert.equal((answered[0][4] as {question:string}).question, 'Which drink should we serve?', 'checked against the same screen');
+    // The next page: the card now names the call.
+    state.screen = multi.replace('☐ Drink', '☒ Drink').replace('Which drink should we serve?', 'Which snacks should we pack?');
+    const page = (await poll()).question!;
+    assert.deepEqual([page.toolUseId, page.interactionId, page.question], ['toolu_ask', card.interactionId, 'Which snacks should we pack?']);
+    assert.notEqual(page.token, card.token);
+  } finally { await controller.dispose(); }
+});
+
+test('被拒后重读仍是同一张卡（追加的只是请求、标题等记录）时同一个回答再发一次；问题已答完时不再发，照旧报「未发送」', async () => {
+  const notice = {parentUuid:'u1', isSidechain:false, type:'system', subtype:'informational', level:'warning', uuid:'notice', sessionId:session, content:'A notice.'};
+  const title = {type:'custom-title', customTitle:'示例问答', sessionId:session};
+  // `appended` is what Claude Code writes between the card's read and the keys; `refusals` sends are refused.
+  const refusedWith = async (owned: boolean, appended: (s: Awaited<ReturnType<typeof earlyQuestionSession>>) => unknown[], refusals = 1) => {
+    const t = await earlyQuestionSession();
+    try {
+      if (owned) t.state.records = [t.call];
+      const card = (await t.poll()).question!;
+      assert.equal(card.toolUseId, owned ? 'toolu_ask' : undefined);
+      const positions: unknown[] = [];
+      (t.backend as any).answerQuestion = async (...args: unknown[]) => {
+        positions.push((args[7] as {offset:number}).offset);
+        if (positions.length > refusals) return;
+        t.state.records = appended(t); t.state.offset += 120; throw new TranscriptChangedNoKeys();
+      };
+      const outcome = await t.controller.answerQuestion(workspace.id, session, '%5', 42, card.token, {kind:'activate', number:2}).then(() => 'sent', error => error);
+      return {outcome, positions, after: (await t.poll()).question, card};
+    } finally { await t.controller.dispose(); }
+  };
+  // Title records after the call, or request records under a card still without its call (the stream
+  // ends late): the same card, sent again at the newer record.
+  for (const [owned, records] of [[true, [title, notice]], [false, [notice]]] as const) {
+    const {outcome, positions} = await refusedWith(owned, () => [...records]);
+    assert.deepEqual([outcome, positions], ['sent', [400, 520]], `owned: ${owned}`);
+  }
+  // Refused twice: reported; nothing was sent, so the card keeps its token for another try.
+  const twice = await refusedWith(false, () => [notice], 2);
+  assert.ok(twice.outcome instanceof TranscriptChangedNoKeys);
+  assert.deepEqual(twice.positions, [400, 520]);
+  assert.deepEqual([twice.after?.token, twice.after?.interactionId], [twice.card.token, twice.card.interactionId]);
+  // Answered in the terminal meanwhile (its result; or, deferred, the call with its result): never sent again.
+  for (const [owned, records] of [[true, (t: Awaited<ReturnType<typeof earlyQuestionSession>>) => [t.result]],
+    [false, (t: Awaited<ReturnType<typeof earlyQuestionSession>>) => [t.call, t.result]]] as const) {
+    const answered = await refusedWith(owned, records);
+    assert.ok(answered.outcome instanceof TranscriptChangedNoKeys, `owned: ${owned}`);
+    assert.deepEqual(answered.positions, [400]);
+    assert.equal(answered.after, undefined, 'a late frame of the answered question is no card');
+  }
 });
 
 test('Claude Code 没在等回答时，没有调用的问答样画面不出卡；代码块里的菜单也不出卡', async () => {

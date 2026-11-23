@@ -117,8 +117,6 @@ export const backend = {
   inputBusy: ['此会话正在发送输入或操作原生设置，请稍后重试', 'This conversation is sending input or changing a native setting. Try again shortly.'],
   settingPaneChangedNoCommand: ['设置会话的 tmux 绑定已改变，未输入命令', 'The tmux binding changed; the setting command was not typed.'],
   settingComposerChanged: ['设置输入前原生输入框或绑定已变化，未粘贴命令', 'The native input box or binding changed; the command was not pasted.'],
-  questionRecordChanged: ['问答记录已变化，请重新查看', 'The question record has changed. Take another look.'],
-  permissionRecordChanged: ['权限确认所属的记录已变化，请重新查看', "The permission request's record has changed. Take another look."],
   settingProcessChanged: ['设置选择后会话的终端进程已变化，请重新选择', 'The terminal process changed after the selection. Choose again.'],
   claudeNotForeground: ['Claude 已不在绑定终端前台，未发送设置输入', "Claude is no longer in the bound terminal's foreground; the setting input was not sent."],
   settingScreenIncomplete: ['原生设置画面响应不完整，请重新读取', 'Incomplete native settings screen. Read it again.'],

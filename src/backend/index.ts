@@ -1466,7 +1466,8 @@ ${after}`;
       if (position && position.inode !== 'missing') {
         const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
         const cursor = this.cursors.get(this.key(workspace, sessionId));
-        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new Error(t('backend.questionRecordChanged'));
+        // Read on since the card was offered (a read in flight): nothing sent, as when the target's guard refuses.
+        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new TranscriptChangedNoKeys();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
@@ -1482,7 +1483,7 @@ ${after}`;
       if (position && position.inode !== 'missing') {
         const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
         const cursor = this.cursors.get(this.key(workspace, sessionId));
-        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new Error(t('backend.permissionRecordChanged'));
+        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new TranscriptChangedNoKeys();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
