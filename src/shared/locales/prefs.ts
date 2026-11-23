@@ -72,6 +72,8 @@ export const prefs = {
   addedByFolder: [' · 由项目文件夹添加', ' · added by a project folder'],
   loginMachine: ['登录 {name}', 'Sign in to {name}'],
   loginThisMachine: ['登录这台机器', 'Sign in to this machine'],
+  reuseSshConnections: ['复用已有的 SSH 连接', 'Reuse existing SSH connections'],
+  reuseSshConnectionsHelp: ['开启时，ssh_config 配了 ControlMaster 的机器复用你的终端或编辑器已建立的连接，Lectern 在这条连接上同时最多开 4 个会话，把其余名额留给它们。关闭后 Lectern 为每台机器建立自己的连接，同时最多开 8 个会话，不再与终端、VS Code 共用服务器给每条连接的会话名额（sshd 的 MaxSessions，默认 10）；需要密码或验证码的机器要在应用内再登录一次。切换后，之后建立的连接立即按新方式进行，正在接管的终端保持到关闭。', 'When on, a machine whose ssh_config runs a ControlMaster is reached over the connection your terminal or editor already opened, and Lectern keeps to 4 sessions at once on it, leaving the rest to them. When off, Lectern opens its own connection to each machine and uses up to 8 sessions at once, no longer sharing the per-connection session limit of the server (sshd MaxSessions, 10 by default) with your terminals and VS Code; machines that need a password or code ask for a sign-in in the app once more. The change applies to connections made from now on; a terminal you have taken over stays as it is until you close it.'],
   editConnectionOf: ['编辑连接 {name}', 'Edit connection {name}'],
   editConnection: ['编辑连接', 'Edit connection'],
   saveAsConnection: ['保存为连接，可改显示名称', 'Save as a connection to rename it'],

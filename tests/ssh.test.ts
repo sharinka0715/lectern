@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { spawn, execFile, execFileSync } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, appendFile, mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
@@ -29,23 +29,28 @@ test('SSH invocation keeps local config and destination as independent argv and 
   assert.equal(reused.args.some(arg => arg.startsWith('ControlPath=')), false, 'user-configured master location stays OpenSSH-owned');
 });
 
-test('SSH mux command stays constant for large scripts, empty stdin and binary payloads', { skip: process.platform === 'win32' }, () => {
+test('SSH mux command stays constant for large scripts, empty stdin and binary payloads', { skip: process.platform === 'win32' }, async () => {
   const target: Workspace = { id: 'ssh-stdio', name: 'SSH stdio', kind: 'ssh', cwd: '/tmp', host: 'test' };
   const padding = '# ' + 'x'.repeat(200_000) + '\n';
-  const execute = (script: string, stdin?: string | Buffer) => {
+  // As ssh does, the request's input stays open while the command runs (closing it cancels).
+  const execute = (script: string, stdin?: string | Buffer) => new Promise<{ status: number | null; stdout: Buffer }>((resolve, reject) => {
     const invocation = commandInvocation(target, padding + script, undefined, undefined, true, stdin);
     assert.equal(invocation.args.at(-1), 'exec sh -s');
-    return execFileSync('/bin/sh', ['-c', invocation.args.at(-1)!], { input: invocation.input });
-  };
+    const child = spawn('/bin/sh', ['-c', invocation.args.at(-1)!], { stdio: ['pipe', 'pipe', 'inherit'] }), chunks: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.on('error', reject);
+    child.on('close', status => { child.stdin.destroy(); resolve({ status, stdout: Buffer.concat(chunks) }); });
+    child.stdin.write(invocation.input!);
+  });
   for (const input of [undefined, '', Buffer.alloc(0)]) {
     const script = "read -r input && exit 19\ncat\ncat <<'END'\nquoted '$data'\nEND\n# trailing comment";
-    assert.equal(execute(script, input).toString(), "quoted '$data'\n");
+    assert.equal((await execute(script, input)).stdout.toString(), "quoted '$data'\n");
   }
   const payload = Buffer.concat([Buffer.from("LECTERN_STDIN\n'\n$(exit 12)\n"),
     Buffer.from(Array.from({ length: 200_000 }, (_, i) => i % 256))]);
-  assert.deepEqual(execute('cat', payload), payload);
-  assert.equal(execute('cat', '🙂\n第二行').toString(), '🙂\n第二行');
-  assert.throws(() => execute('exit 37', payload), { status: 37 });
+  assert.deepEqual((await execute('cat', payload)).stdout, payload);
+  assert.equal((await execute('cat', '🙂\n第二行')).stdout.toString(), '🙂\n第二行');
+  assert.equal((await execute('exit 37', payload)).status, 37);
 });
 
 test('SSH failure while writing stdin preserves the original error and runs only once', { skip: process.platform === 'win32' }, async () => {

@@ -602,4 +602,7 @@ export interface DesktopAPI {
   answerQuit(id: number, answer: import('./quit').QuitAnswer, remember?: boolean): Promise<void>;
   quitPreferences(): Promise<import('./quit').QuitPreferences>;
   setQuitPreferences(preferences: import('./quit').QuitPreferences): Promise<import('./quit').QuitPreferences>;
+  sshConnectionPreferences(): Promise<import('./ssh-connections').SshConnectionPreferences>;
+  /** Saved, then applied to SSH connections made from now on. */
+  setSshConnectionPreferences(preferences: import('./ssh-connections').SshConnectionPreferences): Promise<import('./ssh-connections').SshConnectionPreferences>;
 }

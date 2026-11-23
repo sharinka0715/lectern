@@ -192,7 +192,7 @@ test('without ControlPersist in ssh_config Lectern keeps its own master until it
   const { transport, calls } = await fixture(t, env);
   assert.equal(await transport.login(target, async prompt => prompt.kind === 'secret' ? 'pa ss"word' : '123456'), 'connected');
   const login = (await calls()).find(line => line.includes('BatchMode=no'))!;
-  assert.match(login, /^-f -N .*ControlMaster=yes/, 'a background master with no idle timeout');
+  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=yes /, 'a background master with no idle timeout, whatever ssh_config says');
   const path = login.match(/ControlPath=(\S+)/)?.[1];
   assert.ok(path?.startsWith('/tmp/lectern-ssh-') && path.endsWith('/%C'), login);
   await transport.run(workspace, 'printf ok');
@@ -200,6 +200,25 @@ test('without ControlPersist in ssh_config Lectern keeps its own master until it
   await transport.dispose();
   assert.match((await calls()).at(-1)!, /-O exit/, 'quitting closes the private master');
   }
+});
+
+test('using only its own connections, Lectern logs in to its own master even beside a running user master with ControlPersist', posix, async t => {
+  const { transport, state, calls } = await fixture(t, { FAKE_CONTROL_PATH: '/tmp/ssh-mux-%C', FAKE_CONTROL_PERSIST: '600' });
+  await writeFile(join(state, 'master-user'), '');
+  await transport.setReuseUserMasters(false);
+  const seen: string[] = [];
+  assert.equal(await transport.login(target, async prompt => { seen.push(prompt.kind); return prompt.kind === 'secret' ? 'pa ss"word' : '123456'; }), 'connected',
+    'the user\'s master does not count as an existing connection');
+  assert.deepEqual(seen, ['secret', 'text'], 'the same login dialog asks');
+  const all = await calls(), login = all.find(line => line.includes('BatchMode=no'))!;
+  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-[^ ]+\/%C lab$/,
+    'a private master; ControlPersist=yes overrides the 600 s from ssh_config');
+  assert.ok(!all.some(line => line.startsWith('-G ') || (line.includes('-O check') && !line.includes('ControlPath='))), 'ssh_config\'s master is not even looked for');
+  await transport.run(workspace, 'printf ok');
+  assert.match((await calls()).at(-1)!, /ControlMaster=auto -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-/, 'commands use it');
+  assert.equal(await transport.login(target, async () => { throw new Error('must not prompt'); }), 'existing');
+  await transport.dispose();
+  assert.match((await calls()).at(-1)!, /ControlPath=\/tmp\/lectern-ssh-.* -O exit lab$/, 'quitting closes only the private master');
 });
 
 test('a new host key needs an explicit yes; cancelling or a wrong code fails without a master', posix, async t => {

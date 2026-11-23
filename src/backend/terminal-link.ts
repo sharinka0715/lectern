@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { TerminalFrame, TerminalInput, TerminalKey } from '../shared/types';
 import { diagnostic } from '../diagnostics';
 import { t } from '../shared/i18n';
+import { hangUp } from './hang-up';
 
 /**
  * One persistent shell on the target for a terminal takeover. Each key becomes one
@@ -78,8 +79,9 @@ export function startTerminalLink(child: ChildProcessWithoutNullStreams, paneId:
     if (closed) return;
     closed = true;
     clearTimeout(timer); clearInterval(idle);
+    // The loop exits on Q (or EOF); its session ends before the client does (see hangUp).
     try { child.stdin.end('Q\n'); } catch { /* already gone */ }
-    child.kill();
+    hangUp(child);
     diagnostic.event('backend.terminal_link.closed', { paneId, reason });
     if (settle) { settle.reject(new Error(reason === 'pane' ? t('backend.terminalChangedRetake') : t('backend.terminalLinkFailed'))); settle = undefined; }
     else events.onClosed(reason);

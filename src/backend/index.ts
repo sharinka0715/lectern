@@ -19,6 +19,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename, posix } from 'node:path';
 import type { SettingSwitchMode, DirectoryTrustDecision, DirectoryTrustResult, DirectoryTrustSnapshot, HistoryScan, HistoryTarget, ReplyBaselines, TranscriptPosition, NativeStatusLineObservation, PaneInfo, SessionInfo, SessionSettingKind, SessionSettingSnapshot, TerminalFrame, TerminalInput, TerminalKey, Workspace, WorkspaceDirectoryPage, WorkspaceDiscovery, WorkspaceEndpoint } from '../shared/types';
 import { TERMINAL_KEYS } from '../shared/types';
+import type { SshConnectionPreferences } from '../shared/ssh-connections';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import { Transport, quoteShell as q, validateWorkspace, type TransportOptions } from './transport';
 import { uploadAttachment } from './attachment-upload';
@@ -79,7 +80,9 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
   }
 }
 export interface LaunchPreferences { enableWorkflows: boolean }
-export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'] }
+export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'];
+  /** Reach a machine over the master its ssh_config already runs (default), or only over Lectern's own connections. */
+  reuseSshConnections?: boolean }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
 export interface ReadResult { /** Asked for with `listSubagents`: every subagent of the session (subagent-files.ts). */ subagents?: SubagentListing;
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
@@ -193,7 +196,7 @@ export class Backend {
   // instead of waiting on the machine again (knownRunning).
   private readonly discoveries = new Map<string, { okAt?: number; failedAt?: number; error?: string }>();
   constructor(private readonly options: BackendOptions = {}) {
-    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal });
+    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal, reuseUserMasters: options.reuseSshConnections });
     if (!options.claudeCommand) this.endpointBilling = new EndpointBillingCache(this.transport);
     this.artifacts = new WorkspaceArtifacts(this.transport);
     this.completions = new ComposerCompletions(this.transport, this.artifacts);
@@ -371,6 +374,10 @@ ${presenceReadScript(location.claudeDir)}`;
       if (pane && !cached && viewports.get(pane.id)?.screen !== undefined) this.rememberNavigation(workspace, pane, observed, now);
     }
     diagnostic.event('backend.navigation_status.result', { workspaceId: workspace.id, sessionCount: sessions.length, states: sessions.map(session => ({ sessionId: session.id, paneId: session.paneId, status: session.status, statusDetail: session.statusDetail, background: session.background })) }, 'debug');
+  }
+  /** Applies to SSH connections made from now on; see Transport.setReuseUserMasters. */
+  setSshConnectionPreferences(preferences: SshConnectionPreferences): Promise<void> {
+    return this.transport.setReuseUserMasters(preferences.reuseConnections !== false);
   }
   /** Interactive SSH login that leaves a reusable master; see Transport.login. */
   sshLogin(target: { host?: string; port?: number }, answer: AnswerPrompt, signal?: AbortSignal) {

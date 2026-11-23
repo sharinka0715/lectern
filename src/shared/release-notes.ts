@@ -55,6 +55,8 @@ export const releaseNotes: ReleaseNote[] = [
         'In split view, the sidebar marks the conversation open in the other pane in pale blue, apart from the focused one; they swap as the focus moves.'],
       ['状态栏 5h、7d 额度的悬停卡片标出数字截至何时，并说明同时开着的对话可能不一致。',
         'The 5h and 7d usage hover cards say when their figures are from (with the date on another day, in the usage time zone), and that each conversation updates them only with its own requests.'],
+      ['设置「SSH 连接」新增「复用已有的 SSH 连接」：关闭后 Lectern 使用自己的连接，不再与终端、VS Code 共用会话名额。',
+        "New \"Reuse existing SSH connections\" setting: when off, Lectern opens its own connection to each machine (up to 8 sessions) instead of sharing the server's session limit with terminals and VS Code."],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',
@@ -85,6 +87,10 @@ export const releaseNotes: ReleaseNote[] = [
         'A sent message with a tab no longer stays pinned below later turns, repeating the live preview with a lasting "Interrupted" banner.'],
       ['Claude Code 已弹出问答但还没把调用写进会话记录时，聊天里也显示可以作答的问答卡，不必接管终端。',
         'Questions now show as answerable cards even before Claude Code saves the call (common behind a gateway), not only a waiting banner; once saved it stays the same card.'],
+      ['大量使用时 SSH 操作不再长时间卡住，共用你的 SSH 连接时 Lectern 最多占 4 个会话。',
+        'SSH operations no longer stall under heavy use: a queued command takes the next free channel, idle channels give way, and Lectern keeps to 4 sessions on a connection it shares with you.'],
+      ['超时或取消的 SSH 命令会在服务器上一并结束，会话真正关闭后才让出名额。',
+        "A timed-out or cancelled SSH command now also ends on the server, and its session counts until it has really closed, so it no longer quietly uses up the server's sessions."],
     ],
   },
   {

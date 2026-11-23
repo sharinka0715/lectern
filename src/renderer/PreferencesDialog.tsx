@@ -28,6 +28,7 @@ import { setMachineConnection, sshMachines, useMachineConnections } from "./ssh-
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
 import { UpdateSettings } from "./UpdatePrompt";
 import { QuitPreferenceSetting } from "./QuitDialog";
+import { SshConnectionSetting } from "./SshConnectionSetting";
 import { defaultQuitPreferences } from "../shared/quit";
 import { updateText } from "../shared/update-strings";
 import { timeZoneChoices, zoneOffset } from "./quota-time";
@@ -528,6 +529,7 @@ export function PreferencesDialog({
                   </button>
                 </div>
               )}
+              <SshConnectionSetting />
             </>
           )}
         </section>

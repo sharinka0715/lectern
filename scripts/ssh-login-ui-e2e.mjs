@@ -21,11 +21,13 @@ const password = 'pa ss"word', code = '482913';
 await writeFile(path.join(state, 'ssh'), `#!/bin/sh
 state=${JSON.stringify(state)}
 printf '%s\\n' "$*" >> "$state/calls"
-case " $* " in *" -o ControlPath="*) socket=private;; *) socket=;; esac
+# With user-config, ssh_config multiplexes with ControlPersist and master-user is the user's own master.
+case " $* " in *" -o ControlPath="*) socket=private;; *) socket=; [ -f "$state/user-config" ] && socket=user;; esac
 case " $* " in
   *" -V "*) printf 'OpenSSH_9.8p1, LibreSSL 3.3.6\\n' >&2; exit 0;;
-  *" -G "*) printf 'hostname lab\\ncontrolpath none\\n'; exit 0;;
+  *" -G "*) if [ -f "$state/user-config" ]; then printf 'hostname lab\\ncontrolpath /tmp/ssh-user-%%C\\ncontrolmaster auto\\ncontrolpersist 600\\n'; else printf 'hostname lab\\ncontrolpath none\\n'; fi; exit 0;;
   *" -O check "*) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && exit 0; exit 255;;
+  *" -O stop "*) rm -f "$state/master-$socket"; exit 0;;
   *" -f -N "*)
     printf '%s\\n' "$LECTERN_ASKPASS_NODE" > "$state/askpass-node"
     printf '%s\\n' "\${DISPLAY-unset}" > "$state/display"
@@ -154,6 +156,66 @@ try {
   await page.locator('.error-banner').waitFor({ state: 'detached' });
   await page.getByRole('button', { name: '新建对话', exact: false }).first().waitFor();
 
+  // 「复用已有的 SSH 连接」: on by default. The user's terminal now runs a master from
+  // ssh_config (with ControlPersist), next to Lectern's own.
+  await writeFile(path.join(state, 'user-config'), '');
+  await writeFile(path.join(state, 'master-user'), '');
+  const sshCalls = async () => (await readFile(path.join(state, 'calls'), 'utf8')).trim().split('\n');
+  const commandsSince = async mark => (await sshCalls()).slice(mark).filter(line => line.endsWith('exec sh -s'));
+  const check = () => page.evaluate(() => window.desktop.checkSshConnection({ host: 'lab-alias' }));
+  await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();
+  await settings.getByRole('button', { name: 'SSH 连接', exact: true }).click();
+  const reuse = settings.getByLabel('复用已有的 SSH 连接', { exact: true });
+  await page.waitForFunction(() => !document.querySelector('.pref-ssh-connection input')?.disabled);
+  assert.equal(await reuse.isChecked(), true, 'reuse is the default');
+  await page.screenshot({ path: path.join(results, 'ssh-connection-setting.png') });
+  // Off, then on again: sharing again, Lectern's own master for this machine stops taking sessions.
+  await reuse.uncheck();
+  await reuse.check();
+  await page.waitForFunction(async () => (await window.desktop.sshConnectionPreferences()).reuseConnections === true);
+  // Saved first, then applied: the stop follows a moment later.
+  const stopped = async () => (await sshCalls()).some(line => /ControlPath=\/tmp\/lectern-ssh-.* -O stop lab-alias$/.test(line));
+  for (let i = 0; i < 100 && (!await stopped() || await exists(path.join(state, 'master-private'))); i++) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.ok(await stopped(), 'the private master was told to stop');
+  assert.equal(await exists(path.join(state, 'master-private')), false);
+  let mark = (await sshCalls()).length;
+  assert.deepEqual(await check(), { ok: true });
+  assert.ok((await commandsSince(mark)).every(line => line.includes('ControlMaster=no') && !line.includes('ControlPath=')), 'commands use the user\'s master');
+  await settings.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await login.getByText('这台机器已有可复用的连接', { exact: false }).waitFor();
+  await login.waitFor({ state: 'detached' });
+  // Off: only Lectern's own connection. With no master of its own yet, the machine asks for a login,
+  // which leaves a private master even though ssh_config would persist one.
+  await reuse.uncheck();
+  await page.waitForFunction(async () => (await window.desktop.sshConnectionPreferences()).reuseConnections === false);
+  assert.deepEqual(JSON.parse(await readFile(path.join(profile, 'ssh-settings.json'), 'utf8')), { reuseConnections: false });
+  mark = (await sshCalls()).length;
+  const refused = await check();
+  assert.equal(refused.ok, false);
+  assert.match(refused.message, /Permission denied/);
+  assert.ok((await commandsSince(mark)).every(line => /ControlPath=\/tmp\/lectern-ssh-/.test(line)), 'commands no longer use the user\'s master');
+  mark = (await sshCalls()).length;
+  await settings.getByRole('button', { name: '登录 实验集群', exact: true }).click();
+  await login.getByText("dev@lab's password:", { exact: true }).waitFor();
+  await field.fill(password); await field.press('Enter');
+  await login.getByText('Verification code:', { exact: true }).waitFor();
+  await field.fill(code); await field.press('Enter');
+  await login.waitFor({ state: 'detached' });
+  const exclusiveLogin = (await sshCalls()).slice(mark).find(line => line.includes('BatchMode=no'));
+  assert.match(exclusiveLogin, /^-f -N .*ControlMaster=yes -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-/);
+  assert.ok(await exists(path.join(state, 'master-private')));
+  assert.ok(await exists(path.join(state, 'master-user')), 'the user\'s master is left alone');
+  mark = (await sshCalls()).length;
+  assert.deepEqual(await check(), { ok: true });
+  assert.ok((await commandsSince(mark)).every(line => /ControlPath=\/tmp\/lectern-ssh-/.test(line)));
+  // The choice is kept: reopening the settings shows it.
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();
+  await settings.getByRole('button', { name: 'SSH 连接', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.pref-ssh-connection input')?.disabled);
+  assert.equal(await reuse.isChecked(), false);
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+
   // Replies stay out of the diagnostics and the profile.
   async function files(directory) {
     const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
@@ -171,7 +233,7 @@ try {
     assert.ok(!text.includes(password) && !text.includes(code), `a login reply was written to ${file}`);
   }
   assert.deepEqual(errors, []);
-  console.log('PASS: in-app SSH login with password, one-time code and new host key through the askpass relay; existing master reuse; wrong code retry; cancel; login from a connection error; replies kept out of diagnostics.');
+  console.log('PASS: in-app SSH login with password, one-time code and new host key through the askpass relay; existing master reuse; wrong code retry; cancel; login from a connection error; reusing the user\'s master or only Lectern\'s own (setting, login, persistence); replies kept out of diagnostics.');
 } catch (error) {
   console.error(error);
   console.error('ssh calls:\n' + await readFile(path.join(state, 'calls'), 'utf8').catch(() => '(none)'));

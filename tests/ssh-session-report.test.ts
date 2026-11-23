@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,20 +22,61 @@ async function withFakeSsh(body: string, run: (dir: string) => Promise<void>) {
   }
 }
 
-test('a one-off SSH request reports the status of its command, even one that exits', posix, () => {
+/** Alive and not a zombie (an orphan's reaper may be slow in a container). */
+async function running(pid: number): Promise<boolean> {
+  for (let i = 0; i < 50; i++) {
+    const state = await new Promise<string>(resolve => execFile('ps', ['-o', 'stat=', '-p', String(pid)], (_error, stdout) => resolve(String(stdout).trim())));
+    if (!state || state.startsWith('Z')) return false;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  return true;
+}
+
+/** Runs a one-off SSH request with the local shell as the target, input kept open as ssh keeps it. */
+function executeRequest(input: string | Buffer, command = 'exec sh -s'): Promise<{ status: number | null; stdout: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const chunks: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.on('error', reject);
+    child.on('close', status => { child.stdin.destroy(); resolve({ status, stdout: Buffer.concat(chunks) }); });
+    child.stdin.write(input);
+  });
+}
+
+test('a one-off SSH request reports the status of its command, even one that exits', posix, async () => {
   const marker = '__LECTERN_STATUS_test__:';
-  const execute = (script: string, stdin?: string) => {
+  const execute = async (script: string, stdin?: string) => {
     const invocation = commandInvocation(target, script, undefined, undefined, true, stdin, marker);
-    return execFileSync('/bin/sh', ['-c', invocation.args.at(-1)!], { input: invocation.input }).toString();
+    return (await executeRequest(invocation.input!, invocation.args.at(-1)!)).stdout.toString();
   };
-  assert.equal(execute('printf ok'), `ok\n${marker}0\n`);
-  assert.equal(execute('printf partial; exit 3'), `partial\n${marker}3\n`);
-  assert.equal(execute('cat', 'stdin\n'), `stdin\n\n${marker}0\n`);
+  assert.equal(await execute('printf ok'), `ok\n${marker}0\n`);
+  assert.equal(await execute('printf partial; exit 3'), `partial\n${marker}3\n`);
+  assert.equal(await execute('cat', 'stdin\n'), `stdin\n\n${marker}0\n`);
+});
+
+test('closing the input of a one-off request ends its command and every process it started', posix, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'lectern-hangup-'));
+  try {
+    const invocation = commandInvocation(target, `sh -c 'echo $$ > "${directory}/inner"; sleep 30' & echo $! > "${directory}/outer"; wait`, undefined, undefined, true, undefined, '__M__:');
+    // Started as its own process group, as sshd starts every session.
+    const child = spawn('/bin/sh', ['-c', invocation.args.at(-1)!], { stdio: ['pipe', 'pipe', 'inherit'], detached: true });
+    const closed = new Promise<number | null>(resolve => child.on('close', resolve));
+    child.stdin.write(invocation.input!);
+    let inner = '';
+    for (let i = 0; i < 100 && !inner; i++) { inner = await readFile(join(directory, 'inner'), 'utf8').catch(() => ''); await new Promise(r => setTimeout(r, 20)); }
+    const pids = [Number(inner), Number(await readFile(join(directory, 'outer'), 'utf8'))];
+    const started = Date.now();
+    child.stdin.end();
+    await closed;
+    assert.ok(Date.now() - started < 3000, 'the session ended at once');
+    for (const pid of pids) assert.equal(await running(pid), false, `process ${pid} was ended`);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test('a session the jump host refused is an error, not an empty result', posix, async () => {
   // A jump host that cannot reach the target: the command never runs, the session still "succeeds".
-  await withFakeSsh(`cat >/dev/null\necho 'jump proxy failed, 无法连接目标机器 ssh: rejected: connect failed (open failed)' >&2\nexit 0`, async () => {
+  await withFakeSsh(`echo 'jump proxy failed, 无法连接目标机器 ssh: rejected: connect failed (open failed)' >&2\nexit 0`, async () => {
     await assert.rejects(runCommand(target, 'printf listing'), /jump proxy failed/);
   });
   // A jump host that swallows the remote exit status.
@@ -59,6 +100,7 @@ test('a read sized to the exact byte fits a one-off session: its status line is 
 });
 
 test('one-off SSH sessions per host wait for a free slot', posix, async () => {
+  // `-O check` succeeds: the user's own master is shared, at most four sessions.
   await withFakeSsh(`touch "$dir/live/$$"\nls "$dir/live" | wc -l >> "$dir/counts"\nsleep 0.3\nsh -s\ncode=$?\nrm -f "$dir/live/$$"\nexit $code`, async dir => {
     const transport = new Transport(undefined, { channelKinds: [] });
     try {
@@ -69,7 +111,8 @@ test('one-off SSH sessions per host wait for a free slot', posix, async () => {
       assert.deepEqual((await Promise.all(runs)).map(r => r.stdout.toString()), ['0', '1', '2', '3', '4', '5', '6', '7']);
       const counts = (await readFile(join(dir, 'counts'), 'utf8')).trim().split('\n').map(Number);
       assert.equal(counts.length, 9, 'the host is asked for its system once, then eight commands');
-      assert.ok(Math.max(...counts) <= 5, `at most five at once: ${counts}`);
+      assert.ok(Math.max(...counts) <= 4, `at most four at once: ${counts}`);
+      assert.equal(Math.max(...counts), 4, `the places are used: ${counts}`);
     } finally { await transport.dispose(); }
   });
 });
@@ -89,11 +132,11 @@ test('an SSH machine running Windows is refused once with a clear message; macOS
     assert.equal((await readFile(join(dir, 'calls'), 'utf8')).trim().split('\n').length, 1, 'asked once, then refused without connecting');
   });
   // cmd.exe as the server's shell cannot start sh at all.
-  await run(`cat >/dev/null\necho "'exec' is not recognized as an internal or external command," >&2\necho 'operable program or batch file.' >&2\nexit 1`, async transport => {
+  await run(`echo "'exec' is not recognized as an internal or external command," >&2\necho 'operable program or batch file.' >&2\nexit 1`, async transport => {
     await assert.rejects(transport.run(target, 'printf never'), /运行的是 Windows/);
   });
   // A connection failure is not an answer: the next command asks again.
-  await run(`if [ ! -e "$dir/up" ]; then touch "$dir/up"; cat >/dev/null; echo 'ssh: connect to host jump-target port 22: Connection refused' >&2; exit 255; fi\nsh -s`, async transport => {
+  await run(`if [ ! -e "$dir/up" ]; then touch "$dir/up"; echo 'ssh: connect to host jump-target port 22: Connection refused' >&2; exit 255; fi\nsh -s`, async transport => {
     await assert.rejects(transport.run(target, 'printf ok'), /Connection refused/);
     assert.equal((await transport.run(target, 'printf ok')).stdout.toString(), 'ok');
   });

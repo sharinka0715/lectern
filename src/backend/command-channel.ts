@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { gunzip } from 'node:zlib';
+import { hangUp } from './hang-up';
 
 /**
  * A long-lived shell on an SSH target that runs one command at a time.
@@ -20,6 +21,24 @@ export interface ChannelResult { code: number; stdout: Buffer; stderr: string }
 
 const compressAbove = 32 * 1024;
 
+/**
+ * A background watcher that ends the command `$1` (and, on SSH, the whole
+ * session) when the client goes away, so sshd frees the session instead of
+ * keeping it until the command finishes on its own. It reads the client's input
+ * from fd 3: the client sends nothing while a command runs, so the read returns
+ * only at EOF (a cancel or a lost connection). sshd starts every session in its
+ * own process group led by the outer shell (`$$`), so `kill -TERM -$$` reaches the
+ * command's whole pipeline; elsewhere (a local test target) only the command
+ * itself. Stragglers that ignore TERM get KILL. The caller ends the watcher with
+ * KILL once the command is done: a signal it could trap might arrive before the
+ * forked subshell has reset the caller's traps (such as the channel's EXIT trap,
+ * which removes its directory).
+ */
+export const remoteWatcher = `lectern_watch() {
+ ( IFS= read -r lectern_eof <&3; trap '' TERM; kill -TERM -$$ 2>/dev/null || kill -TERM "$1" 2>/dev/null; sleep 2; kill -KILL -$$ 2>/dev/null || kill -KILL "$1" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
+ lectern_watcher=$!
+}`;
+
 export function channelScript(nonce: string): string {
   if (!/^[0-9a-f]{16,64}$/.test(nonce)) throw new Error('Invalid channel nonce');
   // Per-request files: a background process that outlives its command can
@@ -32,6 +51,8 @@ trap 'exit 129' HUP
 trap 'exit 143' TERM
 command -v base64 >/dev/null 2>&1 && command -v head >/dev/null 2>&1 || exit 1
 lectern_gzip=; command -v gzip >/dev/null 2>&1 && lectern_gzip=1
+exec 3<&0
+${remoteWatcher}
 printf '\\nLECTERN_CHANNEL_READY %s\\n' ${nonce}
 while IFS= read -r lectern_line; do
  case $lectern_line in ('R '*) ;; (*) exit 1;; esac
@@ -40,8 +61,13 @@ while IFS= read -r lectern_line; do
  case $lectern_id in (''|*[!0-9]*) exit 1;; esac
  lectern_s="$lectern_dir/s$lectern_id" lectern_o="$lectern_dir/o$lectern_id" lectern_e="$lectern_dir/e$lectern_id"
  if printf '%s\\n' "\${lectern_line#* }" | base64 -d > "$lectern_s" 2> "$lectern_e"; then
-  sh "$lectern_s" > "$lectern_o" 2> "$lectern_e" < /dev/null
+  # The watcher ends the request when the client hangs up mid-command (see CommandChannel.close).
+  sh "$lectern_s" > "$lectern_o" 2> "$lectern_e" < /dev/null &
+  lectern_job=$!
+  lectern_watch "$lectern_job"
+  wait "$lectern_job"
   lectern_code=$?
+  kill -KILL "$lectern_watcher" 2>/dev/null; wait "$lectern_watcher" 2>/dev/null
  else
   lectern_code=126; : > "$lectern_o"
  fi
@@ -70,6 +96,12 @@ interface Pending {
 
 const headerPattern = /^LECTERN_RESULT (\d+) (\d+) (\d+) (\d+) ([01])$/;
 
+export interface ChannelEvents {
+  onClose?(channel: CommandChannel, reason: string): void;
+  /** The channel can take a request again (its last frame arrived). */
+  onIdle?(channel: CommandChannel): void;
+}
+
 export class CommandChannel {
   private chunks: Buffer[] = [];
   private length = 0;
@@ -81,12 +113,11 @@ export class CommandChannel {
   lastUsed = Date.now();
 
   private constructor(private readonly child: ChildProcessWithoutNullStreams, private readonly nonce: string,
-    private readonly onClose: (channel: CommandChannel, reason: string) => void) {}
+    private readonly events: ChannelEvents) {}
 
   /** Resolves once the target loop has printed its ready line. */
-  static open(child: ChildProcessWithoutNullStreams, nonce: string, timeoutMs: number,
-    onClose: (channel: CommandChannel, reason: string) => void = () => {}): Promise<CommandChannel> {
-    const channel = new CommandChannel(child, nonce, onClose);
+  static open(child: ChildProcessWithoutNullStreams, nonce: string, timeoutMs: number, events: ChannelEvents = {}): Promise<CommandChannel> {
+    const channel = new CommandChannel(child, nonce, events);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { channel.close('channel start timed out'); }, timeoutMs);
       channel.started = { resolve: () => { clearTimeout(timer); resolve(channel); }, reject: error => { clearTimeout(timer); reject(error); } };
@@ -120,6 +151,8 @@ export class CommandChannel {
     });
   }
 
+  /** Ends the loop by closing its input: an idle loop stops reading, a running
+   * request is ended by its watcher, and the session ends with them (see hangUp). */
   close(reason = 'closed'): void {
     if (this.closed) return;
     this.closedReason = reason;
@@ -128,10 +161,9 @@ export class CommandChannel {
     if (pending) { clearTimeout(pending.timer); pending.reject(new Error(reason)); }
     this.started?.reject(new ChannelUnavailable(reason));
     this.started = undefined;
-    try { this.child.stdin.end(); } catch { /* already closed */ }
-    if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill();
+    hangUp(this.child);
     this.chunks = []; this.length = 0;
-    this.onClose(this, reason);
+    this.events.onClose?.(this, reason);
   }
 
   private buffered(): Buffer {
@@ -193,6 +225,8 @@ export class CommandChannel {
       this.pending = undefined;
       clearTimeout(pending.timer);
       this.lastUsed = Date.now();
+      // A command queued for a session place may take the channel instead (Transport).
+      if (this.events.onIdle) queueMicrotask(() => { if (this.usable) this.events.onIdle?.(this); });
       const limit = new Error('Command output exceeded safety limit');
       if (!compressed) {
         if (out > pending.maxBytes) pending.reject(limit);
