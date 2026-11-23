@@ -2,7 +2,9 @@
 // Files dropped onto or pasted into a chat become @-mentions where the caret is, shown
 // as chips in the text and cards above it: a file from disk by its own path (Claude
 // Code runs on this computer), clipboard data after it is copied into the machine's
-// temporary directory. The keypad Enter sends. (Chips themselves: composer-chips-e2e.)
+// temporary directory as image1.png. A file's card opens the preview. The keypad Enter
+// sends; the message keeps the files where its text names them, as chips that copy as
+// their @-paths, its image also in a row above. (Chips themselves: composer-chips-e2e.)
 // Demo mode: no real model. (SSH uploads: tests/ssh.test.ts over real OpenSSH.)
 import assert from "node:assert/strict";
 import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -20,6 +22,7 @@ const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root, TMUX_TMPDIR
 delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const uploads = path.join(root, `lectern-attachments-${process.getuid()}`);
 let png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+const primary = process.platform === "darwin" ? "Meta" : "Control";
 let app, page;
 
 try {
@@ -30,6 +33,13 @@ try {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
+  const clipboard = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  /** Selects all of an element's text and copies it, as a user would. */
+  const copyAll = async locator => {
+    await locator.evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); getSelection().removeAllRanges(); getSelection().addRange(range); });
+    await page.keyboard.press(`${primary}+C`);
+    return clipboard();
+  };
   // An inserted @-mention puts the caret in place on the next frame; let that land before
   // replacing the text, or it collapses the selection fill() made and the old text stays.
   const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -115,6 +125,12 @@ try {
   await cardCount(2);
   assert.deepEqual(await cards.evaluateAll(nodes => nodes.map(node => node.dataset.tip)), ["资料 1.txt", "notes.md"]);
   await assert.rejects(readdir(uploads), "a chosen file from disk is not copied either");
+  // A file's card opens it in the preview.
+  await cards.nth(1).getByRole("button", { name: `打开 ${document2}` }).click();
+  const drawer = page.getByRole("complementary", { name: "文件预览" });
+  await drawer.getByText("选择的文件").waitFor();
+  await drawer.getByRole("button", { name: "关闭文件预览" }).click();
+  await drawer.waitFor({ state: "detached" });
   // Each card can be taken out again (its remove badge shows on hover).
   await cards.first().hover();
   await page.getByRole("button", { name: "移除 资料 1.txt", exact: true }).click();
@@ -138,12 +154,12 @@ try {
   await cardCount(2);
   await page.waitForFunction(() => !document.querySelector('.composer-attachments [data-state="uploading"]'));
   assert.equal(await page.evaluate(() => window.uploadingSeen), 1, "the upload showed as one uploading card");
-  assert.deepEqual(await chipNames(), ["notes.md", "图片1"], "the image's chip follows the file's");
+  assert.deepEqual(await chipNames(), ["notes.md", "image1.png"], "the screenshot is named image1.png, its chip after the file's");
   const shot = cards.nth(1);
   assert.deepEqual([await shot.getAttribute("data-attachment-card"), await shot.getAttribute("data-thumbnail"), await shot.getAttribute("data-tip")],
-    ["image", "image", "image.png"]);
+    ["image", "image", "image1.png"]);
   const pasted = await shot.getAttribute("data-tip-detail");
-  assert.ok(pasted?.startsWith(uploads + "/") && pasted.endsWith("/image.png"), pasted);
+  assert.ok(pasted?.startsWith(uploads + "/") && pasted.endsWith("/image1.png"), pasted);
   assert.deepEqual(await readFile(pasted), png);
   await page.locator(".composer").screenshot({ path: path.join(output, "composer-cards.png") });
 
@@ -164,27 +180,31 @@ try {
   for (let i = 0; i < 100 && !(await prompts()).some(text => text.startsWith("小键盘发送一")); i++) await page.waitForTimeout(100);
   const prompt = (await prompts()).find(text => text.startsWith("小键盘发送一"));
   assert.equal(prompt?.trim(), `小键盘发送一 @${document2} @${pasted}`, JSON.stringify(await prompts()));
-  // The bubble, once the transcript has the files: the text alone, then each file once as a card above it.
+  // The bubble, once the transcript has the files: each stays where the text names it, as a chip
+  // named like the file (copied as its @-path); the image is also a thumbnail in the row above.
   const sent = page.locator('.message-user[data-source="jsonl"]').filter({ hasText: "小键盘发送一" });
   await sent.waitFor();
+  await page.waitForFunction(() => document.querySelectorAll('.message-user[data-source="jsonl"] [data-attachment-chip]').length === 2);
+  const bubbleChips = sent.locator("[data-attachment-chip]");
+  assert.deepEqual(await bubbleChips.evaluateAll(nodes => nodes.map(node => [node.dataset.attachmentChip, node.dataset.mention])),
+    [["notes.md", `@${document2}`], ["image1.png", `@${pasted}`]]);
   const bubbleCards = sent.locator(".attachment-cards [data-attachment-card]");
-  await page.waitForFunction(() => document.querySelectorAll('.message-user[data-source="jsonl"] .attachment-cards [data-attachment-card]').length === 2);
-  assert.deepEqual(await bubbleCards.evaluateAll(nodes => nodes.map(node => [node.dataset.attachmentCard, node.dataset.thumbnail ?? null])),
-    [["file", null], ["image", "image"]]);
-  assert.match(await bubbleCards.first().innerText(), /notes\.md\s+MD/);
-  assert.equal(await bubbleCards.first().getAttribute("title"), `打开 ${document2}`);
-  assert.equal(await sent.locator(".user-text").innerText(), "小键盘发送一");
+  assert.deepEqual(await bubbleCards.evaluateAll(nodes => nodes.map(node => [node.dataset.attachmentCard, node.dataset.thumbnail ?? null])), [["image", "image"]],
+    "the named file is not repeated as a card");
   assert.equal(await sent.locator(".artifact-attachments").count(), 0);
-  assert.doesNotMatch(await sent.innerText(), /查看|lectern-attachments/);
+  assert.equal(await sent.getByText(/^查看 /).count(), 0);
+  assert.equal((await copyAll(sent.locator(".user-text"))).trim(), `小键盘发送一 @${document2} @${pasted}`, "copied, the chips are their @-paths");
+  await page.evaluate(() => getSelection().removeAllRanges());
   await sent.locator(".message-content").screenshot({ path: path.join(output, "bubble-cards.png") });
-  // The image card enlarges to the original; the file card opens the preview.
-  await sent.getByRole("button", { name: "放大 image.png", exact: true }).click();
-  const zoom = page.getByRole("dialog", { name: "图片预览 · image.png" });
-  assert.equal(await zoom.getByRole("img", { name: "image.png", exact: true }).evaluate(async img => { await img.decode(); return img.naturalWidth; }), 640);
-  await zoom.getByRole("button", { name: "关闭图片预览" }).click();
-  await zoom.waitFor({ state: "detached" });
-  await bubbleCards.first().click();
-  const drawer = page.getByRole("complementary", { name: "文件预览" });
+  // The image's thumbnail and its chip enlarge it to the original; the file's chip opens the preview.
+  for (const zoomIn of [bubbleCards.first().getByRole("button"), sent.locator('[data-attachment-chip="image1.png"]').getByRole("button")]) {
+    await zoomIn.click();
+    const zoom = page.getByRole("dialog", { name: "图片预览 · image1.png" });
+    assert.equal(await zoom.getByRole("img", { name: "image1.png", exact: true }).evaluate(async img => { await img.decode(); return img.naturalWidth; }), 640);
+    await zoom.getByRole("button", { name: "关闭图片预览" }).click();
+    await zoom.waitFor({ state: "detached" });
+  }
+  await sent.locator('[data-attachment-chip="notes.md"]').click();
   await drawer.getByText("选择的文件").waitFor();
   await drawer.getByRole("button", { name: "关闭文件预览" }).click();
   // The reply finishes first: the stop button turns back into the send button.
@@ -221,10 +241,14 @@ try {
   await appendFile(transcript, [user, ...files, answer].map(row => JSON.stringify(row) + "\n").join(""));
   const older = page.locator(".message-user").filter({ hasText: "界面还是没兼容" });
   await older.locator("[data-attachment-chip]").nth(1).waitFor();
-  assert.deepEqual(await older.locator("[data-attachment-chip]").evaluateAll(nodes => nodes.map(node => node.dataset.attachmentChip)), ["image.png", "资料 1.txt"]);
+  assert.deepEqual(await older.locator("[data-attachment-chip]").evaluateAll(nodes => nodes.map(node => node.dataset.attachmentChip)), ["image1.png", "资料 1.txt"]);
   assert.deepEqual(await older.locator(".attachment-chip").evaluateAll(nodes => nodes.map(node => node.title)), [pasted, document1]);
-  assert.equal(await older.locator(".attachment-cards").count(), 0);
-  assert.equal(await older.locator(".user-text").textContent(), "界面还是没兼容： image.png ，只能在终端操作。另见 资料 1.txt 里的说明。");
+  assert.deepEqual(await older.locator(".attachment-cards [data-attachment-card]").evaluateAll(nodes => nodes.map(node => node.dataset.attachmentCard)), ["image"],
+    "the image once in the row, the text file only as its chip");
+  // The chips draw the names; the text under them is the mentions, so a copy gives the message as written.
+  assert.deepEqual(await older.locator(".attachment-chip-name").evaluateAll(nodes => nodes.map(node => getComputedStyle(node, "::before").content)), ['"image1.png"', '"资料 1.txt"']);
+  assert.equal(await copyAll(older.locator(".user-text")), `界面还是没兼容： @${pasted} ，只能在终端操作。另见 @"${document1}" 里的说明。`);
+  await page.evaluate(() => getSelection().removeAllRanges());
   assert.equal(await page.getByText(/^查看 /).count(), 0, "no separate 'View' links anywhere");
   await older.locator(".message-content").screenshot({ path: path.join(output, "bubble-chips.png") });
 

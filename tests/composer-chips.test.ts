@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chipInsertion, chipOrder, chipToken, chipTokens, displayFromDraft, draftFromDisplay, reconcileChips, removeChips, snapSelection, type ChipSource } from '../src/renderer/composer-chips';
+import { chipInsertion, chipOrder, chipToken, chipTokens, completionEdit, displayFromDraft, draftFromDisplay, mentionCandidates, reconcileChips, removeChips, snapSelection, type ChipSource } from '../src/renderer/composer-chips';
 
 // A small chip table like the renderer's: one id per mention as written.
 function table() {
@@ -127,15 +127,42 @@ test('removing a file takes its chips and one space each; inserted chips are spa
   assert.equal(chipInsertion('a b', 1, ['T']), ' T');
 });
 
-test('files are listed in the order the text first names them, images numbered among themselves', () => {
+test('files are listed once each in the order the text first names them, with all their chips', () => {
   const tokens = [5, 2, 5, 7, 3, 2].map((id, i) => ({ start: i * 10, end: i * 10 + 5, id }));
-  const info: Record<number, { key: string; image: boolean }> = {
-    5: { key: '/up/b.png', image: true }, 2: { key: '/up/notes.md', image: false }, 7: { key: '/up/a.png', image: true }, 3: { key: '/up/b.png', image: true },
-  };
+  const info: Record<number, { key: string }> = { 5: { key: '/up/b.png' }, 2: { key: 'src/notes.md' }, 7: { key: '/up/a.png' }, 3: { key: '/up/b.png' } };
   const order = chipOrder(tokens, id => info[id]);
-  assert.deepEqual(order.map(item => [item.key, item.number, item.ids]), [
-    ['/up/b.png', 1, [5, 3]], ['/up/notes.md', undefined, [2]], ['/up/a.png', 2, [7]]]);
-  // Moving a.png before b.png renumbers them.
-  const moved = chipOrder([tokens[3], ...tokens], id => info[id]);
-  assert.deepEqual(moved.map(item => [item.key, item.number]), [['/up/a.png', 1], ['/up/b.png', 2], ['/up/notes.md', undefined]]);
+  assert.deepEqual(order.map(item => [item.key, item.ids]), [['/up/b.png', [5, 3]], ['src/notes.md', [2]], ['/up/a.png', [7]]]);
+  // Moving a.png before b.png moves its card first.
+  assert.deepEqual(chipOrder([tokens[3], ...tokens], id => info[id]).map(item => item.key), ['/up/a.png', '/up/b.png', 'src/notes.md']);
+});
+
+test('a file picked from the @ list replaces the mention typed so far with its chip and one space', () => {
+  const chip = chipToken(4, 5);
+  // At the end: the chip and a space, the caret after them.
+  let edit = completionEdit('读 @sr', 2, 5, chip);
+  assert.deepEqual([edit.insertion, edit.caret], [chip + ' ', 2 + chip.length + 1]);
+  // Mid-text with a space already there: no second space, the caret past it.
+  edit = completionEdit('读 @fo 然后', 2, 5, chip);
+  assert.deepEqual([edit.insertion, edit.caret], [chip, 2 + chip.length + 1]);
+  // Against the next word: a space keeps them apart.
+  edit = completionEdit('@a.t然后', 0, 4, chip);
+  assert.equal(edit.insertion, chip + ' ');
+  // Applied: the same text as completing the mention as words, with the chip in its place.
+  const text = '读 @fo 然后', at = completionEdit(text, 2, 5, chip);
+  assert.equal(text.slice(0, at.start) + at.insertion + text.slice(at.end), '读 ' + chip + ' 然后');
+});
+
+test('a draft put back turns known files into chips; other mentions are checked once, typed ones never', () => {
+  const { source, mentionOf, known, show } = table();
+  const draft = '看 @/up/a.png 和 @src/app.ts ，以及 @"docs/my notes.md" 还有 @src/ @src/app.ts @agent-reviewer dev@example.com';
+  // Attachments are chips at once; the rest (each once, no folders) go to the reference check.
+  assert.equal(show(displayFromDraft(draft, source)), '看 [/up/a.png] 和 @src/app.ts ，以及 @"docs/my notes.md" 还有 @src/ @src/app.ts @agent-reviewer dev@example.com');
+  assert.deepEqual(mentionCandidates(draft, source.attached), ['src/app.ts', 'docs/my notes.md', 'agent-reviewer']);
+  // What the check found becomes chips too, and the draft still comes back unchanged.
+  const found = new Set(['src/app.ts', 'docs/my notes.md']);
+  const checked: ChipSource = { ...source, attached: path => source.attached(path) || found.has(path) };
+  const display = displayFromDraft(draft, checked);
+  assert.equal(show(display), '看 [/up/a.png] 和 [src/app.ts] ，以及 [docs/my notes.md] 还有 @src/ [src/app.ts] @agent-reviewer dev@example.com');
+  assert.equal(draftFromDisplay(display, mentionOf, known), draft);
+  assert.deepEqual(mentionCandidates(draft, checked.attached), ['agent-reviewer']);
 });

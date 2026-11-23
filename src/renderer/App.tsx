@@ -42,6 +42,7 @@ import { ActivityFloat } from "./ActivityFloat";
 import { TaskColumn } from "./TaskColumn";
 import { imeOwnsKey, isEnterKey } from "./enter-key";
 import { useComposerAttachments } from "./useComposerAttachments";
+import { messageFileNames } from "../shared/attachments";
 import { liveShells as foregroundShells, panelActivities, shellScreenLines, type ActivityKind, type SessionActivity } from "../shared/activity";
 import { LiveShells } from "./MessageDisplay";
 import { ArtifactDrawer, type ArtifactTarget } from "./ArtifactDrawer";
@@ -510,16 +511,17 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     setDraft(d => d || launch.text);
     setLaunch(undefined);
   }
-  // Pasted or dropped files become @-mentions where the caret is; on an SSH machine they are
-  // uploaded first. The input box shows each mention as a chip in the text and the files as
-  // cards above it; the draft keeps the mentions.
+  // Pasted or dropped files and files picked from the @ list become @-mentions where the caret
+  // is; on an SSH machine dropped and pasted files are uploaded first. The input box shows each
+  // mention as a chip in the text and the files as cards above it; the draft keeps the mentions.
   const attachments = useComposerAttachments({ workspace, sessionId, enabled: canType && !rewindOpen,
     draft, inputRef, setDraft, openFile: path => openArtifact({ path }),
     showing: (ws, sid) => mounted.current && selected.current.workspaceId === ws && selected.current.sessionId === sid,
     stash: (ws, sid, update) => { const key = draftKey(ws, sid); unsentDrafts.set(key, update(unsentDrafts.get(key) ?? "")); },
+    usedNames: () => snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId ? messageFileNames(snapshot.messages) : [],
     onError: showToast });
   const completion = useComposerCompletion({ workspaceId, sessionId: sessionId || (isDraft ? "draft" : ""), view,
-    enabled: canType && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef });
+    enabled: canType && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef, onFile: attachments.chooseFile });
   const uploading = attachments.pending.length > 0;
   function openRewind() { setRewindScope(JSON.stringify([workspaceId, sessionId])); }
   useEffect(() => { setRewindScope(undefined); }, [workspaceId, sessionId, paneId]);

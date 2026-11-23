@@ -149,6 +149,8 @@ export interface MessageAttachment {
   peersBefore?: number;
   /** Present for file-backed references. Embedded transcript bodies are fetched on demand by id. */
   path?: string;
+  /** A folder Claude Code attached (an @-mentioned directory). */
+  directory?: true;
 }
 export interface ChatMessage {
   /** Active-branch, persisted human checkpoint; never a GUI turn index. */

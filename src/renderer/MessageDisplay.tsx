@@ -1,15 +1,16 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from './i18n';
 import type { LiveShell } from "../shared/activity";
-import { useArtifactScope } from "./ArtifactReferenceScope";
+import { useArtifactResolutions, useArtifactScope } from "./ArtifactReferenceScope";
 import { showContextMenu } from "./ContextMenu";
 import { messageMenu, toolMenu } from "./message-menus";
 import { ArtifactMarkdown, FileLink, LinkedToolText, LinkedUserText } from "./ArtifactLinks";
 import { pathBasename } from "./artifact-paths";
 import { AttachmentImage } from './ChatImage';
-import { AttachmentChipView, MessageAttachmentCards } from './AttachmentCards';
-import { isAttachedPath } from './attachment-registry';
-import { messageAttachmentLayout } from '../shared/attachments';
+import { MessageAttachmentCards, MessageFileChip } from './AttachmentCards';
+import { confirmFile, isAttachedPath, isChipPath } from './attachment-registry';
+import { confirmsMention, messageFileLayout, samePath } from '../shared/attachments';
+import { mentionCandidates } from './composer-chips';
 import { activityExcerpt, replyParts, summarizeActivities, toolDisplayState, type Activity, type LineChanges, type ToolActivity } from './reply-activities';
 import './reply-activities.css';
 import { EditDiff } from "./EditDiff";
@@ -147,10 +148,22 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   const compact = replyDetail === 'compact';
   // Activity verbs and summaries are written in the current language.
   const locale = useLocale();
-  // A user message shows each attached file once: cards above the text, chips for files named inside it.
-  const layout = useMemo(() => message.role === 'user' ? messageAttachmentLayout(message.text, message.attachments ?? [], isAttachedPath) : undefined,
-    [message.role, message.text, message.attachments]);
-  const shown = useMemo(() => layout ? { ...message, text: layout.text, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
+  // A user message shows the files its @-mentions name as chips in their place, like the input box,
+  // with its images (and attached files it does not name) in a row above the text. A mention
+  // counts when the transcript recorded the file, Lectern attached or knows it, or the reference
+  // check finds that very file.
+  const user = message.role === 'user', workspaceId = useArtifactScope()?.workspaceId;
+  const candidates = useMemo(() => {
+    if (!user) return [];
+    const files = (message.attachments ?? []).flatMap(file => file.path ? [file.path] : []);
+    return mentionCandidates(message.text, path => isChipPath(workspaceId, path) || files.some(file => samePath(file, path)));
+  }, [user, message.text, message.attachments, workspaceId]);
+  const found = useArtifactResolutions(candidates);
+  const layout = useMemo(() => user ? messageFileLayout(message.text, message.attachments ?? [], path => isChipPath(workspaceId, path) || confirmsMention(path, found?.get(path))) : undefined,
+    [user, message.text, message.attachments, workspaceId, found]);
+  // Their mentions pasted into the input box are chips there too.
+  useEffect(() => { if (workspaceId) for (const chip of layout?.chips ?? []) if (!isAttachedPath(chip.path)) confirmFile(workspaceId, chip.path); }, [layout, workspaceId]);
+  const shown = useMemo(() => layout ? { ...message, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
     [message, layout]);
   const parts = useMemo(() => replyParts(shown, compact), [shown, compact, locale]);
   if (!parts.length && message.status === 'streaming') return <div className="markdown">{t('chat.waitingClaude')}</div>;
@@ -160,15 +173,15 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
     if (part.kind === 'text' && layout) {
       const start = offset, end = offset += part.text.length;
       const chips = layout.chips.filter(chip => chip.start >= start && chip.end <= end).map(chip => ({ start: chip.start - start, end: chip.end - start,
-        node: <AttachmentChipView chip={chip} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} /> }));
+        node: <MessageFileChip chip={chip} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} /> }));
       return <div key={part.key} className="user-text"><LinkedUserText text={part.text} chips={chips} onOpen={onOpenPath} /></div>;
     }
     if (part.kind === 'text') return <div key={part.key} className="markdown"><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></div>;
     return part.rows.length === 1 ? <ActivityRow key={part.key} row={part.rows[0]} compact={compact} onOpenPath={onOpenPath} />
       : <ActivityGroup key={part.key} rows={part.rows} onOpenPath={onOpenPath} />;
   });
-  if (!layout?.cards.length) return content;
-  return <><MessageAttachmentCards cards={layout.cards} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />{content}</>;
+  if (!layout?.row.length) return content;
+  return <><MessageAttachmentCards cards={layout.row} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />{content}</>;
 }
 
 export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachment, onRewind, onQuote }: ReplyProps & {

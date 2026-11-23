@@ -19,6 +19,9 @@
   position: absolute; inset: 0; display: grid; place-items: center; padding: 0; border-radius: 9px;
   background: transparent; color: var(--muted); cursor: zoom-in;
 }
+/* Over a file card in the input box: the whole card opens the file in the preview. */
+.attachment-card-open[data-opens="file"] { cursor: pointer; }
+.attachment-card-open[data-opens="file"]:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
 .attachment-card-placeholder { display: grid; justify-items: center; gap: 3px; font-size: var(--text-caption); font-weight: 600; letter-spacing: .03em; }
 .attachment-card-file { gap: 10px; width: max-content; max-width: min(100%, 240px); padding: 0 12px 0 9px; }
 button.attachment-card { cursor: pointer; }
@@ -59,27 +62,27 @@ button.attachment-card:hover { background: var(--hover); }
   background: color-mix(in srgb, var(--surface-raised) 55%, transparent); color: var(--text);
 }
 
-/* An attached file named inside the text: a chip with its thumbnail or icon and its name. */
+/* A file an @-mention names inside a message's text: a chip like the input box's, with its
+   thumbnail or icon and its name. Everything in it is inline (no flex items), so a selection
+   across it copies as plain text: the name is drawn from data-label (generated content is
+   not copied) and the mention it stands for is text with no size (copied, not drawn). */
 .attachment-chip-frame { display: inline; }
 .attachment-chip {
-  display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box; max-width: min(100%, 18em);
-  height: 1.45em; margin: 0 1px; padding: 0 7px 0 3px; vertical-align: -.32em;
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent); border-radius: 6px;
+  display: inline-block; box-sizing: border-box; max-width: min(100%, 18em); height: 1.5em; margin: 0 1px; padding: 0 .5em 0 .25em;
+  overflow: hidden; vertical-align: -.36em; border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent); border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised)); color: var(--accent);
-  font: inherit; font-size: .9em; line-height: 1; white-space: nowrap; cursor: pointer;
+  font: inherit; font-size: .9em; font-weight: 500; line-height: calc(1.5em - 2px); white-space: nowrap; text-align: left; cursor: pointer;
 }
 .attachment-chip:hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised)); }
 .attachment-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.attachment-chip-icon { position: relative; display: grid; place-items: center; flex: none; width: 1.15em; height: 1.15em; overflow: hidden; border-radius: 3px; }
-.attachment-chip-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
-.attachment-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-
-/* The number on an image card in the input box, the same as its chips' ("图片1"). */
-.attachment-card-badge {
-  position: absolute; left: 4px; bottom: 4px; z-index: 1; max-width: calc(100% - 8px); box-sizing: border-box; padding: 1px 4px;
-  overflow: hidden; border-radius: 4px; background: rgb(0 0 0 / 58%); color: #fff;
-  font-size: 10px; font-weight: 600; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; pointer-events: none;
+.attachment-chip-icon {
+  position: relative; display: inline-grid; place-items: center; width: 1.15em; height: 1.15em; margin-right: .3em;
+  overflow: hidden; border-radius: 3px; vertical-align: -.22em; line-height: 1;
 }
+.attachment-chip-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.attachment-chip-name { display: inline-block; max-width: 15em; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.attachment-chip-name[data-label]::before { content: attr(data-label); }
+.attachment-chip-source { font-size: 0; color: transparent; }
 
 /* Attachments in the input box's text. The textarea holds a run of figure spaces for each
    chip; this layer over it repeats the text with the same font, width and wrapping (the text

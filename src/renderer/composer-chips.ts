@@ -2,10 +2,9 @@
 // is one token in the textarea: figure spaces (fixed width, no line break inside)
 // with the chip's id hidden after the first one in invisible tag characters,
 //   U+2007 U+E0001 <id digits> U+E002D <width digits> U+E007F U+2007 × (width - 1)
-// A layer over the textarea draws the chip ("图片1", a file name) on those spaces.
-// The token never changes once typed, so native undo, redo and drag keep working
-// and renumbering never touches the text. The draft (what is sent, saved and
-// restored) has the @-mention in its place.
+// A layer over the textarea draws the chip (the file's name) on those spaces.
+// The token never changes once typed, so native undo, redo and drag keep working.
+// The draft (what is sent, saved and restored) has the @-mention in its place.
 import { findMentions } from '../shared/attachments';
 
 const space = ' ';
@@ -188,19 +187,41 @@ export function chipInsertion(text: string, offset: number, tokens: readonly str
   return before + tokens.join(' ') + after;
 }
 
-/** One entry per attached file, in the order the text first names it; images numbered 1, 2, … in that order. */
-export function chipOrder<T extends { key: string; image: boolean }>(tokens: readonly ChipToken[], info: (id: number) => T | undefined) {
-  const items: (T & { ids: number[]; number?: number })[] = [];
-  const byKey = new Map<string, T & { ids: number[]; number?: number }>();
-  let images = 0;
+/** One entry per file, in the order the text first names it, with the ids of all its chips. */
+export function chipOrder<T extends { key: string }>(tokens: readonly ChipToken[], info: (id: number) => T | undefined) {
+  const items: (T & { ids: number[] })[] = [];
+  const byKey = new Map<string, T & { ids: number[] }>();
   for (const token of tokens) {
     const entry = info(token.id);
     if (!entry) continue;
     const seen = byKey.get(entry.key);
     if (seen) { if (!seen.ids.includes(token.id)) seen.ids.push(token.id); continue; }
-    const item = { ...entry, ids: [token.id], ...(entry.image ? { number: ++images } : {}) };
+    const item = { ...entry, ids: [token.id] };
     byKey.set(entry.key, item);
     items.push(item);
   }
   return items;
+}
+
+/**
+ * The mentions in a draft put into the box (restored, put back, a queued message
+ * to edit) that may name files not known yet: each path once, folders (with
+ * their slash) and over-long paths left out. Those a reference check finds
+ * become chips; typed mentions are never checked.
+ */
+export function mentionCandidates(draft: string, known: (path: string) => boolean): string[] {
+  const paths = new Set<string>();
+  for (const { path } of findMentions(draft)) if (!known(path) && !path.endsWith('/') && path.length <= 1024) paths.add(path);
+  return [...paths];
+}
+
+/**
+ * The edit that turns a mention being completed (`start`…`end` in the text) into
+ * its chip: the chip then one space, unless a space already follows; the caret
+ * goes past that space either way, as after completing a word.
+ */
+export function completionEdit(text: string, start: number, end: number, token: string) {
+  const spaced = /^\s/u.test(text.slice(end));
+  const insertion = token + (spaced ? '' : ' ');
+  return { start, end, insertion, caret: start + insertion.length + (spaced ? 1 : 0) };
 }

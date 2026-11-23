@@ -136,11 +136,13 @@ export function ImagePreviewDialog({ name, thumbnail, readOriginal, download, on
   </dialog>, document.body);
 }
 
-export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline', title, preview }: {
+export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline', title, preview, mention }: {
   workspaceId: string; source: Source; name: string; onOpen: () => void;
   variant?: ImageVariant; title?: string;
   /** A thumbnail the caller already has (and owns), shown until this view reads its own. */
   preview?: string;
+  /** A chip's text: the @-mention it stands for, copied with the text around it (the name is drawn, not text). */
+  mention?: string;
 }) {
   const frame = useRef<HTMLSpanElement>(null);
   const [thumbnail, setThumbnail] = useState('');
@@ -194,17 +196,20 @@ export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline
   }
   const errorNotice = actionError && <span role="alert" className="chat-image-error">{actionError}</span>;
   const shown = thumbnail || (!previewFailed && preview) || '';
-  const image = shown && <img alt={name} src={shown} draggable={false} onError={() => thumbnail ? setThumbnail('') : setPreviewFailed(true)} />;
+  // In a chip the picture is only its icon (the button names the file), and an alt text would be copied with the text.
+  const image = shown && <img alt={variant === 'chip' ? '' : name} src={shown} draggable={false} onError={() => thumbnail ? setThumbnail('') : setPreviewFailed(true)} />;
   const zoom = { 'aria-label': t('files.zoomName', { name }), title: title ?? name, onContextMenu: contextMenu,
     onClick: () => { setActionError(''); setExpanded(true); } };
   const frameProps = variant === 'card' ? { className: 'attachment-card attachment-card-image', 'data-attachment-card': 'image', 'data-thumbnail': shown ? 'image' : 'icon' }
-    : variant === 'chip' ? { className: 'attachment-chip-frame', 'data-attachment-chip': name, 'data-thumbnail': shown ? 'image' : 'icon' }
+    : variant === 'chip' ? { className: 'attachment-chip-frame', 'data-attachment-chip': name, 'data-thumbnail': shown ? 'image' : 'icon', 'data-mention': mention }
     : { className: 'chat-image', 'data-chat-image': name };
   return <span ref={frame} {...frameProps}>
     {variant === 'card' ? <button type="button" className="attachment-card-open" {...zoom}>
       {image || <span className="attachment-card-placeholder"><ImageIcon size={20} aria-hidden="true" /><span>{extensionLabel(name)}</span></span>}
     </button> : variant === 'chip' ? <button type="button" className="attachment-chip" {...zoom}>
-      <span className="attachment-chip-icon">{image || <ImageIcon size={13} aria-hidden="true" />}</span><span className="attachment-chip-name">{name}</span>
+      <span className="attachment-chip-icon">{image || <ImageIcon size={13} aria-hidden="true" />}</span>
+      {mention === undefined ? <span className="attachment-chip-name">{name}</span>
+        : <><span className="attachment-chip-name" data-label={name} /><span className="attachment-chip-source">{mention}</span></>}
     </button> : <button type="button" className="chat-image-open" {...zoom}>
       {image || <ImageIcon size={19} aria-hidden="true" />}
     </button>}

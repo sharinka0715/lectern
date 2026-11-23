@@ -118,3 +118,9 @@ test('nested tool results expose local MCP resource paths and inspect MIME from 
   assert.equal(file.ref.path, '/root/data set.csv');
   assert.equal((await attachmentPreview(invalidPdf)).kind, 'binary');
 });
+
+test('a folder Claude Code attached for an @-mention is marked as one', () => {
+  const [folder, file] = transcriptAttachments('record', [{ type: 'directory', path: '/project/src' }, { type: 'file', filename: '/project/notes.md' }]);
+  assert.deepEqual(folder.ref, { id: 'record:attachment:0', name: 'src', path: '/project/src', directory: true });
+  assert.deepEqual(file.ref, { id: 'record:attachment:1', name: 'notes.md', path: '/project/notes.md' });
+});

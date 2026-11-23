@@ -50,7 +50,7 @@ export function transcriptAttachments(key: string, blocks: JsonRecord[]): Transc
     const image = block.type === 'image' || mime.startsWith('image/');
     if (typeof path === 'string' && path && !/[\u0000-\u001f]/.test(path)) {
       const preview = image || (block.type !== 'directory' && /\.(png|jpe?g|gif|webp|bmp|avif|ico|svg)$/i.test(path));
-      result.push({ ref: { id, name: nameFor(path) || path, path, ...(preview && { image: true }) }, blockIndex, mime });
+      result.push({ ref: { id, name: nameFor(path) || path, path, ...(preview && { image: true }), ...(block.type === 'directory' && { directory: true }) }, blockIndex, mime });
     } else {
       const embedded = (source.type === 'base64' || source.type === 'text') && typeof source.data === 'string' ? source.data : undefined;
       if (embedded === undefined) return;

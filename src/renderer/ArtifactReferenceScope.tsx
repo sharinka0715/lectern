@@ -72,3 +72,19 @@ export function useArtifactResolution(path: string) {
   }, [scope, ref]);
   return { ref, match: answer && answer.scope === scope && answer.ref === ref ? answer.match : null };
 }
+
+/** Several references checked at once (one batch with the rest of the transcript); undefined until all are answered. */
+export function useArtifactResolutions(paths: readonly string[]) {
+  const scope = useContext(Scope);
+  const key = JSON.stringify(paths);
+  const [answer, setAnswer] = useState<{ scope: typeof scope; key: string; matches: Map<string, ArtifactResolution> }>();
+  useEffect(() => {
+    let active = true;
+    const refs: string[] = JSON.parse(key);
+    if (scope && refs.length) void Promise.all(refs.map(ref => scope.lookup(ref))).then(results => {
+      if (active) setAnswer({ scope, key, matches: new Map(refs.map((ref, i) => [ref, results[i]])) });
+    });
+    return () => { active = false; };
+  }, [scope, key]);
+  return answer && answer.scope === scope && answer.key === key ? answer.matches : undefined;
+}
