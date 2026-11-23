@@ -169,9 +169,10 @@ export default function App({view = "primary"}: {view?: ChatView}) {
       .catch(error => reportActionError(error, "更新窗口外观失败"));
   }, [primary, prefs.theme]);
   useEffect(() => {
-    if (primary) void window.desktop?.setLaunchPreferences?.({ enableWorkflows: prefs.enableWorkflows })
+    if (primary) void window.desktop?.setLaunchPreferences?.({ enableWorkflows: prefs.enableWorkflows,
+      promptCacheTtl: prefs.promptCacheTtl, subagentPromptCacheTtl: prefs.subagentPromptCacheTtl })
       .catch(error => reportActionError(error, "同步会话启动选项失败"));
-  }, [primary, prefs.enableWorkflows]);
+  }, [primary, prefs.enableWorkflows, prefs.promptCacheTtl, prefs.subagentPromptCacheTtl]);
   const [info, setInfo] = useState<AppInfo>({
     platform: "",
     version: "",

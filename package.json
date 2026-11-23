@@ -64,6 +64,7 @@
     "test:permission": "node scripts/permission-ui-e2e.mjs",
     "test:native-dialog": "node scripts/native-dialog-ui-e2e.mjs",
     "test:question:early": "node scripts/question-early-e2e.mjs",
+    "test:cache-ttl": "node scripts/cache-ttl-e2e.mjs",
     "test:transcript:render": "node scripts/transcript-render-e2e.mjs",
     "test:workbench": "node scripts/workbench-ui-e2e.mjs",
     "test:session-rename": "node scripts/session-rename-ui-e2e.mjs",

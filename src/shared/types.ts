@@ -2,6 +2,7 @@ import type { Locale, LocalePreference } from './i18n';
 import type { SshConfigImport } from './ssh-config';
 import type { UpdateState } from './update-check';
 import type { HostCheck } from './host-tools';
+import type { LaunchPreferences } from './prompt-cache';
 export type HostKind = 'local' | 'ssh';
 export interface Workspace {
   id: string;
@@ -501,8 +502,9 @@ export interface DesktopAPI {
   listWorkspaceDirectories(target: WorkspaceEndpoint, path: string, offset?: number): Promise<WorkspaceDirectoryPage>;
   /** `/effort ultracode on|off` in this session only; resolves to the verified state. */
   setUltracode(workspaceId: string, sessionId: string, on: boolean): Promise<boolean>;
-  /** Options for Claude processes Lectern starts later (e.g. dynamic workflows for Ultracode). */
-  setLaunchPreferences(preferences: { enableWorkflows: boolean }): Promise<void>;
+  /** Options for Claude processes Lectern starts later (dynamic workflows for Ultracode,
+   * prompt-cache lifetimes). */
+  setLaunchPreferences(preferences: LaunchPreferences): Promise<void>;
   /** Concrete Host aliases from this computer's ~/.ssh/config (and its Includes). */
   listSshConfigHosts(): Promise<SshConfigImport>;
   /** Show a local (this computer) folder in Finder / Explorer / the file manager. */

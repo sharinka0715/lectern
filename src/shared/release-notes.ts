@@ -57,6 +57,8 @@ export const releaseNotes: ReleaseNote[] = [
         'The 5h and 7d usage hover cards say when their figures are from (with the date on another day, in the usage time zone), and that each conversation updates them only with its own requests.'],
       ['设置「SSH 连接」新增「复用已有的 SSH 连接」：关闭后 Lectern 使用自己的连接，不再与终端、VS Code 共用会话名额。',
         "New \"Reuse existing SSH connections\" setting: when off, Lectern opens its own connection to each machine (up to 8 sessions) instead of sharing the server's session limit with terminals and VS Code."],
+      ['设置「会话」页可分别设定主对话和子代理等其他请求的提示缓存时长（默认、5 分钟或 1 小时），对之后新启动的对话生效。',
+        'Settings → Session can set the prompt-cache lifetime for the main conversation and for subagents and other requests (Claude Code default, 5 minutes or 1 hour), for chats started afterwards.'],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',

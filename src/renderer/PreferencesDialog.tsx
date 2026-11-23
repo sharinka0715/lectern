@@ -51,8 +51,13 @@ import {
   validHost,
   type ConnectionProfile,
 } from "./desktop-state";
-import { dateTimeText, t, type LocalePreference } from '../shared/i18n';
+import { dateTimeText, t, type LocalePreference, type MessageKey } from '../shared/i18n';
+import { promptCacheTtlChoice, promptCacheTtlChoices, type PromptCacheTtlChoice } from '../shared/prompt-cache';
 import type { LocaleState } from '../shared/types';
+
+const cacheTtlLabels: Record<PromptCacheTtlChoice, MessageKey> = {
+  '': 'prefs.cacheTtlDefault', '5m': 'prefs.cacheTtl5m', '1h': 'prefs.cacheTtl1h',
+};
 
 const previewSample = () => `${t('prefs.sampleCode')}
 def summarize(path: str, limit: int = 20) -> dict:
@@ -388,6 +393,23 @@ export function PreferencesDialog({
                 <input type="checkbox" checked={settings.enableWorkflows} onChange={e => setDesktop({ enableWorkflows: e.currentTarget.checked })} />
               </label>
               <p>{t('prefs.workflowsHelp')}</p>
+              <label>
+                {t('prefs.cacheTtlMain')}
+                <select aria-label={t('prefs.cacheTtlMain')} value={settings.promptCacheTtl}
+                  onChange={e => setDesktop({ promptCacheTtl: promptCacheTtlChoice(e.target.value) })}>
+                  {promptCacheTtlChoices.map(choice => <option key={choice} value={choice}>{t(cacheTtlLabels[choice])}</option>)}
+                </select>
+              </label>
+              <p>{t('prefs.cacheTtlMainHelp')}</p>
+              <label>
+                {t('prefs.cacheTtlOther')}
+                <select aria-label={t('prefs.cacheTtlOther')} value={settings.subagentPromptCacheTtl}
+                  onChange={e => setDesktop({ subagentPromptCacheTtl: promptCacheTtlChoice(e.target.value) })}>
+                  {promptCacheTtlChoices.map(choice => <option key={choice} value={choice}>{t(cacheTtlLabels[choice])}</option>)}
+                </select>
+              </label>
+              <p>{t('prefs.cacheTtlOtherHelp')}</p>
+              <p>{t('prefs.cacheTtlHelp')}</p>
               <QuitPreferenceSetting resetKey={quitReset} />
               <button className="pref-action" onClick={() => {
                 setDesktop(defaultSessionOptions);

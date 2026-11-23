@@ -99,7 +99,7 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     const found = kind === 'main' || kind === 'agent' ? locate(messages) : undefined;
     const script = found && scripts.get(found.name);
     const entry = { id: ++sequence, kind, model: body.model, stream: !!body.stream, script: found?.name, step: found?.step, tools: (body.tools ?? []).map(tool => tool.name), maxTokens: body.max_tokens, thinking: body.thinking?.type, effort: body.output_config?.effort, beta: req.headers['anthropic-beta'],
-      images: imagesSinceReply(messages), at: Date.now() };
+      images: imagesSinceReply(messages), cacheTtl: cacheTtls(body), at: Date.now() };
     requests.push(entry);
     // CC_MATRIX_DUMP=<dir> keeps every request body, for writing new scenarios.
     if (process.env.CC_MATRIX_DUMP) try { appendFileSync(`${process.env.CC_MATRIX_DUMP}/request-${String(entry.id).padStart(4, '0')}-${kind}.json`, JSON.stringify(body, null, 1)); } catch {}
@@ -253,6 +253,20 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
       await new Promise(resolve => server.close(resolve));
     },
   };
+}
+
+/** The prompt-cache lifetimes a request asks for: the distinct `ttl` of its `cache_control`
+ * markers (system, tools, messages), sorted; a marker without one is the API's default '5m'. */
+export function cacheTtls(body) {
+  const found = new Set();
+  const visit = value => {
+    if (Array.isArray(value)) { for (const item of value) visit(item); return; }
+    if (!value || typeof value !== 'object') return;
+    if (value.cache_control && typeof value.cache_control === 'object') found.add(value.cache_control.ttl ?? '5m');
+    for (const [key, item] of Object.entries(value)) if (key !== 'cache_control' && item && typeof item === 'object') visit(item);
+  };
+  visit([body.system, body.tools, body.messages]);
+  return [...found].sort();
 }
 
 /** Images sent since the last assistant message (attached files arrive in their own user message). */

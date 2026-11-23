@@ -29,6 +29,7 @@ import { quitActivityText, quitAnswers, quitGroups, quitTitle, type QuitAnswer, 
 import type { MenuAction, RendererDiagnostic, SessionSnapshot, Workspace } from '../shared/types';
 import { maxAttachmentBytes } from '../shared/attachments';
 import { sshOnly, sshOnlyMessage } from '../shared/supported-targets';
+import { launchPreferences } from '../shared/prompt-cache';
 import { configureDiagnostics, diagnostic, errorDetails, getDiagnosticsInfo, setDiagnosticContent, flushDiagnostics, closeDiagnostics } from '../diagnostics';
 
 process.setSourceMapsEnabled?.(true);
@@ -524,11 +525,11 @@ async function boot() {
     },
     listSshConfigHosts: () => readSshConfigHosts(process.env.LECTERN_SSH_CONFIG_HOME || undefined),
     setLaunchPreferences: preferences => {
-      const enableWorkflows = preferences?.enableWorkflows !== false;
-      if (enableWorkflows === launchWorkflows) return;
-      launchWorkflows = enableWorkflows;
-      controller.backend.setLaunchPreferences({ enableWorkflows });
-      // Ultracode's availability in the model list depends on it.
+      const next = launchPreferences(preferences && typeof preferences === 'object' ? preferences : undefined);
+      controller.backend.setLaunchPreferences(next);
+      if (next.enableWorkflows === launchWorkflows) return;
+      launchWorkflows = next.enableWorkflows;
+      // Ultracode's availability in the model list depends on it (the cache lifetimes do not).
       controller.refreshModelCatalogs();
     },
     modelCatalog: (id, retry) => controller.modelCatalog(id, retry === true),

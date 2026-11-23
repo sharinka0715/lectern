@@ -56,6 +56,7 @@ import { NativeDirectoryTrust, DirectoryTrustError, TrustKeyNotSent, type TrustD
 import { t } from '../shared/i18n';
 import { hostProbeScript, HostToolsError, parseHostProbe } from './host-probe';
 import { missingTools, missingToolsMessage, type HostCheck, type HostTool } from '../shared/host-tools';
+import { launchPreferences, type LaunchPreferences } from '../shared/prompt-cache';
 export { quoteShell, validateWorkspace, runCommand, commandInvocation } from './transport';
 export { HostToolsError } from './host-probe';
 
@@ -79,7 +80,7 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
       location.cwd, location.claudeDir, pane.serverInstance, pane.pid, pane.native.registrationId])).digest('hex');
   }
 }
-export interface LaunchPreferences { enableWorkflows: boolean }
+export type { LaunchPreferences } from '../shared/prompt-cache';
 export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'];
   /** Reach a machine over the master its ssh_config already runs (default), or only over Lectern's own connections. */
   reuseSshConnections?: boolean }
@@ -203,9 +204,9 @@ export class Backend {
     if (options.tmuxSocket && !/^[A-Za-z0-9_.-]{1,80}$/.test(options.tmuxSocket)) throw new Error('Invalid tmux socket name');
   }
   private tmux(...args: string[]): string { return ['tmux', ...(this.options.tmuxSocket ? ['-L', this.options.tmuxSocket] : []), ...args].map(q).join(' '); }
-  private launchPreferences: LaunchPreferences = { enableWorkflows: true };
+  private launchPreferences = launchPreferences(undefined);
   /** Applies to processes Lectern starts from now on; running ones keep theirs. */
-  setLaunchPreferences(preferences: LaunchPreferences): void { this.launchPreferences = { enableWorkflows: preferences.enableWorkflows !== false }; }
+  setLaunchPreferences(preferences: Partial<LaunchPreferences>): void { this.launchPreferences = launchPreferences(preferences); }
   private key(workspace: Workspace, sessionId: string): string { return `${workspace.id}:${sessionId}`; }
   private revision(workspaceId: string): number { return this.workspaceRevisions.get(workspaceId) ?? 0; }
   private configRevision(workspaceId: string): number { return this.workspaceConfigRevisions.get(workspaceId) ?? 0; }
@@ -599,9 +600,11 @@ exit 0`;
     // named claude supports the same per-launch settings as the normal CLI.
     const nativeCli = !this.options.claudeCommand || basename(executable) === 'claude';
     const callback = statusLineFor && nativeCli ? statusLineLaunch(statusLineFor, randomUUID().replace(/-/g, ''), location.tmuxVersion) : undefined;
-    // Only this process's settings change (auto mode, no prompt suggestions,
-    // workflows unless the user opted out); the user's own settings files stay as they are.
-    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), enableWorkflows: this.launchPreferences.enableWorkflows })) : undefined;
+    // Only this process's settings change (auto mode, no prompt suggestions, workflows
+    // unless the user opted out, the prompt-cache lifetimes the user chose); the user's
+    // own settings files stay as they are. The model-list probe gets the same, though it
+    // makes no model request: the cache lifetimes do not change what it reports.
+    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), ...this.launchPreferences })) : undefined;
     // Merely setting the default directory can change how native Claude resolves
     // its global config/account state. Preserve the target's normal environment;
     // only an explicitly selected configuration directory is an override.
