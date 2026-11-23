@@ -113,4 +113,7 @@ export const sidebar = {
   noSessions: ['暂无会话', 'No conversations'],
   newShort: ['新建', 'New'],
   noMatches: ['没有匹配的目录或已加载的对话', 'No matching folders or loaded conversations'],
+  splitOpen: ['在另一侧分屏中打开', 'Open in the other pane'],
+  splitOpenInFolder: ['另一侧分屏打开了此文件夹中的对话', 'The other pane shows a conversation from this folder'],
+  splitOpenDraft: ['另一侧分屏是此文件夹的新对话草稿', 'The other pane has a new conversation draft in this folder'],
 } as const satisfies Namespace;

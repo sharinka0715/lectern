@@ -1,7 +1,7 @@
 import { PreferencesDialog } from "./PreferencesDialog";
 import { WindowTitlebar } from "./WindowTitlebar";
 import { SplitButtons, SplitWorkspace } from "./SplitWorkspace";
-import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, sameChat, setDesktop, showChat, shownIn, splitChat, useDesktopState, type ChatTarget } from "./desktop-state";
+import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, sameChat, setDesktop, showChat, shownIn, splitChat, unfocusedChat, useDesktopState, type ChatTarget } from "./desktop-state";
 import { Search, Settings2 } from "lucide-react";
 import type { ChatView } from "../shared/types";
 import "./workbench.css";
@@ -1319,6 +1319,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             else if (!info.demo) setWorkspaceModal({ machine });
           }}
           draftWorkspaceId={visibleSelection?.draft ? visibleSelection.workspaceId : undefined}
+          splitOpen={unfocusedChat(prefs)}
           onRename={async (id, chat, title) => {
             try {
               await renameTreeSession(id, chat, title);

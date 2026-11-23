@@ -31,6 +31,12 @@
   --rail-field: light-dark(rgb(255 253 248 / 70%), rgb(0 0 0 / 20%));
   --rail-raised: light-dark(#fbf8f1, #2a2621);
   --rail-edge: light-dark(#e3dacb, #2b2723);
+  /* The split pane without the focus: its conversation's row is pale cobalt, apart from
+     the focused one's raised cream. */
+  --rail-split: light-dark(#dfe7f6, #26314a);
+  --rail-split-hover: light-dark(#d4dff3, #2d3a57);
+  --rail-split-line: light-dark(#bccdeb, #3c4e73);
+  --rail-split-faint: light-dark(#e6ebf4, #212a3c);
 
   /* Paper */
   --surface: light-dark(#f8f4ec, #22201c);

@@ -46,6 +46,11 @@
 .sidebar-tree .workspace-row-actions .icon-button { width: 20px; height: 22px; padding: 3px; color: var(--rail-muted); }
 .sidebar-tree .workspace-row-actions .icon-button:hover:not(:disabled) { color: var(--rail-text); background: var(--rail-selected); }
 .workspace-row[data-drag-over] { box-shadow: inset 0 -2px var(--rail-ice); }
+/* The other split pane's new-chat draft has no row: its folder is marked like one. Its
+   conversation in a collapsed (or filtered) folder marks the folder faintly. */
+.sidebar-tree .workspace-row[data-split-open="draft"] { background: var(--rail-split); box-shadow: 0 0 0 1px var(--rail-split-line); }
+.sidebar-tree .workspace-row[data-split-open="inside"] { background: var(--rail-split-faint); }
+.sidebar-tree .workspace-row[data-split-open]:hover { background: var(--rail-split-hover); }
 
 /* The line. Each row draws its own segment so the line ends at the last knot. */
 .workspace-children { position: relative; margin: 1px 0 4px 24px; padding-left: 14px; }
@@ -122,6 +127,15 @@
   color: var(--rail-text);
   font-weight: 560;
 }
+/* Open in the split pane without the focus: pale cobalt, no raised card. The two swap
+   when the focus moves. */
+.sidebar-tree .session-row.split-open {
+  background: var(--rail-split);
+  box-shadow: 0 0 0 1px var(--rail-split-line);
+  color: var(--rail-text);
+}
+.sidebar-tree .session-row.split-open:hover { background: var(--rail-split-hover); }
+.sidebar-tree .session-row.split-open::before { border-color: var(--rail-ice); }
 .sidebar-tree .session-row[data-status="idle"] { --row-accent: var(--live); }
 .sidebar-tree .session-row[data-status="working"] { --row-accent: var(--rail-ice); }
 .sidebar-tree .session-row:has(.state-unread) { --row-accent: var(--rail-ice); color: var(--rail-text); font-weight: 600; }

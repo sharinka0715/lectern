@@ -51,6 +51,8 @@ export const releaseNotes: ReleaseNote[] = [
         "Native dialogs Lectern does not know become cards when their text and keys or choices can be read: original text, choices and the screen's keys; others still offer the terminal."],
       ['计费说明等对话框卡片里的帮助链接可以点开，在系统浏览器中打开。',
         'Help links in the auto mode billing notice and other dialog cards open in the system browser.'],
+      ['分屏时，侧栏用浅蓝底标出另一侧分屏打开的对话，与焦点分屏的高亮区分；焦点切换时两者互换。',
+        'In split view, the sidebar marks the conversation open in the other pane in pale blue, apart from the focused one; they swap as the focus moves.'],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',

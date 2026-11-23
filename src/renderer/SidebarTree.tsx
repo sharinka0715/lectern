@@ -2,7 +2,7 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import { workspaceMachines, type WorkspaceMachine } from "./workspace-machines";
 import { Laptop, FolderPlus, LogIn } from "lucide-react";
 import "./machine-tree.css";
-import { archiveKey, beginChatDrag, endChatDrag, moveProject, orderProjects, useDesktopState, workspaceDragType } from "./desktop-state";
+import { archiveKey, beginChatDrag, endChatDrag, moveProject, orderProjects, useDesktopState, workspaceDragType, type ChatTarget } from "./desktop-state";
 import {
   ChevronDown,
   ChevronRight,
@@ -96,6 +96,7 @@ export function SidebarTree({
   onOpenMachine,
   onOpenDraft,
   draftWorkspaceId,
+  splitOpen,
   onScanHistory,
   menuActions,
   filter = "",
@@ -125,6 +126,9 @@ export function SidebarTree({
   onOpenDraft?(workspace: Workspace): void;
   /** The folder whose new chat the active split shows. */
   draftWorkspaceId?: string;
+  /** What the split pane without the focus shows (desktop-state's `unfocusedChat`):
+   * its row is marked pale blue, apart from the focused pane's. */
+  splitOpen?: ChatTarget | null;
   onScanHistory?(workspace: Workspace): void;
   /** Right-click menus for machines, folders and conversations. */
   menuActions?: SidebarMenuActions;
@@ -173,7 +177,16 @@ export function SidebarTree({
           // A chat that has not written its first record yet is the newest one.
           .sort((a, b) => (b.updatedAt ?? '\uffff').localeCompare(a.updatedAt ?? '\uffff'));
         const limit = shown[workspace.id] ?? initialSessions;
-        const sessions = query ? matching : matching.filter((chat, index) => index < limit || (workspace.id === workspaceId && chat.id === sessionId));
+        // The other split pane's conversation stays listed, like the focused one.
+        const splitHere = splitOpen?.workspaceId === workspace.id ? splitOpen : undefined;
+        const splitOpenId = splitHere && !splitHere.draft ? splitHere.sessionId : undefined;
+        const sessions = query ? matching : matching.filter((chat, index) => index < limit
+          || (workspace.id === workspaceId && chat.id === sessionId) || chat.id === splitOpenId);
+        // A draft there has no row of its own: its folder is marked like a row. A conversation
+        // whose row is not on show (folder collapsed, filtered out, not read yet) marks it faintly.
+        const splitMark = splitHere?.draft ? "draft"
+          : splitOpenId && !(open && sessions.some(chat => chat.id === splitOpenId)) ? "inside" : undefined;
+        const splitNote = splitMark && t(splitMark === "draft" ? 'sidebar.splitOpenDraft' : 'sidebar.splitOpenInFolder');
         const hidden = matching.length - sessions.length;
         // After t('sidebar.showMore'), the list can return to the newest five.
         const collapsible = open && !query && limit > initialSessions;
@@ -192,6 +205,7 @@ export function SidebarTree({
               className={`workspace-row${workspaceId === workspace.id ? " active" : ""}`}
               data-workspace-id={workspace.id}
               data-status={folderStatus}
+              data-split-open={splitMark}
               draggable
               data-drag-over={over === workspace.id || undefined}
               onDragStart={e=>{e.dataTransfer.setData(workspaceDragType,workspace.id);e.dataTransfer.effectAllowed="move";}}
@@ -220,7 +234,7 @@ export function SidebarTree({
                 className="workspace-select"
                 aria-label={workspace.name}
                 aria-current={draftWorkspaceId === workspace.id ? "page" : undefined}
-                aria-description={folderDetail}
+                aria-description={[folderDetail, splitNote].filter(Boolean).join(t('sidebar.ariaJoin')) || undefined}
                 onClick={() => onOpenDraft ? onOpenDraft(workspace) : onToggle(workspace)}
                 onKeyDown={(event) => {
                   if (
@@ -231,7 +245,7 @@ export function SidebarTree({
                     onToggle(workspace);
                   }
                 }}
-                title={`${workspace.name}\n${workspace.kind === "ssh" ? `${workspace.host}:` : ""}${workspace.cwd}${onOpenDraft ? "\n" + t('sidebar.clickToStart') : ""}`}
+                title={`${workspace.name}\n${workspace.kind === "ssh" ? `${workspace.host}:` : ""}${workspace.cwd}${splitNote ? "\n" + splitNote : ""}${onOpenDraft ? "\n" + t('sidebar.clickToStart') : ""}`}
               >
                 <Folder className="workspace-folder-icon" size={14} />
                 <span className="workspace-name">{workspace.name}</span>
@@ -280,10 +294,11 @@ export function SidebarTree({
                     duplicateTitles.has(session.title) && session.id.slice(0, 8)].filter(Boolean).join(' ');
                   const selected =
                     workspace.id === workspaceId && session.id === sessionId;
+                  const inOtherPane = !selected && session.id === splitOpenId;
                   return (
                     <div className="session-row-wrap" key={session.id}>
                       <button
-                        className={`session-row${selected ? " active" : ""}`}
+                        className={`session-row${selected ? " active" : ""}${inOtherPane ? " split-open" : ""}`}
                         draggable
                         onDragStart={e=>beginChatDrag(e.dataTransfer,{workspaceId:workspace.id,sessionId:session.id,title})}
                         onDragEnd={endChatDrag}
@@ -301,9 +316,9 @@ export function SidebarTree({
                           }
                         }}
                         aria-current={selected ? "page" : undefined}
-                        aria-label={[title, identity, state.label, state.loading && t('sidebar.loading')].filter(Boolean).join(t('sidebar.ariaJoin'))}
+                        aria-label={[title, identity, state.label, state.loading && t('sidebar.loading'), inOtherPane && t('sidebar.splitOpen')].filter(Boolean).join(t('sidebar.ariaJoin'))}
                         aria-busy={state.loading || undefined}
-                        title={`${session.titleSource === "prompt" ? t('sidebar.firstMessage') : ""}${title}\n${session.id}${session.forkParentId ? `\n${t('sidebar.branchFrom', { id: session.forkParentId })}` : ''}\n${state.detail}${session.paneId && !session.path ? "\n" + t('sidebar.waitingFirstRecord') : ""}`}
+                        title={`${session.titleSource === "prompt" ? t('sidebar.firstMessage') : ""}${title}${inOtherPane ? `\n${t('sidebar.splitOpen')}` : ""}\n${session.id}${session.forkParentId ? `\n${t('sidebar.branchFrom', { id: session.forkParentId })}` : ''}\n${state.detail}${session.paneId && !session.path ? "\n" + t('sidebar.waitingFirstRecord') : ""}`}
                         data-workspace-id={workspace.id}
                         data-session-id={session.id}
                         data-session-live={state.live}
@@ -312,6 +327,7 @@ export function SidebarTree({
                         data-session-state={state.kind}
                         data-background={state.background || undefined}
                         data-loading={state.loading || undefined}
+                        data-split-open={inOtherPane || undefined}
                       >
                         <span className="session-title">{title}</span>
                         {identity && <small>{identity}</small>}

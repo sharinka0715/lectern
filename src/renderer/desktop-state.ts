@@ -287,6 +287,16 @@ export function shownIn(layout: Pick<DesktopState, "split" | "panes">, chat: Cha
   if (layout.split && sameChat(layout.panes.secondary, chat)) return "secondary";
   return undefined;
 }
+/**
+ * What the pane without the focus shows while the screen is split (a conversation or
+ * a new-chat draft); the sidebar marks it apart from the focused one. Null when not
+ * split, when that pane is empty, or when it holds the focused pane's conversation.
+ */
+export function unfocusedChat(layout: Pick<DesktopState, "split" | "panes" | "active">): ChatTarget | null {
+  if (!layout.split) return null;
+  const other = layout.panes[layout.active === "primary" ? "secondary" : "primary"];
+  return other && !sameChat(other, layout.panes[layout.active]) ? other : null;
+}
 /** What dropping a dragged conversation on an edge of the workspace does. */
 export type ChatDropPlan =
   | { kind: "split" }

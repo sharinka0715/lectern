@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loadDesktopState, planChatDrop, shownIn, type ChatTarget } from '../src/renderer/desktop-state';
+import { loadDesktopState, planChatDrop, shownIn, unfocusedChat, type ChatTarget } from '../src/renderer/desktop-state';
 
 const chat = (id: string): ChatTarget => ({ workspaceId: 'w', sessionId: id, title: id });
 const [a, b, c] = [chat('a'), chat('b'), chat('c')];
@@ -38,4 +38,14 @@ test('a saved split layout restores both conversations and the active pane', () 
   const read = (value: unknown) => loadDesktopState({ getItem: () => JSON.stringify(value) });
   const two = read({ split: true, active: 'secondary', panes: { primary: a, secondary: b } });
   assert.deepEqual([two.split, two.active, two.panes.secondary?.sessionId], [true, 'secondary', 'b']);
+});
+
+test('the conversation the pane without the focus shows, which the sidebar marks apart', () => {
+  assert.equal(unfocusedChat(pair), a, 'the focus is on the secondary pane');
+  assert.equal(unfocusedChat({ ...pair, active: 'primary' }), b, 'the focus moved: the two swap');
+  assert.equal(unfocusedChat(single), null, 'one pane on screen: nothing to mark, even with a stale secondary');
+  assert.equal(unfocusedChat({ ...pair, panes: { primary: null, secondary: b } }), null, 'the other pane is empty');
+  assert.equal(unfocusedChat({ ...pair, panes: { primary: { ...b, title: 'old' }, secondary: b } }), null, 'the focused conversation is never marked as the other one');
+  const draft: ChatTarget = { workspaceId: 'w2', sessionId: '', title: '', draft: true };
+  assert.equal(unfocusedChat({ ...pair, panes: { primary: draft, secondary: b } }), draft, 'a new-chat draft counts');
 });
