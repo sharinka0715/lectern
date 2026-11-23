@@ -1262,9 +1262,11 @@ function ChatPane({ view, resumes, setResume }: {
     window.addEventListener("lectern-return-to-chat", returnToChat);
     return () => window.removeEventListener("lectern-return-to-chat", returnToChat);
   }, [view]);
-  const resumeError = !paneId && resumeState && resumeState !== 'pending' ? resumeState.error : '';
-  const bannerText = resumeError || error || snapshot?.error || workspaceError;
-  const bannerOrigin = !resumeError && error ? errorState.origin ?? workspace : workspace;
+  const savedSessionReady = !!sessionId && snapshot?.status === "idle" && !snapshot.pendingFork && !paneId && !!session?.path;
+  const currentError = error || snapshot?.error || workspaceError;
+  const resumeError = savedSessionReady && !currentError && resumeState && resumeState !== 'pending' ? resumeState.error : '';
+  const bannerText = currentError || resumeError;
+  const bannerOrigin = error ? errorState.origin ?? workspace : workspace;
   // At startup a machine that is not connected shows only in the sidebar: what
   // was restored from last time raises no connection prompt until the user
   // goes somewhere (a machine, folder or conversation) or acts on a folder.
@@ -1686,7 +1688,7 @@ function ChatPane({ view, resumes, setResume }: {
               <RefreshCw size={14} />{t('app.finishFork')}
             </button>
           </div>}
-          {sessionId && snapshot && !snapshot.pendingFork && !paneId && snapshot.status === "idle" && session?.path && (
+          {savedSessionReady && (
             <div className="resume-bar">
               <span>{t('app.savedOnMachine')}</span>
               <button onClick={() => void resume()} disabled={busy || hostBlocked} aria-busy={resuming || undefined}>
