@@ -1,5 +1,6 @@
 import { spawn } from './child-fds';
 import { randomBytes } from 'node:crypto';
+import { accessSync, constants, statSync } from 'node:fs';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { join } from 'node:path';
@@ -49,12 +50,68 @@ socket.on('data', chunk => {
 socket.on('error', () => {});
 `;
 
+export interface AskpassNodeOptions {
+  platform?: NodeJS.Platform;
+  execPath?: string;
+  /** Electron's own answer (content::CHILD_PROCESS_EXE); undefined outside Electron. */
+  helperExecPath?: string;
+  isExecutable?: (file: string) => boolean;
+}
+
+function isExecutableFile(file: string): boolean {
+  try { accessSync(file, constants.X_OK); return statSync(file).isFile(); } catch { return false; }
+}
+
+/**
+ * The executable that runs the askpass helper with ELECTRON_RUN_AS_NODE=1.
+ * On macOS the app's own executable belongs to a regular app (no LSUIElement):
+ * run as Node it still puts a second Lectern icon in the Dock for a moment, once
+ * per prompt. Electron's base helper is LSUIElement, is signed with the same
+ * hardened-runtime entitlements (JIT included), and is what Electron's own
+ * child_process.fork runs Node in on macOS (process.helperExecPath). Its name
+ * follows the executable's, not the bundle's, so this also finds it in a renamed
+ * bundle and in Electron.app during development:
+ *   X.app/Contents/MacOS/<exe> → X.app/Contents/Frameworks/<exe> Helper.app/Contents/MacOS/<exe> Helper
+ * The (Renderer), (GPU) and (Plugin) variants are for Chromium's child processes.
+ * Elsewhere, and if no helper is found, the executable itself.
+ */
+export function askpassNode({
+  platform = process.platform, execPath = process.execPath,
+  helperExecPath = (process as { helperExecPath?: string }).helperExecPath, isExecutable = isExecutableFile,
+}: AskpassNodeOptions = {}): string {
+  if (platform !== 'darwin') return execPath;
+  const bundle = /^(.+\.app)\/Contents\/MacOS\/([^/]+)$/.exec(execPath);
+  const derived = bundle && `${bundle[1]}/Contents/Frameworks/${bundle[2]} Helper.app/Contents/MacOS/${bundle[2]} Helper`;
+  for (const candidate of [derived, helperExecPath]) if (candidate && candidate !== execPath && isExecutable(candidate)) return candidate;
+  return execPath;
+}
+
+/**
+ * OpenSSH before 8.4 ignores SSH_ASKPASS_REQUIRE and uses askpass only when
+ * DISPLAY is set. An unknown version is treated as old.
+ */
+export function askpassNeedsDisplay(version: string): boolean {
+  const match = /OpenSSH_(\d+)\.(\d+)/.exec(version);
+  return !match || Number(match[1]) * 100 + Number(match[2]) < 804;
+}
+
+function sshVersion(file: string): Promise<string> {
+  return new Promise(resolve => {
+    let output = '';
+    const child = spawn(file, ['-V'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const timer = setTimeout(() => child.kill(), 5000);
+    for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk: Buffer) => { if (output.length < 4096) output += chunk.toString(); });
+    child.on('error', () => { clearTimeout(timer); resolve(''); });
+    child.on('close', () => { clearTimeout(timer); resolve(output); });
+  });
+}
+
 export interface LoginCommand { file: string; args: string[] }
 export interface LoginOptions {
   /** ssh argv for the master: destination last, no remote command. */
   command: LoginCommand;
   answer: AnswerPrompt;
-  /** Executable that runs the helper script with Node semantics. */
+  /** Executable that runs the helper script with Node semantics (default askpassNode()). */
   node?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -66,7 +123,7 @@ const maxAnswer = 4096;
  * Run `ssh -f -N` with every prompt routed to `answer`. Resolves once OpenSSH has
  * authenticated and moved the master to the background; rejects with its error.
  */
-export async function runInteractiveLogin({ command, answer, node = process.execPath, signal, timeoutMs = 5 * 60_000 }: LoginOptions): Promise<void> {
+export async function runInteractiveLogin({ command, answer, node = askpassNode(), signal, timeoutMs = 5 * 60_000 }: LoginOptions): Promise<void> {
   signal?.throwIfAborted();
   // A short path: Unix socket names are limited to 104 bytes on macOS.
   const directory = await mkdtemp(join(process.platform === 'win32' ? process.env.TEMP ?? '.' : '/tmp', 'lectern-login-'));
@@ -106,14 +163,21 @@ export async function runInteractiveLogin({ command, answer, node = process.exec
     await writeFile(wrapper, '#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "$LECTERN_ASKPASS_NODE" "$LECTERN_ASKPASS_HELPER" "$@"\n', { mode: 0o700 });
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(socketPath, () => resolve()); });
     await chmod(socketPath, 0o600).catch(() => {});
+    // `ssh -f` backgrounds this very process, so the master (and a ControlPersist
+    // master that outlives Lectern) keeps this environment. The askpass variables
+    // are inert once the directory is gone: a later prompt fails closed. A made-up
+    // DISPLAY would not be: with ForwardX11, every session multiplexed over the
+    // master (for a master from ssh_config, the user's own terminals too) would set
+    // up X11 forwarding to it.
+    const env: NodeJS.ProcessEnv = {
+      ...process.env, SSH_ASKPASS: wrapper, SSH_ASKPASS_REQUIRE: 'force',
+      LECTERN_ASKPASS_NODE: node, LECTERN_ASKPASS_HELPER: helper, LECTERN_ASKPASS_SOCKET: socketPath, LECTERN_ASKPASS_TOKEN: token,
+    };
+    if (!env.DISPLAY && askpassNeedsDisplay(await sshVersion(command.file))) env.DISPLAY = ':0';
+    // An abort while asking for the version would otherwise go unnoticed.
+    if (signal?.aborted) throw new Error(t('backend.loginCancelled'));
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(command.file, command.args, {
-        stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
-        env: {
-          ...process.env, SSH_ASKPASS: wrapper, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: process.env.DISPLAY || ':0',
-          LECTERN_ASKPASS_NODE: node, LECTERN_ASKPASS_HELPER: helper, LECTERN_ASKPASS_SOCKET: socketPath, LECTERN_ASKPASS_TOKEN: token,
-        },
-      });
+      const child = spawn(command.file, command.args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, env });
       let settled = false;
       const finish = (error?: Error) => {
         if (settled) return;

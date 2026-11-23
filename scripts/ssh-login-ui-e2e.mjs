@@ -1,11 +1,14 @@
 // In-app SSH login: password, one-time code and a new host key are asked in the
 // dialog, relayed through the real askpass helper (Electron as Node) to a scripted
 // OpenSSH, and never written to diagnostics. No real machine is contacted.
+// Optional argument: a packaged executable or electron-builder output directory
+// (on macOS the relay must then run in the app's LSUIElement helper, not the app).
 import assert from 'node:assert/strict';
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
+import { packagedExecutable } from './package-executable.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-login-ui-'));
 const profile = path.join(root, 'profile'), state = path.join(root, 'ssh');
@@ -20,9 +23,12 @@ state=${JSON.stringify(state)}
 printf '%s\\n' "$*" >> "$state/calls"
 case " $* " in *" -o ControlPath="*) socket=private;; *) socket=;; esac
 case " $* " in
+  *" -V "*) printf 'OpenSSH_9.8p1, LibreSSL 3.3.6\\n' >&2; exit 0;;
   *" -G "*) printf 'hostname lab\\ncontrolpath none\\n'; exit 0;;
   *" -O check "*) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && exit 0; exit 255;;
   *" -f -N "*)
+    printf '%s\\n' "$LECTERN_ASKPASS_NODE" > "$state/askpass-node"
+    printf '%s\\n' "\${DISPLAY-unset}" > "$state/display"
     printf 'Welcome to the lab cluster\\n' >&2
     if [ -f "$state/hostkey" ]; then
       reply=$("$SSH_ASKPASS" "The authenticity of host 'lab (192.0.2.2)' can't be established.
@@ -47,8 +53,8 @@ delete env.LECTERN_DEV_URL;
 const exists = file => access(file).then(() => true, () => false);
 let app;
 try {
-  const executablePath = process.argv[2];
-  app = await electron.launch({ ...(executablePath && { executablePath: path.resolve(executablePath) }), args: executablePath ? [] : ['.'], env, timeout: 60000 });
+  const executablePath = process.argv[2] && await packagedExecutable(process.argv[2]);
+  app = await electron.launch({ ...(executablePath && { executablePath }), args: executablePath ? [] : ['.'], env, timeout: 60000 });
   const page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   const errors = [];
@@ -85,6 +91,15 @@ try {
   assert.ok(await exists(path.join(state, 'master-private')), 'the master is left running for later commands');
   const loginCall = (await readFile(path.join(state, 'calls'), 'utf8')).split('\n').find(line => line.includes('-f -N'));
   assert.match(loginCall, /BatchMode=no .*StrictHostKeyChecking=ask .*ControlMaster=yes .*ControlPath=\/tmp\/lectern-ssh-/);
+  // The relay ran as Node in Electron's helper on macOS (LSUIElement: no second Dock
+  // icon), in the executable elsewhere; ssh says it is 8.4+, so no DISPLAY is made up.
+  const { execPath, platform } = await app.evaluate(() => ({ execPath: process.execPath, platform: process.platform }));
+  const askpassNode = (await readFile(path.join(state, 'askpass-node'), 'utf8')).trim();
+  const bundle = /^(.+\.app)\/Contents\/MacOS\/([^/]+)$/.exec(execPath);
+  assert.equal(askpassNode, platform === 'darwin' && bundle
+    ? `${bundle[1]}/Contents/Frameworks/${bundle[2]} Helper.app/Contents/MacOS/${bundle[2]} Helper` : execPath);
+  assert.equal((await readFile(path.join(state, 'display'), 'utf8')).trim(), env.DISPLAY || 'unset');
+  console.log(`askpass relay ran in ${askpassNode}`);
 
   // Settings offers login per connection too; an existing master needs no prompt.
   await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();

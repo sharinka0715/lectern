@@ -43,6 +43,8 @@ export const releaseNotes: ReleaseNote[] = [
         'The first permission request in a new chat sometimes had no card, only the terminal (Claude Code 2.1.300/2.1.310 can save the call before the prompt); the card and the call now show as usual.'],
       ['Claude Code 已弹出权限框但还没把调用写进会话记录时，聊天里也立即显示权限卡，写入后不会重复。',
         'The permission card now shows as soon as Claude Code asks, even before the call is saved to the session (slow disk, busy machine); once saved it stays the same card, never a second one.'],
+      ['在 Mac 上用 SSH 登录时，Dock 里不再闪出第二个 Lectern 图标。',
+        'Logging in over SSH on a Mac no longer flashes a second Lectern icon in the Dock.'],
     ],
   },
   {

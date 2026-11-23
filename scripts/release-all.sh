@@ -63,6 +63,7 @@ package linux x64 linux
   shasum -a 256 -c SHA256SUMS
 )
 node scripts/smoke-package.mjs "$bundle/mac/mac-arm64/$product.app/Contents/MacOS/$product"
+node scripts/smoke-askpass-helper.mjs "$bundle/mac/mac-arm64/$product.app/Contents/MacOS/$product"
 if [[ $(node scripts/release-state.mjs) != "$source_stamp" ]]; then
   printf '%s\n' '打包期间项目文件已更改，请从最新源码重新打包。' >&2
   exit 1
