@@ -1064,15 +1064,22 @@ export const SCENARIOS = [
         const file = path.join(folders.main.cwd, 'swatch.png');
         await writeFile(file, pngSwatch());
         await ui.openDraft(folders.main.name);
-        await page.locator('form.composer input.composer-file-input').setInputFiles(file);
-        // The file shows as a card above the text; the text box keeps only the user's words.
-        await page.waitForFunction(() => {
+        // As a user does: the "+" button's file dialog, then typing the question.
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('form.composer button.composer-attach').click()]);
+        await chooser.setFiles(file);
+        // The file shows as a card above the text and as a chip in it; the path stays out of the text box.
+        const attached = () => page.waitForFunction(() => {
           const cards = [...document.querySelectorAll('.composer-attachments [data-attachment-card]')];
           return cards.some(card => card.textContent.includes('swatch.png') || card.dataset.tip?.includes('swatch.png'))
+            && document.querySelectorAll('form.composer .composer-chip-face').length === 1
             && !document.querySelector('.composer-attachments [data-state="uploading"]');
         }, null, { timeout: 20_000 });
+        await attached();
         assert.ok(!(await page.locator(sel.composer).inputValue()).includes('swatch.png'), 'the path stays out of the text box');
-        await page.locator(sel.composer).fill('What is in this picture? ccm:image');
+        // The chip is part of the text: fill() would replace it too, so type after it with keys.
+        await page.locator(sel.composer).pressSequentially('What is in this picture? ccm:image');
+        assert.ok((await page.locator(sel.composer).inputValue()).endsWith('What is in this picture? ccm:image'), 'the words follow the chip');
+        await attached();
         await page.locator(sel.send).click();
         await ui.waitReply('ccm-image-done', { timeout: 90_000 });
         const request = api.requests.find(r => r.script === 'image');

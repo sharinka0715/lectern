@@ -95,6 +95,22 @@ test('edits keep chips whole: deleting into one removes all of it, undo and past
   assert.equal(show(reconcileChips(display, before, known).text), '看 [/up/a.png] 和 [/up/a.png][/up/b.png] 吧');
 });
 
+test('a file picked into an empty box, then the question typed after it, sends both; replacing all the text drops the file', () => {
+  const { source, known, mentionOf, show } = table();
+  // The "+" button on an empty box: the chip and one space, the caret after them.
+  const picked = chipInsertion('', 0, [chipToken(source.idFor('@/up/a.png', '/up/a.png'), 6)]);
+  assert.equal(reconcileChips('', picked, known).text, picked);
+  // Typed key by key after it: the chip stays, the draft (what is sent) names the file first.
+  let text = picked;
+  for (const key of 'What is this?') text = reconcileChips(text, text + key, known).text;
+  assert.equal(show(text), '[/up/a.png] What is this?');
+  assert.equal(draftFromDisplay(text, mentionOf, known), '@/up/a.png What is this?');
+  // Select all and type (or Playwright's fill()): the chip is text like any other and goes too.
+  const replaced = reconcileChips(text, 'What is this?', known).text;
+  assert.equal(replaced, 'What is this?');
+  assert.equal(draftFromDisplay(replaced, mentionOf, known), 'What is this?');
+});
+
 test('the caret steps over a chip and selections take it whole', () => {
   const token = { start: 4, end: 12, id: 1 };
   const tokens = [token];
