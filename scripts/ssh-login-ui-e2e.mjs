@@ -44,9 +44,18 @@ Are you sure you want to continue connecting (yes/no/[fingerprint])? ") || exit 
     otp=$("$SSH_ASKPASS" "Verification code: ") || { printf 'Permission denied (keyboard-interactive).\\n' >&2; exit 255; }
     if [ "$secret" = ${JSON.stringify(password)} ] && [ "$otp" = ${code} ]; then : > "$state/master-$socket"; exit 0; fi
     printf 'Permission denied (keyboard-interactive).\\n' >&2; exit 255;;
-  *) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && exec sh -s
+  *) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && PATH="$state/host:$PATH" && exec sh -s
      printf 'dev@lab: Permission denied (keyboard-interactive).\\n' >&2; exit 255;;
 esac
+`, { mode: 0o700 });
+// The scripted host runs its commands on this computer and has a tmux of its own on PATH:
+// a version and no server (no sessions yet). Without it the host check reads the runner's
+// tools, and on a runner without tmux (macos-latest) adding a folder shows "tmux missing"
+// before any connection is tried, never the login error below.
+await mkdir(path.join(state, 'host'));
+await writeFile(path.join(state, 'host', 'tmux'), `#!/bin/sh
+case " $* " in *" -V "*) printf 'tmux 3.4\\n'; exit 0;; esac
+printf 'no server running on /tmp/tmux-%s/default\\n' "$(id -u)" >&2; exit 1
 `, { mode: 0o700 });
 
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', PATH: `${state}:${process.env.PATH}`, LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath };
