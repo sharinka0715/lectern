@@ -10,6 +10,7 @@ import {
 import { reportDiagnostic } from "./diagnostics";
 import { reportMachineResult } from "./ssh-machines";
 import { noteFolderRead } from "./host-tools";
+import { desktopState, setSidebarFolds, useDesktopState } from "./desktop-state";
 
 // Both split views can have an in-flight directory scan when a sidebar edit finishes.
 const onRename = new Set<(workspaceId: string, session: SessionInfo) => void>();
@@ -39,17 +40,19 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
   const [states, setStates] = useState<Record<string, WorkspaceDiscoveryState>>(
     {},
   );
-  const [expanded, setExpanded] = useState(() => {
-    if (remember) try {
-      const saved = JSON.parse(localStorage.getItem("lectern.expanded-projects.v1") || "[]");
-      if (Array.isArray(saved)) return new Set<string>(saved.filter((id: unknown) => typeof id === "string"));
-    } catch { /* Fall back to a fresh tree. */ }
-    return new Set<string>();
-  });
-  useEffect(() => {
-    if (remember) try { localStorage.setItem("lectern.expanded-projects.v1", JSON.stringify([...expanded])); } catch { /* Read-only profile. */ }
-  }, [remember, expanded]);
+  // The sidebar's tree keeps its open folders in the preferences (desktop-state's
+  // sidebarFolds), across sort modes and restarts; another view's tree keeps its own.
+  const savedFolders = useDesktopState().sidebarFolds.expandedFolders;
+  const saved = useMemo(() => new Set(savedFolders), [savedFolders]);
+  const [own, setOwn] = useState(() => new Set<string>());
+  const expanded = remember ? saved : own;
   const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  const setExpanded = useCallback((next: Set<string>) => {
+    expandedRef.current = next;
+    if (remember) setSidebarFolds({ expandedFolders: [...next] });
+    else setOwn(next);
+  }, [remember]);
   const workspacesRef = useRef(workspaces);
   const visibleRef = useRef(visible);
   const focusRef = useRef(focus);
@@ -106,15 +109,14 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
     [cache],
   );
   const refresh = useCallback((id: string) => cache().refresh(id), [cache]);
+  /** Reads the folder if due. `reveal` also opens it in the tree, which a list across
+   * projects never does: the tree stays as the user left it. */
   const expand = useCallback(
-    (workspace: Workspace) => {
+    (workspace: Workspace, reveal: boolean | "always" = true) => {
       trackWorkspace(workspace);
-      if (!expandedRef.current.has(workspace.id)) {
-        const next = new Set(expandedRef.current);
-        next.add(workspace.id);
-        expandedRef.current = next;
-        setExpanded(next);
-      }
+      if (reveal && (reveal === "always" || !remember || desktopState().sidebarSort === "projects")
+        && !expandedRef.current.has(workspace.id))
+        setExpanded(new Set(expandedRef.current).add(workspace.id));
       const entry = cache().get(workspace.id);
       if (
         !entry?.data ||
@@ -123,18 +125,17 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
       )
         void refresh(workspace.id);
     },
-    [cache, refresh, trackWorkspace],
+    [cache, refresh, trackWorkspace, remember, setExpanded],
   );
   const toggle = useCallback(
     (workspace: Workspace) => {
       if (expandedRef.current.has(workspace.id)) {
         const next = new Set(expandedRef.current);
         next.delete(workspace.id);
-        expandedRef.current = next;
         setExpanded(next);
-      } else expand(workspace);
+      } else expand(workspace, "always");
     },
-    [expand],
+    [expand, setExpanded],
   );
   const patch = useCallback(
     (id: string, update: (data?: WorkspaceDiscovery) => WorkspaceDiscovery) =>
@@ -152,12 +153,13 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
       cache().forget(id);
       forgetTreeReceipts(id);
       signatures.current.delete(id);
-      const next = new Set(expandedRef.current);
-      next.delete(id);
-      expandedRef.current = next;
-      setExpanded(next);
+      if (expandedRef.current.has(id)) {
+        const next = new Set(expandedRef.current);
+        next.delete(id);
+        setExpanded(next);
+      }
     },
-    [cache],
+    [cache, setExpanded],
   );
 
   useEffect(() => {

@@ -2,15 +2,19 @@ import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { workspaceMachines, type WorkspaceMachine } from "./workspace-machines";
 import { Laptop, FolderPlus, LogIn } from "lucide-react";
 import "./machine-tree.css";
-import { archiveKey, beginChatDrag, endChatDrag, moveProject, orderProjects, setDesktop, useDesktopState, workspaceDragType, type ChatTarget, type SidebarSortMode } from "./desktop-state";
+import { archiveKey, beginChatDrag, collapseGroup, collapseMachine, endChatDrag, listFolder, listGroup, moveProject, orderProjects, setDesktop, useDesktopState, workspaceDragType,
+  type ChatTarget, type SidebarFolds, type SidebarGroup, type SidebarSortMode } from "./desktop-state";
 import {
+  Activity,
   ArrowDownWideNarrow,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronsUp,
+  Clock,
   Folder,
   Loader2,
+  MessagesSquare,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -33,6 +37,8 @@ import { t } from '../shared/i18n';
 const initialSessions = 5, moreSessions = 10;
 const globalPageSize = 25;
 const sortLabels = { projects: 'sidebar.sortProjects', recent: 'sidebar.sortRecent', priority: 'sidebar.sortPriority' } as const;
+const groupLabels = { recent: 'sidebar.allConversationsGroup', active: 'sidebar.inProgress', other: 'sidebar.otherConversations' } as const;
+const groupIcons = { recent: Clock, active: Activity, other: MessagesSquare };
 
 export function SidebarSortButton({ mode }: { mode: SidebarSortMode }) {
   const label = t('sidebar.sortConversations');
@@ -51,7 +57,9 @@ function MachineSection({ machine, searchOpen, demo, add, login, menu, connectio
   machine: WorkspaceMachine; searchOpen: boolean; demo: boolean; add(): void; login?(): void; menu?: SidebarMenuActions;
   connection?: MachineConnection; onNavigate?(): void; onOpen?(): void; children: ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Kept in the preferences: a machine stays folded across sort modes and restarts.
+  const collapsed = useDesktopState().sidebarFolds.collapsedMachines.includes(machine.key);
+  const setCollapsed = (value: boolean) => collapseMachine(machine.key, value);
   const open = !collapsed || searchOpen;
   const id = useId();
   const remote = machine.endpoint.kind === "ssh";
@@ -99,7 +107,7 @@ function repeatedTitles(sessions: readonly SessionInfo[]) {
   return duplicates;
 }
 
-function SessionRow({ workspace, session, state, duplicate, selected, splitOpen, origin, onSelect, onRename, menuActions }: {
+function SessionRow({ workspace, session, state, duplicate, selected, splitOpen, origin, place, onSelect, onRename, menuActions }: {
   workspace: Workspace;
   session: SessionInfo;
   state: SidebarSessionState;
@@ -107,7 +115,9 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
   selected: boolean;
   /** The split pane without the focus shows it: pale blue, apart from the focused pane's. */
   splitOpen?: boolean;
+  /** Folder and machine, read out and in the tooltip; `place` is the quieter part shown after the title. */
   origin?: string;
+  place?: string;
   onSelect(workspace: Workspace, id: string): void;
   onRename(target: { workspaceId: string; session: SessionInfo }): void;
   menuActions?: SidebarMenuActions;
@@ -155,11 +165,9 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
         data-loading={state.loading || undefined}
         data-split-open={inOtherPane || undefined}
       >
-        {origin ? <span className="session-name-and-origin">
-          <span className="session-title">{title}</span>
-          <span className="session-origin">{origin}</span>
-        </span> : <span className="session-title">{title}</span>}
+        <span className="session-title">{title}</span>
         {identity && <small>{identity}</small>}
+        {place && <small className="session-origin">{place}</small>}
         <span className="session-state-label">{state.label}</span>
         {state.dot && <span className={`session-status-dot state-${state.dot}`} aria-hidden="true" />}
       </button>
@@ -174,6 +182,56 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
       </button>
     </div>
   );
+}
+
+interface GlobalRow { key: string; state: SidebarSessionState; selected: boolean; splitOpen: boolean }
+
+/** A group of the lists across projects (最近更新, 进行中优先), drawn like a project folder:
+ * its heading folds the list away and "展开更多" pages it; both are kept like a folder's. */
+function SortGroup<Row extends GlobalRow>({ group, rows, folds, forceOpen, empty, renderRow }: {
+  group: SidebarGroup; rows: Row[]; folds: SidebarFolds; forceOpen: boolean; empty?: string; renderRow(row: Row): ReactNode;
+}) {
+  const open = forceOpen || !folds.collapsedGroups.includes(group);
+  const label = t(groupLabels[group]), Icon = groupIcons[group], id = `sort-group-${group}`;
+  const limit = folds.groupListed[group] ?? globalPageSize;
+  // The other split pane's conversation stays listed, like the focused one.
+  const page = rows.filter((row, index) => index < limit || row.selected || row.splitOpen);
+  const hidden = rows.length - page.length, collapsible = open && limit > globalPageSize;
+  const status = aggregateSidebarState(rows.map(row => row.state));
+  const toggle = () => collapseGroup(group, open);
+  return <div className="workspace-tree-group sort-group" data-sort-group={group}>
+    <div className={`workspace-row${rows.some(row => row.selected) ? " active" : ""}`} data-status={status}
+      data-split-open={!open && rows.some(row => row.splitOpen) ? "inside" : undefined}>
+      <h2 className="sort-group-heading">
+        <button type="button" className="sort-group-toggle" aria-expanded={open} aria-controls={id}
+          title={t(open ? 'sidebar.collapseList' : 'sidebar.expandList')} onClick={toggle}
+          onKeyDown={event => {
+            if ((event.key === "ArrowRight" && !open) || (event.key === "ArrowLeft" && open)) { event.preventDefault(); toggle(); }
+          }}>
+          <span className="workspace-toggle">
+            {open ? <ChevronDown className="workspace-chevron" size={12} /> : <ChevronRight className="workspace-chevron" size={12} />}
+          </span>
+          <span className="workspace-select">
+            <Icon className="workspace-folder-icon" size={14} aria-hidden="true" />
+            <span className="workspace-name">{label}</span>
+            {status && <span className={`session-status-dot state-${status}`} aria-hidden="true" />}
+          </span>
+        </button>
+      </h2>
+    </div>
+    {open && <div id={id} className="workspace-children" role="group" aria-label={label}>
+      {page.map(renderRow)}
+      {!rows.length && empty && <div className="tree-note"><span>{empty}</span></div>}
+      {(hidden > 0 || collapsible) && <div className="tree-more-row">
+        {hidden > 0 && <button type="button" className="tree-more" aria-label={t('sidebar.showMoreOf', { name: label })}
+          onClick={() => listGroup(group, limit + globalPageSize)}>
+          {t('sidebar.showMore')}<small>{t('sidebar.moreCount', { count: hidden })}</small>
+        </button>}
+        {collapsible && <button type="button" className="tree-more tree-collapse" aria-label={t('sidebar.collapseMoreOf', { name: label })}
+          onClick={() => listGroup(group)}>{t('sidebar.collapseChats')}</button>}
+      </div>}
+    </div>}
+  </div>;
 }
 
 export function SidebarTree({
@@ -241,9 +299,9 @@ export function SidebarTree({
   const connectionOf = useMachineConnections();
   const [over,setOver] = useState("");
   const [rename, setRename] = useState<{ workspaceId: string; session: SessionInfo } | null>(null);
-  // Each folder lists five conversations initially; Show more adds ten at a time.
-  const [shown, setShown] = useState<Record<string, number>>({});
-  const [globalLimit, setGlobalLimit] = useState(globalPageSize);
+  // Each folder lists five conversations initially; Show more adds ten at a time. Kept
+  // in the preferences with the other folds (desktop-state's sidebarFolds).
+  const shown = prefs.sidebarFolds.folderListed;
   const [observations, setObservations] = useState<ReadonlyMap<string, SidebarStatusObservation>>(() => new Map());
   useEffect(() => window.desktop?.onSidebarStatus?.(({ workspaceId, sessionId, observation }) => {
     const key = archiveKey(workspaceId, sessionId);
@@ -284,6 +342,9 @@ export function SidebarTree({
   });
   const flat = prefs.sidebarSort !== 'projects';
   const priority = prefs.sidebarSort === 'priority';
+  // A row names its folder; the machine too where folders on two machines share the name.
+  const nameMachines = new Map<string, Set<string>>();
+  for (const machine of machines) for (const { name } of machine.folders) nameMachines.set(name, (nameMachines.get(name) ?? new Set()).add(machine.key));
   const globalRows = flat ? visible.flatMap(({ machine, folders, machineMatch }) => folders.flatMap(workspace => {
     const folderMatches = machineMatch || matches(workspace.name, workspace.cwd);
     const sessions = listed(workspace), duplicates = repeatedTitles(sessions);
@@ -291,30 +352,24 @@ export function SidebarTree({
       workspace, session,
       key: archiveKey(workspace.id, session.id),
       origin: `${workspace.name} · ${machine.name}`,
+      place: nameMachines.get(workspace.name)!.size > 1 ? `${workspace.name} · ${machine.name}` : workspace.name,
       state: displayState(workspace, session),
       duplicate: duplicates.has(session.title),
       selected: isSelected(workspace, session),
       splitOpen: isSplitOpen(workspace, session),
     }));
   })).sort(priority ? compareActiveSidebarSessions : (a, b) => compareSidebarSessions(a.session, b.session)) : [];
-  // The other split pane's conversation stays listed, like the focused one.
-  const globalPage = globalRows.filter((row, index) => index < globalLimit || row.selected || row.splitOpen);
-  const globalHidden = globalRows.length - globalPage.length;
-  const hasProgress = priority && !!globalPage[0] && isActiveSidebarSession(globalPage[0].state);
-  const firstOther = hasProgress ? globalPage.findIndex(row => !isActiveSidebarSession(row.state)) : -1;
+  const groups: { group: SidebarGroup; rows: typeof globalRows }[] = priority
+    ? [{ group: 'active', rows: globalRows.filter(row => isActiveSidebarSession(row.state)) },
+      { group: 'other', rows: globalRows.filter(row => !isActiveSidebarSession(row.state)) }]
+    : [{ group: 'recent', rows: globalRows }];
   return (
     <nav className="sidebar-tree" data-sidebar-sort={prefs.sidebarSort} aria-label={t(flat ? 'sidebar.allConversations' : 'sidebar.treeLabel')}>
       {flat ? <div className="sidebar-global">
-        {globalPage.flatMap(({ key, ...row }, index) => {
-          const sessionRow = <SessionRow key={key} {...row} onSelect={onSelect} onRename={setRename} menuActions={menuActions} />;
-          if (hasProgress && index === 0) return [<h2 key="in-progress">{t('sidebar.inProgress')}</h2>, sessionRow];
-          if (index === firstOther) return [<h2 key="other-conversations">{t('sidebar.otherConversations')}</h2>, sessionRow];
-          return [sessionRow];
-        })}
-        {globalHidden > 0 && <button type="button" className="tree-more" aria-label={t('sidebar.showMoreConversations')}
-          onClick={() => setGlobalLimit(limit => limit + globalPageSize)}>
-          {t('sidebar.showMore')}<small>{t('sidebar.moreCount', { count: globalHidden })}</small>
-        </button>}
+        {globalRows.length > 0 && groups.filter(({ group, rows }) => rows.length || (group === 'active' && !query)).map(({ group, rows }) =>
+          <SortGroup key={group} group={group} rows={rows} folds={prefs.sidebarFolds} forceOpen={!!query}
+            empty={group === 'active' ? t('sidebar.nothingInProgress') : undefined}
+            renderRow={({ key, ...row }) => <SessionRow key={key} {...row} onSelect={onSelect} onRename={setRename} menuActions={menuActions} />} />)}
         {!globalRows.length && <div className="tree-note">
           <span>{t(query ? 'sidebar.noMatchingConversations' : 'sidebar.noSessions')}</span>
           {!query && <button type="button" className="tree-note-action" onClick={() => setDesktop({ sidebarSort: 'projects' })}>{t('sidebar.sortProjects')}</button>}
@@ -344,11 +399,7 @@ export function SidebarTree({
         const splitNote = splitMark && t(splitMark === "draft" ? 'sidebar.splitOpenDraft' : 'sidebar.splitOpenInFolder');
         const hidden = matching.length - sessions.length;
         const collapsible = open && !query && limit > initialSessions;
-        const collapseSessions = () => setShown(current => {
-          const next = { ...current };
-          delete next[workspace.id];
-          return next;
-        });
+        const collapseSessions = () => listFolder(workspace.id);
         const deferred = workspace.historyScan === false;
         const folderStatus = entry?.error ? 'error' : aggregateSidebarState([...displayStates.values()]);
         const folderDetail = folderStatus && t(({ error: 'sidebar.folderError', waiting: 'sidebar.folderWaiting', unread: 'sidebar.folderUnread' } as const)[folderStatus]);
@@ -449,7 +500,7 @@ export function SidebarTree({
                 {(hidden > 0 || collapsible) && <div className="tree-more-row">
                   {hidden > 0 && (
                     <button type="button" className="tree-more" aria-label={t('sidebar.showMoreOf', { name: workspace.name })}
-                      onClick={() => setShown(current => ({ ...current, [workspace.id]: limit + moreSessions }))}>
+                      onClick={() => listFolder(workspace.id, limit + moreSessions)}>
                       {t('sidebar.showMore')}<small>{t('sidebar.moreCount', { count: hidden })}</small>
                     </button>
                   )}

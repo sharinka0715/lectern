@@ -50,6 +50,7 @@
     "test:layout": "node scripts/sidebar-layout-e2e.mjs",
     "test:sidebar:notifications": "node scripts/sidebar-notifications-e2e.mjs",
     "test:sidebar:split": "node scripts/sidebar-split-e2e.mjs",
+    "test:sidebar:folds": "node scripts/sidebar-folds-e2e.mjs",
     "test:ssh:ui": "node scripts/ssh-ui-e2e.mjs",
     "test:ssh:status": "node scripts/ssh-status-ui-e2e.mjs",
     "test:host-check": "node scripts/host-check-e2e.mjs",

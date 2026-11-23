@@ -204,8 +204,14 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
 
   await selectSort('recent');
   await expectGlobalOrder('recent', sessionId, remoteChat.id, olderId);
-  assert.equal(await sessionRow(remoteChat.id).locator('.session-origin').innerText(), `${remoteWorkspace.name} · ${remoteWorkspace.host}`);
-  assert.equal(await sessionRow(sessionId).locator('.session-origin').innerText(), `${local.workspace.name} · 本地`);
+  // One-line rows like the project tree's: the folder name follows the title, quietly; the
+  // machine is in the hover tip and the spoken label.
+  assert.equal(await sessionRow(remoteChat.id).locator('.session-origin').innerText(), remoteWorkspace.name);
+  assert.equal(await sessionRow(sessionId).locator('.session-origin').innerText(), local.workspace.name);
+  assert.match(await sessionRow(remoteChat.id).getAttribute('title'), new RegExp(`\\n${remoteWorkspace.name} · ${remoteWorkspace.host.replaceAll('.', '\\.')}\\n`));
+  assert.match(await sessionRow(sessionId).getAttribute('aria-label'), new RegExp(`${local.workspace.name} · 本地`));
+  const acrossRowHeight = await page.evaluate(() => document.querySelector('.sidebar-global .session-row').getBoundingClientRect().height);
+  assert.ok(acrossRowHeight <= 30, `rows across projects are as compact as the tree's, got ${acrossRowHeight}`);
   assert.equal(await sessionRow(sessionId).getAttribute('aria-current'), 'page');
 
   await sortControl().press('Enter');
@@ -218,8 +224,8 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   const global = page.locator('.sidebar-global');
   await global.getByRole('heading', { name: '进行中', exact: true }).waitFor();
   await global.getByRole('heading', { name: '其他会话', exact: true }).waitFor();
-  assert.deepEqual(await global.locator(':scope > *').evaluateAll(children => children.map(item => (
-    item.querySelector('.session-row')?.dataset.sessionId ?? item.textContent
+  assert.deepEqual(await global.locator('.sort-group-heading, .session-row').evaluateAll(items => items.map(item => (
+    item.classList.contains('session-row') ? item.dataset.sessionId : item.textContent
   ))), ['进行中', remoteChat.id, '其他会话', sessionId, olderId]);
   assert.equal(await sessionRow(sessionId).getAttribute('aria-current'), 'page', 'Sorting keeps the current chat selected');
   await page.reload();
@@ -234,7 +240,13 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   await page.getByText(remoteReply, { exact: true }).waitFor();
   await page.screenshot({ path: path.join(resultDirectory, 'global-priority.png') });
   await selectSort('project');
-  await page.locator('.workspace-tree-group').filter({ hasText: remoteWorkspace.name }).waitFor();
+  // Opening it from the list across projects leaves the tree as it was: its folder stays
+  // folded, marked as holding the open conversation, until the user opens it.
+  const remoteFolder = page.locator(`.workspace-row[data-workspace-id="${remoteWorkspace.id}"]`);
+  await remoteFolder.waitFor();
+  assert.match(await remoteFolder.getAttribute('class'), /\bactive\b/);
+  assert.equal(await sessionRow(remoteChat.id).count(), 0);
+  await remoteFolder.locator('.workspace-toggle').click();
   assert.equal(await sessionRow(remoteChat.id).getAttribute('aria-current'), 'page');
 }
 

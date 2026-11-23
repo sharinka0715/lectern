@@ -36,7 +36,12 @@ export function isLaterVersion(a: string, b: string): boolean {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.3',
-    features: [],
+    features: [
+      ['侧栏「最近更新」「进行中优先」两种排序与「按项目」观感一致：同样的单行对话、树线和状态点，分组标题像项目文件夹一样可折叠，所属项目以浅色小字跟在标题后。',
+        'The "Most recently updated" and "In progress first" sidebar lists look like "By project": one-line rows on the tree line, group headings that fold like folders, and each project in quiet text.'],
+      ['侧栏里展开、折叠的项目文件夹、机器、分组和「展开更多」在切换排序方式和重启后都保持原样，在其他排序里打开对话也不再展开它的文件夹。',
+        'Folders, machines and groups opened or folded in the sidebar, and their "Show more", stay so across sort modes and restarts; opening a chat from another sort no longer opens its folder.'],
+    ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',
         'Changing the interface font size now scales line heights, vertical spacing and row heights with it, so the sidebar and other lists no longer leave extra gaps.'],

@@ -19,6 +19,50 @@ export type SplitDirection = "columns" | "rows";
 export type SplitEdge = "left" | "right" | "top" | "bottom";
 /** A conversation taken out of Lectern's sidebar. Its files on the target are untouched. */
 export interface ArchivedSession { workspaceId: string; sessionId: string; title: string; archivedAt: string }
+/** The groups of the lists across projects: one for 最近更新, two for 进行中优先. */
+export const sidebarGroups = ["recent", "active", "other"] as const;
+export type SidebarGroup = typeof sidebarGroups[number];
+/**
+ * What the user opened and closed in the sidebar, kept across sort modes and restarts.
+ * Each part holds only what differs from the default: folders start closed, machines
+ * and groups open, lists at their first page.
+ */
+export interface SidebarFolds {
+  /** Project folders listing their conversations, by workspace id. */
+  expandedFolders: string[];
+  /** Machines folded away, by machine key (workspace-machines.ts' `machineKey`). */
+  collapsedMachines: string[];
+  /** Groups of the lists across projects folded away. */
+  collapsedGroups: SidebarGroup[];
+  /** How many conversations a folder lists once "展开更多" was used, by workspace id. */
+  folderListed: Record<string, number>;
+  /** How many conversations a group lists once "展开更多" was used. */
+  groupListed: Partial<Record<SidebarGroup, number>>;
+}
+/** Before 0.2.3 only the expanded folders were kept, under a key of their own. */
+export const legacyExpandedKey = "lectern.expanded-projects.v1";
+const noFolds: SidebarFolds = { expandedFolders: [], collapsedMachines: [], collapsedGroups: [], folderListed: {}, groupListed: {} };
+const foldLimit = 1000;
+const keyList = (value: unknown) => Array.isArray(value)
+  ? [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 1024))].slice(-foldLimit)
+  : [];
+const listedCount = (value: unknown) => Number.isInteger(value) && (value as number) > 0 && (value as number) <= 100_000;
+/** Reads the stored folds; without them, the expanded folders of the legacy key. Anything malformed is dropped. */
+export function sidebarFoldsOf(value: unknown, legacyExpanded?: string | null): SidebarFolds {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    try { return { ...noFolds, expandedFolders: keyList(JSON.parse(legacyExpanded ?? "[]")) }; } catch { return noFolds; }
+  }
+  const stored = value as Record<keyof SidebarFolds, unknown>;
+  const counts = (value: unknown) => value && typeof value === "object" && !Array.isArray(value)
+    ? Object.entries(value).filter(([key, count]) => key.length > 0 && key.length <= 1024 && listedCount(count)).slice(-foldLimit) : [];
+  return {
+    expandedFolders: keyList(stored.expandedFolders),
+    collapsedMachines: keyList(stored.collapsedMachines),
+    collapsedGroups: sidebarGroups.filter(group => keyList(stored.collapsedGroups).includes(group)),
+    folderListed: Object.fromEntries(counts(stored.folderListed)),
+    groupListed: Object.fromEntries(counts(stored.groupListed).filter(([group]) => (sidebarGroups as readonly string[]).includes(group))),
+  };
+}
 export interface ConnectionProfile {
   id: string;
   name: string;
@@ -82,6 +126,7 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   quotaTimeZone: string;
   sidebarOpen: boolean;
   sidebarSort: SidebarSortMode;
+  sidebarFolds: SidebarFolds;
   split: boolean;
   direction: SplitDirection;
   ratio: number;
@@ -112,6 +157,7 @@ const defaults: DesktopState = {
   historyPageMiB: DEFAULT_HISTORY_PAGE_MIB,
   sidebarOpen: true,
   sidebarSort: "projects",
+  sidebarFolds: noFolds,
   split: false,
   direction: "columns",
   ratio: 0.5,
@@ -152,8 +198,10 @@ export function validHost(host: string) {
 }
 export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopState {
   try {
-    const p = JSON.parse((storage ?? window.localStorage).getItem(key) ?? "null");
-    if (!p || typeof p !== "object") return defaults;
+    const store = storage ?? window.localStorage;
+    const p = JSON.parse(store.getItem(key) ?? "null");
+    const legacy = () => { try { return store.getItem(legacyExpandedKey); } catch { return null; } };
+    if (!p || typeof p !== "object") return { ...defaults, sidebarFolds: sidebarFoldsOf(undefined, legacy()) };
     // Each setting is read independently: a missing or invalid one takes its default.
     const layout = { ...defaultChatLayout };
     for (const { key, min, max, step } of chatLayoutRanges) {
@@ -184,6 +232,7 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       quotaTimeZone: typeof p.quotaTimeZone === "string" && validTimeZone(p.quotaTimeZone) ? p.quotaTimeZone : "",
       sidebarOpen: p.sidebarOpen !== false,
       sidebarSort: p.sidebarSort === "recent" || p.sidebarSort === "priority" ? p.sidebarSort : defaults.sidebarSort,
+      sidebarFolds: sidebarFoldsOf(p.sidebarFolds, "sidebarFolds" in p ? null : legacy()),
       split: p.split === true,
       direction: p.direction === "rows" ? "rows" : "columns",
       ratio: bounded(p.ratio, 0.25, 0.75, 0.5),
@@ -214,6 +263,11 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
   }
 }
 let state = loadDesktopState();
+/** Whether the user left anything opened or closed in the sidebar before this launch: only an
+ * untouched tree opens the restored chat's folder by itself. */
+export const foldsKept = (folds: SidebarFolds) => folds.expandedFolders.length > 0 || folds.collapsedMachines.length > 0
+  || folds.collapsedGroups.length > 0 || Object.keys(folds.folderListed).length > 0 || Object.keys(folds.groupListed).length > 0;
+export const sidebarFoldsKept = foldsKept(state.sidebarFolds);
 export const desktopState = () => state;
 const subscribe = (fn: () => void) => {
   listeners.add(fn);
@@ -238,10 +292,48 @@ export function setDesktop(patch: Partial<DesktopState>) {
         ),
       }),
     );
+    // The folds above include what the legacy key held.
+    localStorage.removeItem?.(legacyExpandedKey);
   } catch {
     /* Keep this window usable if storage is unavailable. */
   }
   listeners.forEach((fn) => fn());
+}
+export function setSidebarFolds(patch: Partial<SidebarFolds>) {
+  setDesktop({ sidebarFolds: { ...state.sidebarFolds, ...patch } });
+}
+const toggled = <T extends string>(list: readonly T[], item: T, on: boolean) =>
+  on ? [...list, item].slice(-foldLimit) : list.filter(entry => entry !== item);
+export function collapseMachine(machineKey: string, collapsed: boolean) {
+  if (state.sidebarFolds.collapsedMachines.includes(machineKey) !== collapsed)
+    setSidebarFolds({ collapsedMachines: toggled(state.sidebarFolds.collapsedMachines, machineKey, collapsed) });
+}
+export function collapseGroup(group: SidebarGroup, collapsed: boolean) {
+  if (state.sidebarFolds.collapsedGroups.includes(group) !== collapsed)
+    setSidebarFolds({ collapsedGroups: toggled(state.sidebarFolds.collapsedGroups, group, collapsed) });
+}
+/** How many conversations a folder lists; none returns it to its first page. */
+export function listFolder(workspaceId: string, count?: number) {
+  const { [workspaceId]: _, ...others } = state.sidebarFolds.folderListed;
+  setSidebarFolds({ folderListed: count ? { ...others, [workspaceId]: count } : others });
+}
+export function listGroup(group: SidebarGroup, count?: number) {
+  const { [group]: _, ...others } = state.sidebarFolds.groupListed;
+  setSidebarFolds({ groupListed: count ? { ...others, [group]: count } : others });
+}
+/** Drops the folds of folders and machines no longer in the sidebar; the same object when none are left over. */
+export function prunedFolds(folds: SidebarFolds, workspaceIds: readonly string[], machineKeys: readonly string[]): SidebarFolds {
+  const folders = new Set(workspaceIds), machines = new Set(machineKeys);
+  const expandedFolders = folds.expandedFolders.filter(id => folders.has(id));
+  const collapsedMachines = folds.collapsedMachines.filter(key => machines.has(key));
+  const folderListed = Object.fromEntries(Object.entries(folds.folderListed).filter(([id]) => folders.has(id)));
+  const same = expandedFolders.length === folds.expandedFolders.length && collapsedMachines.length === folds.collapsedMachines.length
+    && Object.keys(folderListed).length === Object.keys(folds.folderListed).length;
+  return same ? folds : { ...folds, expandedFolders, collapsedMachines, folderListed };
+}
+export function pruneSidebarFolds(workspaceIds: readonly string[], machineKeys: readonly string[]) {
+  const folds = prunedFolds(state.sidebarFolds, workspaceIds, machineKeys);
+  if (folds !== state.sidebarFolds) setDesktop({ sidebarFolds: folds });
 }
 export function sameChat(a: ChatTarget | null, b: ChatTarget | null) {
   return a?.workspaceId === b?.workspaceId && a?.sessionId === b?.sessionId;
@@ -380,8 +472,10 @@ export function restoreSessions(keys: string[]) {
   setDesktop({ archivedSessions: state.archivedSessions.filter(a => !restore.has(archiveKey(a.workspaceId, a.sessionId))) });
 }
 export function forgetProject(id: string) {
+  const { [id]: _, ...folderListed } = state.sidebarFolds.folderListed;
   setDesktop({
     archivedSessions: state.archivedSessions.filter(a => a.workspaceId !== id),
+    sidebarFolds: { ...state.sidebarFolds, expandedFolders: state.sidebarFolds.expandedFolders.filter(w => w !== id), folderListed },
     projectOrder: state.projectOrder.filter((w) => w !== id),
     panes: {
       primary:

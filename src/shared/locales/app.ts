@@ -27,6 +27,7 @@ export const app = {
   newChatButton: ['新建对话', 'New conversation'],
   filter: ['筛选项目和对话', 'Filter projects and conversations'],
   machines: ['机器', 'Machines'],
+  conversations: ['对话', 'Conversations'],
   discoverLocal: ['发现本机会话', 'Discover local conversations'],
   discoverDemo: ['请正常启动应用以发现真实历史会话', 'Start the app normally to discover real past conversations'],
   discoverTitle: ['发现本机会话：读取已有 Claude Code 历史', 'Discover local conversations: read existing Claude Code history'],

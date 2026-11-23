@@ -1,7 +1,7 @@
 import { PreferencesDialog } from "./PreferencesDialog";
 import { WindowTitlebar } from "./WindowTitlebar";
 import { SplitButtons, SplitWorkspace } from "./SplitWorkspace";
-import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, sameChat, setDesktop, showChat, shownIn, splitChat, unfocusedChat, useDesktopState, type ChatTarget } from "./desktop-state";
+import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, pruneSidebarFolds, sameChat, setDesktop, showChat, shownIn, sidebarFoldsKept, splitChat, unfocusedChat, useDesktopState, type ChatTarget } from "./desktop-state";
 import { Search, Settings2 } from "lucide-react";
 import type { ChatView } from "../shared/types";
 import "./workbench.css";
@@ -555,8 +555,9 @@ function ChatPane({ view, resumes, setResume }: {
     const key = draftKey(workspaceId, sessionId);
     if (draft) unsentDrafts.set(key,draft); else unsentDrafts.delete(key);
   }, [workspaceId,sessionId,draft]);
+  // `reveal`: open its folder in the sidebar's tree (see useWorkspaceTree's expand).
   const openSession = useCallback(
-    async (wsId: string, id: string) => {
+    async (wsId: string, id: string, reveal = true) => {
       const request = ++sessionRequest.current;
       const revision = snapshotRevision.current;
       selected.current = { workspaceId: wsId, sessionId: id };
@@ -568,7 +569,7 @@ function ChatPane({ view, resumes, setResume }: {
       const targetWorkspace = workspacesRef.current.find(
         (item) => item.id === wsId,
       );
-      if (targetWorkspace) expandWorkspace(targetWorkspace);
+      if (targetWorkspace) expandWorkspace(targetWorkspace, reveal);
       setSessionId(id);
       setArtifact(undefined);
       setSnapshot(undefined);
@@ -597,7 +598,7 @@ function ChatPane({ view, resumes, setResume }: {
   );
 
   const selectWorkspace = useCallback(
-    (ws: Workspace) => {
+    (ws: Workspace, reveal = true) => {
       const request = ++sessionRequest.current;
       selected.current = { workspaceId: ws.id, sessionId: "" };
       showChat(view,{workspaceId:ws.id,sessionId:"",title:""});
@@ -610,7 +611,7 @@ function ChatPane({ view, resumes, setResume }: {
       setError("");
       setTerminalOpen(false);
       setFolderState("resolving");
-      expandWorkspace(ws);
+      expandWorkspace(ws, reveal);
       void window.desktop
         .unwatchSession(view)
         .catch((error) => reportActionError(error, "切换目录失败"));
@@ -618,14 +619,14 @@ function ChatPane({ view, resumes, setResume }: {
       void refresh(ws.id).then((result) => {
         if (sessionRequest.current !== request || selected.current.workspaceId !== ws.id || selected.current.sessionId) return;
         setFolderState(undefined);
-        if (result?.sessions.length && !selected.current.draft) void openSession(ws.id, result.sessions[0].id);
+        if (result?.sessions.length && !selected.current.draft) void openSession(ws.id, result.sessions[0].id, reveal);
       }, () => { if (sessionRequest.current === request) setFolderState(undefined); });
     },
     [expandWorkspace, refresh, openSession,view],
   );
 
   /** A new chat in this folder: nothing starts until its first message is sent. */
-  const enterDraft = useCallback((ws: Workspace) => {
+  const enterDraft = useCallback((ws: Workspace, reveal = true) => {
     ++sessionRequest.current;
     selected.current = { workspaceId: ws.id, sessionId: "", draft: true };
     showChat(view, { workspaceId: ws.id, sessionId: "", title: "", draft: true });
@@ -638,7 +639,7 @@ function ChatPane({ view, resumes, setResume }: {
     setTerminalOpen(false);
     setFolderState(undefined);
     setDraft(unsentDrafts.get(draftKey(ws.id, "")) || "");
-    expandWorkspace(ws);
+    expandWorkspace(ws, reveal);
     void window.desktop.unwatchSession(view).catch(error => reportActionError(error, "切换目录失败"));
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [expandWorkspace, view]);
@@ -664,14 +665,16 @@ function ChatPane({ view, resumes, setResume }: {
         setWorkspaces(list);
         const restored = desktopState().panes[view];
         const restoredWorkspace = list.find(w => w.id === restored?.workspaceId);
+        // The sidebar opens as it was left; only a fresh profile opens the restored chat's folder.
+        const reveal = !sidebarFoldsKept;
         if (restored && restoredWorkspace) {
           workspacesRef.current = list;
-          if (restored.sessionId) void openSession(restored.workspaceId, restored.sessionId);
-          else if (restored.draft) enterDraft(restoredWorkspace);
-          else selectWorkspace(restoredWorkspace);
+          if (restored.sessionId) void openSession(restored.workspaceId, restored.sessionId, reveal);
+          else if (restored.draft) enterDraft(restoredWorkspace, reveal);
+          else selectWorkspace(restoredWorkspace, reveal);
         } else {
           showChat(view,null);
-          if (primary && list.length) selectWorkspace(list[0]);
+          if (primary && list.length) selectWorkspace(list[0], reveal);
         }
         setLoaded(true);
       })
@@ -704,6 +707,12 @@ function ChatPane({ view, resumes, setResume }: {
     startupCheck.current = true;
     void checkSshMachines(sshMachines(desktopState().connections, workspacesRef.current));
   }, [primary, loaded, info.demo]);
+  // Folds of folders and machines that left the sidebar are dropped, so they do not pile
+  // up. The demo shares the preferences but not the folders: it leaves them alone.
+  useEffect(() => {
+    if (!primary || !loaded || info.demo) return;
+    pruneSidebarFolds(workspaces.map(w => w.id), workspaceMachines(info.platform, prefs.connections, workspaces).map(m => m.key));
+  }, [primary, loaded, info.demo, info.platform, workspaces, prefs.connections]);
   const target = prefs.panes[view];
   useEffect(() => {
     if (!loaded) return;
@@ -1308,7 +1317,7 @@ function ChatPane({ view, resumes, setResume }: {
         </button>
         <label className="project-filter"><Search size={14}/><input ref={filterRef} aria-label={t('app.filter')} placeholder={t('app.filter')} value={filter} onChange={e=>setFilter(e.target.value)} onKeyDown={e=>{if(e.key==="Escape"){setFilter("");e.currentTarget.blur();}}}/></label>
         <div className="sidebar-section-heading">
-          <span>{t('app.machines')}</span>
+          <span>{t(prefs.sidebarSort === 'projects' ? 'app.machines' : 'app.conversations')}</span>
           <div className="sidebar-heading-actions">
           <SidebarSortButton mode={prefs.sidebarSort} />
           {!sshOnly(info.platform) && <button
