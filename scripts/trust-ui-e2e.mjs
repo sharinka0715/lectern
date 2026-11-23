@@ -20,7 +20,7 @@ try {
   // terminal input. Freeze a settled base for the synthetic trust prompts below.
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-status') === 'idle' &&
     document.querySelector('.session-settings')?.getAttribute('data-setting-initialization') === 'ready' &&
-    !document.querySelector('textarea')?.disabled);
+    !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   const context = await page.evaluate(async () => {
     const workspace = (await window.desktop.listWorkspaces())[0];
     const sessionId = document.querySelector('.session-row.active').getAttribute('data-session-id');
@@ -118,7 +118,7 @@ try {
   assert.equal(await exit.isDisabled(), true);
   assert.equal(await composer.isDisabled(), true);
   await card.waitFor({ state: 'detached' });
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   assert.equal(await app.evaluate(() => globalThis.__trustFixture.calls[0].decision), 'trust');
 
   await app.evaluate(() => { globalThis.__trustFixture.fail = true; globalThis.__trustFixture.show('trust', 'unspecified'); });
@@ -135,7 +135,7 @@ try {
   await app.evaluate(() => { globalThis.__trustFixture.wrongPane = false; });
   await exit.click();
   await card.waitFor({ state: 'detached' });
-  await page.waitForFunction(original => document.querySelector('.session-row.active')?.getAttribute('data-session-id') === original && !document.querySelector('textarea')?.disabled, context.session.id);
+  await page.waitForFunction(original => document.querySelector('.session-row.active')?.getAttribute('data-session-id') === original && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'), context.session.id);
   assert.equal(await page.locator('.error-banner').count(), 0, 'Confirmed exit returns to the workspace and reloads its available session');
   assert.equal(await page.locator('.message').count(), originalMessages);
   assert.deepEqual(await readFile(context.session.path), originalBytes, 'Trust controls never add dialogue or modify JSONL');
@@ -167,14 +167,14 @@ try {
   await page.waitForTimeout(450);
   assert.deepEqual(await app.evaluate(() => ({ started: globalThis.__trustFixture.createStarted, returned: globalThis.__trustFixture.createReturned })), { started: true, returned: false });
   assert.equal(await page.locator('.session-row.active').count(), 0, 'The race occurs while the new chat is still starting');
-  await page.waitForFunction(created => document.querySelector('.session-row.active')?.getAttribute('data-session-id') === created && !document.querySelector('textarea')?.disabled, preparedSession.id);
+  await page.waitForFunction(created => document.querySelector('.session-row.active')?.getAttribute('data-session-id') === created && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'), preparedSession.id);
   const newSessionId = await page.locator('.session-row.active').getAttribute('data-session-id');
   await page.waitForTimeout(750);
   assert.equal(await card.count(), 0, 'Late confirmation from a previous session never changes the new session');
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-id'), newSessionId, 'A late exit never navigates away from the newly selected session');
   // The first message went to the new chat once; the offline fixture answers it.
   await page.waitForFunction(() => document.querySelectorAll('.message-user').length === 1
-    && document.querySelector('.message-assistant')?.getAttribute('data-source') === 'jsonl' && !document.querySelector('textarea')?.disabled, null, { timeout: 15000 });
+    && document.querySelector('.message-assistant')?.getAttribute('data-source') === 'jsonl' && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 15000 });
   assert.equal(await composer.isDisabled(), false);
   const calls = await app.evaluate(() => globalThis.__trustFixture.calls);
   const report = { success: true, scope: 'renderer contract only; synthetic trust snapshots and IPC', genericPermissionsExcluded: true, noAutomaticTrust: true,

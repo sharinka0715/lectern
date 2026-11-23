@@ -21,7 +21,7 @@ try {
   page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   const chat = page.getByRole('textbox',{name:'发送给 Claude 的消息',exact:true});
-  await page.waitForFunction(() => document.querySelector('.session-settings')?.getAttribute('data-setting-initialization') === 'ready' && !document.querySelector('form.composer textarea')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.session-settings')?.getAttribute('data-setting-initialization') === 'ready' && !document.querySelector('form.composer textarea')?.matches(':disabled, [aria-disabled="true"]'));
   const {base,jsonl} = await page.evaluate(async () => {
     const [w] = await window.desktop.listWorkspaces();
     const sid = document.querySelector('.session-row.active').dataset.sessionId;

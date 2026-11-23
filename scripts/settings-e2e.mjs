@@ -17,7 +17,7 @@ try {
   app = await _electron.launch({ executablePath, args: [...(executablePath ? [] : ['.']), '--demo'], env });
   const page = await app.firstWindow();
   page.setDefaultTimeout(20000);
-  await page.waitForFunction(() => document.querySelector('.session-settings')?.getAttribute('data-setting-initialization') === 'ready' && !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.session-settings')?.getAttribute('data-setting-initialization') === 'ready' && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   const context = await page.evaluate(async () => {
     const workspace = (await window.desktop.listWorkspaces())[0];
     const sessionId = document.querySelector('.session-row.active').getAttribute('data-session-id');
@@ -188,7 +188,7 @@ try {
     delete s.terminalControl;
     s.status = s.navigationStatus = 'error'; s.nativeInputReady = true; f.publish();
   });
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   await model.click();
   assert.equal(await chooser('model').locator('[role="option"]:enabled').count(), 2, 'A ready native error allows model recovery');
   await close();
@@ -223,15 +223,15 @@ try {
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.waitForFunction(original => {
     const id = document.querySelector('.session-row.active')?.getAttribute('data-session-id');
-    return id && id !== original && !document.querySelector('textarea')?.disabled && !document.querySelector('.first-message-bar');
+    return id && id !== original && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') && !document.querySelector('.first-message-bar');
   }, context.sessionId);
   const secondId = await page.locator('.session-row.active').getAttribute('data-session-id');
   await app.evaluate(() => { globalThis.__settingsFixture.watchDelay = 350; });
   await page.locator(`.session-row[data-session-id="${context.sessionId}"]`).click();
-  await page.waitForFunction(() => document.querySelector('.composer textarea')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.composer textarea')?.matches(':disabled, [aria-disabled="true"]'));
   assert.equal(await composer.isDisabled(), true, 'Sending is disabled until the selected session loads');
   assert.equal(await effort.isDisabled(), true, 'An effort read waits for the selected pane binding');
-  await page.waitForFunction(original => document.querySelector('.session-row.active')?.getAttribute('data-session-id') === original && !document.querySelector('textarea')?.disabled, context.sessionId);
+  await page.waitForFunction(original => document.querySelector('.session-row.active')?.getAttribute('data-session-id') === original && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'), context.sessionId);
   assert.match(await model.innerText(), /Workspace model α/); assert.equal(await calls(), beforeSwitch);
   await app.evaluate((_electron, sessionId) => {
     const f = globalThis.__settingsFixture;

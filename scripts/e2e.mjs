@@ -171,7 +171,7 @@ try {
     await confirmDialog.getByRole('button', { name: '关闭对话', exact: true }).click();
     await page.locator('.error-banner', { hasText: 'Rehearsed failure: tmux.close_session' }).waitFor();
   } finally { await app.evaluate(() => { delete process.env.LECTERN_DEMO_FAIL_TAG; }); }
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'true', 'a failed close keeps the session running');
   assert.equal(await page.getByRole('button', { name: '续接会话', exact: true }).count(), 0);
   seen = await transcriptSeen();
@@ -204,7 +204,7 @@ try {
       .observe(document.body, { childList: true, subtree: true });
   });
   await resume.click();
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled && document.querySelectorAll('.message-assistant').length === 2);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') && document.querySelectorAll('.message-assistant').length === 2);
   assert.equal(await page.evaluate(() => window.__transcriptEmptied), false, 'Resume never blanks the transcript');
   assert.equal(await shownBubble.evaluate(node => node.isConnected), true, 'Resume keeps the rendered history instead of reloading it');
   assert.equal(await page.locator('.message-assistant').count(), 2);
@@ -217,7 +217,7 @@ try {
   // "新建对话" opens a draft: no pane, no Claude until its first message. Model and
   // effort chosen there start that session only.
   await page.getByRole('button', { name: /^新建对话/ }).first().click();
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled && document.querySelector('.draft-settings'));
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') && document.querySelector('.draft-settings'));
   assert.equal(await page.locator('.session-row').count(), 1, 'nothing starts before the first message');
   assert.equal(await page.locator('.session-row.active').count(), 0);
   await page.getByRole('button', { name: '选择模型' }).click();
@@ -284,7 +284,7 @@ try {
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-live'), 'true', 'A native API error does not imply that the pane disconnected');
   await page.screenshot({ path: path.join(results, 'desktop-terminal-error.png') });
   await writeFile(stateFile, 'ready');
-  await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-status') === 'idle' && !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-status') === 'idle' && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   await page.getByRole('button', { name: '关闭终端原屏', exact: true }).click();
 
   // Exercise the actual diagnostic controls. This run uses only the isolated
@@ -311,7 +311,7 @@ try {
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.waitForFunction(() => {
     const assistants = document.querySelectorAll('.message-assistant');
-    return assistants.length === 2 && assistants[1].getAttribute('data-source') === 'jsonl' && !document.querySelector('textarea')?.disabled;
+    return assistants.length === 2 && assistants[1].getAttribute('data-source') === 'jsonl' && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]');
   });
   await page.getByRole('button', { name: /诊断日志/ }).click();
   await contentToggle.waitFor();
@@ -389,7 +389,7 @@ try {
   await input.fill(slowPrompt);
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.getByRole('button', { name: '停止生成' }).click({ timeout: 5000 });
-  await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.status === 'idle' && !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.status === 'idle' && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   assert.equal(await page.locator('.session-row.active').getAttribute('data-session-id'), newSessionId);
   await input.fill(afterStop);
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
@@ -404,7 +404,7 @@ try {
   // turn: it must not stay below the next turns with a live preview and a stop banner.
   const tabbed = '默认显示\t名称 + 大小', afterTab = '制表符之后的消息';
   for (const text of [tabbed, afterTab]) {
-    await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.status === 'idle' && !document.querySelector('textarea')?.disabled);
+    await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.status === 'idle' && !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
     await input.fill(text);
     await page.getByRole('button', { name: '发送消息', exact: true }).click();
     await page.locator('.message-assistant[data-source="jsonl"]').getByText('已收到你的消息：' + text.replace('\t', '    '), { exact: true }).waitFor();

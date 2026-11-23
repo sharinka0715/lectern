@@ -63,10 +63,10 @@ export function ui(page, sandbox) {
     page, composer,
     async openDraft(workspaceName) {
       await page.locator(sel.workspace(workspaceName)).click();
-      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled; }, sel.composer, { timeout: 30_000 });
+      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled && el.getAttribute('aria-disabled') !== 'true'; }, sel.composer, { timeout: 30_000 });
     },
     async ready(timeout = 60_000) {
-      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled; }, sel.composer, { timeout });
+      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled && el.getAttribute('aria-disabled') !== 'true'; }, sel.composer, { timeout });
     },
     async type(text) { await composer.fill(text); },
     /** Send from an idle composer (the round send button). */

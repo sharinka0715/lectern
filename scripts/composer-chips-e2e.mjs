@@ -59,7 +59,7 @@ try {
     && !document.querySelector('.composer-chip-face[data-state="uploading"], .composer-attachments [data-state="uploading"]'));
 
   await page.locator('.session-row.active[data-session-live="true"]').waitFor();
-  await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.disabled, null, { timeout: 30000 });
+  await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30000 });
   const sessionId = await page.locator(".session-row.active").getAttribute("data-session-id");
   // Two different pictures: a wide "screenshot" and a tall one.
   const picture = (width, height, color) => page.evaluate(([width, height, color]) => {
@@ -294,9 +294,7 @@ try {
   await writeFile(path.join(cwd, "docs", "plan v2.md"), "# 计划\n");
   await writeFile(path.join(cwd, "todo.txt"), "待办\n");
   await writeFile(path.join(cwd, "diagram.png"), wide);
-  // The reply to the message sent above finishes first (the box is briefly disabled then and loses focus).
-  await page.locator(".send-button").waitFor({ timeout: 30000 });
-  await page.waitForTimeout(400);
+  // The reply to the message sent above may still be running or ending: the box keeps the keyboard and the @ list through it.
   const pick = async (typed, name) => {
     await input.pressSequentially(typed);
     await page.getByRole("option", { name }).waitFor();

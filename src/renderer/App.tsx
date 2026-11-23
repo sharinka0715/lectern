@@ -83,6 +83,7 @@ import { TurnPanel } from "./TurnControls";
 import { TurnProgress } from './TurnProgress';
 import { RewindPicker } from "./RewindPicker";
 import { useComposerCompletion } from "./useComposerCompletion";
+import { useComposerFocus } from "./useComposerFocus";
 import { composerPlaceholder, isMessageInputReady } from "./composer-state";
 import { DraftSettings } from "./DraftSettings";
 import type { LaunchChoices } from "../shared/model-catalog";
@@ -364,7 +365,6 @@ export default function App({view = "primary"}: {view?: ChatView}) {
   const permission = snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId &&
     snapshot.paneId && snapshot.panePid && !directoryTrust && !question ? snapshot.permission : undefined;
   const permissionBusy = !!snapshot?.permissionBusy || answeringScopes.has(settingScope);
-  const focusComposerWhenReady = useRef<string | undefined>(undefined);
   async function answerPermission(action: PermissionAction) {
     if (!permission || !paneId || !snapshot?.panePid || permissionBusy || terminalLocked ||
         sessionRequest.current !== selectionGeneration || selected.current.workspaceId !== workspaceId || selected.current.sessionId !== sessionId)
@@ -377,7 +377,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
       await window.desktop.answerPermission(workspaceId, sessionId, paneId, snapshot.panePid, permission.token, action);
       // After a refusal Claude waits for guidance: the cursor goes where it is
       // typed as soon as the input box is usable again.
-      if (reject) focusComposerWhenReady.current = settingScope;
+      if (reject) composerFocus.request();
     } finally {
       setAnsweringScopes(previous => { const next = new Set(previous); next.delete(settingScope); return next; });
     }
@@ -424,11 +424,6 @@ export default function App({view = "primary"}: {view?: ChatView}) {
       navigationStatus: snapshot.navigationStatus,
       nativeInputReady: snapshot.nativeInputReady,
     }));
-  useEffect(() => {
-    if (!canSend || focusComposerWhenReady.current !== settingScope) return;
-    focusComposerWhenReady.current = undefined;
-    inputRef.current?.focus();
-  }, [canSend, settingScope]);
   const canRewind = canSend && !inTurn && !restoredDraft && !sending && !!snapshot?.nativeInputReady;
   // A new chat (no session yet) can be typed into; its first send starts Claude.
   // A folder view that could not be read stays closed until a retry; a new chat
@@ -458,6 +453,11 @@ export default function App({view = "primary"}: {view?: ChatView}) {
   const hostName = workspace?.kind === "ssh" ? machineLabel(workspace) : undefined;
   const hostBlocked = !!workspace && hostLacks.length > 0 && !paneId;
   const canType = canSend || (isDraft && !launch && !busy && !hostBlocked);
+  // Sending, a reply starting or ending, a card or a setting switch must not cost the input box its focus:
+  // the box the user is in takes typing on (pastes and the @ list too); only sending waits for canType.
+  const composerFocus = useComposerFocus({ inputRef, area: composerDock, canType, scope: `${workspaceId}:${sessionId}`,
+    card: !!(question || permission || directoryTrust) });
+  const typing = canType || composerFocus.lock.holding;
   const [draftChoices, setDraftChoicesState] = useState<LaunchChoices>({});
   useEffect(() => { setDraftChoicesState(launchChoicesByFolder.get(workspaceId) ?? {}); }, [workspaceId]);
   const setDraftChoices = useCallback((next: LaunchChoices) => {
@@ -515,14 +515,14 @@ export default function App({view = "primary"}: {view?: ChatView}) {
   // Pasted or dropped files and files picked from the @ list become @-mentions where the caret
   // is; on an SSH machine dropped and pasted files are uploaded first. The input box shows each
   // mention as a chip in the text and the files as cards above it; the draft keeps the mentions.
-  const attachments = useComposerAttachments({ workspace, sessionId, enabled: canType && !rewindOpen,
+  const attachments = useComposerAttachments({ workspace, sessionId, enabled: typing && !rewindOpen,
     draft, inputRef, setDraft, openFile: path => openArtifact({ path }),
     showing: (ws, sid) => mounted.current && selected.current.workspaceId === ws && selected.current.sessionId === sid,
     stash: (ws, sid, update) => { const key = draftKey(ws, sid); unsentDrafts.set(key, update(unsentDrafts.get(key) ?? "")); },
     usedNames: () => snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId ? messageFileNames(snapshot.messages) : [],
     onError: showToast });
   const completion = useComposerCompletion({ workspaceId, sessionId: sessionId || (isDraft ? "draft" : ""), view,
-    enabled: canType && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef, onFile: attachments.chooseFile });
+    enabled: typing && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef, onFile: attachments.chooseFile });
   const uploading = attachments.pending.length > 0;
   function openRewind() { setRewindScope(JSON.stringify([workspaceId, sessionId])); }
   useEffect(() => { setRewindScope(undefined); }, [workspaceId, sessionId, paneId]);
@@ -976,6 +976,12 @@ export default function App({view = "primary"}: {view?: ChatView}) {
       }
       setDraftChoices({});
       if (pending) setOutgoing({ ...pending, scope: `${target.id}:${next.id}` });
+      // What was typed while the chat started goes with it.
+      const typed = unsentDrafts.get(draftKey(target.id, ''));
+      if (typed) {
+        unsentDrafts.delete(draftKey(target.id, ''));
+        unsentDrafts.set(draftKey(target.id, next.id), mergeDraft(unsentDrafts.get(draftKey(target.id, next.id)) ?? '', typed));
+      }
       const opening = openSession(target.id, next.id);
       setLaunch({ id, workspaceId: target.id, text, choices, phase: 'waiting', sessionId: next.id, startedAt: Date.now() });
       await opening;
@@ -1041,7 +1047,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
         selected.current.sessionId === sessionId
       ) {
         transcript.current?.scrollToLatest();
-        inputRef.current?.focus();
+        composerFocus.request();
       }
       // The controller's bubble normally replaces it at once; never leave one behind.
       if (pending) setTimeout(() => setOutgoing(current => (current === pending ? undefined : current)), 8000);
@@ -1684,7 +1690,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
           <TurnPanel state={controls} busy={sending || terminalLocked || busy} act={action => void actOnTurn(action)}/>
           <TurnProgress snapshot={snapshot} />
           <form
-            className={`composer${!canType ? " composer-inactive" : ""}${attachments.dragging ? " composer-drop" : ""}`}
+            className={`composer${composerFocus.lock.disabled ? " composer-inactive" : ""}${attachments.dragging ? " composer-drop" : ""}`}
             data-drop-hint={workspace?.kind === "ssh" ? t('app.dropUpload') : t('app.dropReference')}
             onSubmit={(event) => {
               event.preventDefault();
@@ -1709,7 +1715,8 @@ export default function App({view = "primary"}: {view?: ChatView}) {
               {...attachments.inputProps(completion.inputProps)}
               onPaste={attachments.onPaste}
               value={attachments.text}
-              disabled={!canType}
+              disabled={composerFocus.lock.disabled}
+              aria-disabled={!canType || undefined}
               rows={1}
               onKeyDown={(event) => {
                 if (completion.onKeyDown(event) || imeOwnsKey(event.nativeEvent) || attachments.onKeyDown(event)) return;

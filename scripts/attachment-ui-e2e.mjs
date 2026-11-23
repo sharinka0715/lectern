@@ -44,7 +44,7 @@ try {
   // replacing the text, or it collapses the selection fill() made and the old text stays.
   const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.locator('.session-row.active[data-session-live="true"]').waitFor();
-  await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.disabled, null, { timeout: 30000 });
+  await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30000 });
   // A screenshot-like picture to paste: a window with a title bar and a few lines.
   png = Buffer.from(await page.evaluate(() => {
     const canvas = Object.assign(document.createElement("canvas"), { width: 640, height: 400 });

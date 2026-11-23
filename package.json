@@ -67,6 +67,7 @@
     "test:cache-ttl": "node scripts/cache-ttl-e2e.mjs",
     "test:transcript:render": "node scripts/transcript-render-e2e.mjs",
     "test:workbench": "node scripts/workbench-ui-e2e.mjs",
+    "test:composer-focus": "node scripts/composer-focus-e2e.mjs",
     "test:session-rename": "node scripts/session-rename-ui-e2e.mjs",
     "test:native:split": "node --import tsx scripts/native-split-conversations.mjs",
     "test:titlebar": "node scripts/titlebar-ui-e2e.mjs",

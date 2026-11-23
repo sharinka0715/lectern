@@ -122,7 +122,7 @@ try {
   // A taller input box pushes the conversation up, not over its last lines.
   await page.getByRole("button", { name: "续接会话", exact: true }).click();
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
-  await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.disabled, null, { timeout: 30000 });
+  await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30000 });
   await atLatest("resumed");
   await docked("resumed");
   const before = await dockTop();

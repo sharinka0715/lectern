@@ -98,7 +98,7 @@ try {
   const idle = () => page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-status') === 'idle', null, { timeout: 60000 }).catch(async error => { await dump(); throw error; });
   const deferred = [];
   const ask = async (prompt, id) => {
-    await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.disabled);
+    await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'));
     await input.fill(prompt);
     await page.getByRole('button', { name: '发送消息', exact: true }).click();
     await card.waitFor({ timeout: 60000 }).catch(async error => { await dump(); throw error; });

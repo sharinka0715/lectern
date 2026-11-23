@@ -190,7 +190,7 @@ try {
   assert.equal(await page.locator('.error-banner').count(), 0);
   const watchesBeforeResume = await app.evaluate(() => globalThis.__sshUI.calls.filter(call => call.method === 'watch').length);
   await page.getByRole('button', { name: '续接会话', exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   assert.equal(await page.locator('.message-assistant').count(), 1);
   assert.equal(await app.evaluate(() => globalThis.__sshUI.calls.filter(call => call.method === 'watch').length), watchesBeforeResume,
     'Resume keeps the loaded history instead of opening the conversation again');
@@ -201,7 +201,7 @@ try {
   await page.locator('.terminal-panel[data-readonly="true"]').waitFor();
   assert.equal(await page.locator('.terminal-keybar').count(), 0);
   await page.locator('.error-banner').getByRole('button', { name: '重试', exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
 
   // A local folder is added on the local machine, like any other.
   if (process.platform !== 'win32') {

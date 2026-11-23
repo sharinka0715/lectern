@@ -44,7 +44,15 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
   const escapeRow = billing || (generic && p.escape !== undefined);
   const heading = generic ? t('cards.nativeDialog') : billing ? t('cards.autoModeBilling') : keyed ? t('cards.autoModeUnavailable') : t('cards.permission');
   const intro = generic ? t('cards.nativeDialogIntro') : billing ? t('cards.autoModeBillingIntro') : t('cards.autoModeUnavailableIntro');
-  useEffect(() => { root.current?.querySelector<HTMLButtonElement>('.question-option[aria-pressed="true"]')?.focus({ preventScroll: true }); }, [p.cardId]);
+  // The card takes the keyboard only when nothing has it (the element that had it was removed or
+  // disabled) or another card of this chat had it: never from an input box someone is typing in (an
+  // Enter would answer the card) nor from the other split pane, the sidebar, the terminal or a dialog.
+  useEffect(() => {
+    const card = root.current, active = document.activeElement;
+    const nowhere = !active || active === document.body || active.matches(':disabled');
+    const cards = !!active && !!card?.closest('.composer-area')?.contains(active) && !!active.closest('.question-card, .directory-trust-card');
+    if (nowhere || cards) card?.querySelector<HTMLButtonElement>('.question-option[aria-pressed="true"]')?.focus({ preventScroll: true });
+  }, [p.cardId]);
   const act = async (action: PermissionAction) => {
     if (blocked || inFlight.current) return;
     inFlight.current = true;

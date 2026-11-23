@@ -71,7 +71,7 @@ try {
 
   // 3. A new session's first response written ahead of its prompt: the card has its call at once.
   await page.getByRole('button', { name: /^新建对话/ }).first().click();
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled && document.querySelector('.draft-settings'));
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') && document.querySelector('.draft-settings'));
   await send('第一条消息 permission-first');
   await card.waitFor({ timeout: 30_000 });
   await owned();

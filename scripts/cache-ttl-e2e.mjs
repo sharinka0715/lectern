@@ -88,7 +88,7 @@ try {
   /** A new chat that starts a subagent; the cache lifetimes its requests asked for. */
   const chat = async label => {
     await page.getByRole('button', { name: '在 缓存 新建对话' }).click();
-    await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.disabled);
+    await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'));
     const before = api.requests.length;
     await input.fill(`${label} ccm:ttl`);
     await page.getByRole('button', { name: '发送消息', exact: true }).click();
