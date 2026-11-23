@@ -20,6 +20,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { _electron } from 'playwright';
+import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 
 // tmux only ever runs against the private server directory test-all (or the caller) set up.
 if (!process.env.TMUX_TMPDIR) {
@@ -78,6 +79,9 @@ async function launch(name, { locale = 'zh-CN', userData, ssh = false, prompt = 
   run.workspace = workspaces.find(item => item.id === 'demo-local');
   run.demoDir = path.dirname(run.workspace.cwd);
   run.demoSession = await page.locator('.session-row.active').getAttribute('data-session-id');
+  // Nothing answers at sshHost: once the SSH folder's read has failed, quitting lists that machine from
+  // what it knows and does not ask it again (A, B); F covers a check that runs into the deadline.
+  if (ssh) await page.locator('.workspace-row[data-workspace-id="demo-ssh"][data-status="error"]').waitFor({ state: 'attached', timeout: 30_000 });
   return run;
 }
 
@@ -87,7 +91,10 @@ async function addConversation(run, title) {
   for (let n = 0; n < 100 && !(await tmux(run.socket, 'capture-pane', '-p', '-t', info.paneId)).stdout.includes('offline fixture'); n++) await pause(50);
   await tmux(run.socket, 'send-keys', '-t', info.paneId, '-l', `/rename ${title}`);
   await tmux(run.socket, 'send-keys', '-t', info.paneId, 'Enter');
-  await run.page.locator(`.session-row[data-session-id="${info.id}"]`, { hasText: title }).waitFor({ timeout: 20_000 });
+  // Once the new title is on disk, read the folder now rather than on the sidebar's next 5-second read.
+  const transcript = path.join(run.workspace.claudeDir, 'projects', run.workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${info.id}.jsonl`);
+  for (let n = 0; n < 100 && !(await readFile(transcript, 'utf8').catch(() => '')).includes(JSON.stringify(title)); n++) await pause(50);
+  await refreshFolderUntil(run.page, run.workspace.id, run.page.locator(`.session-row[data-session-id="${info.id}"]`, { hasText: title }));
   return info;
 }
 
@@ -138,8 +145,10 @@ const quitFromMenu = run => run.app.evaluate(({ Menu }) => {
   find(Menu.getApplicationMenu().items).click();
 });
 async function exitWithin(run, ms) {
-  const timer = pause(ms).then(() => { throw new Error(`${run.name}: the app did not exit within ${ms} ms`); });
-  return Promise.race([run.exited, timer]);
+  // The timer is cleared once the app exits: a pending one would keep this script alive for up to `ms`.
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${run.name}: the app did not exit within ${ms} ms`)), ms); });
+  try { return await Promise.race([run.exited, late]); } finally { clearTimeout(timer); }
 }
 /** Rows of the dialog: session, pane, activity, close state. */
 const rows = page => dialog(page).locator('.quit-session').evaluateAll(items => items.map(item => ({
@@ -175,6 +184,7 @@ try {
     await quitFromMain(run);
     await dialog(run.page).waitFor();
     const askedMs = Date.now() - asked;
+    assert.ok(askedMs < 3000, `the SSH folder whose read failed is not asked again: no wait for the 3 s deadline (${askedMs} ms)`);
     const listed = await assertListsRunning(run);
     const by = id => listed.find(row => row.session === id);
     assert.equal(by(fix.id).activity, 'working', 'the replying conversation says so');

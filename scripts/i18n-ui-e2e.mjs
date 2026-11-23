@@ -30,7 +30,11 @@ async function launch(env, ready = '.message-assistant') {
 /** Closes the app, or kills it when its shutdown hangs. */
 async function quit(app) {
   const closed = app.close().then(() => true, () => true);
-  if (!await Promise.race([closed, new Promise(resolve => setTimeout(() => resolve(false), 15000))])) app.process().kill('SIGKILL');
+  // Cleared once closed: a pending timer would keep the script alive for the whole 15 s.
+  let timer;
+  const hung = new Promise(resolve => { timer = setTimeout(() => resolve(false), 15000); });
+  if (!await Promise.race([closed, hung])) app.process().kill('SIGKILL');
+  clearTimeout(timer);
 }
 const menuLabels = app => app.evaluate(({ Menu }) => Menu.getApplicationMenu().items.map(item => item.label));
 /** Visible text of the element, without the language picker's own endonym. */

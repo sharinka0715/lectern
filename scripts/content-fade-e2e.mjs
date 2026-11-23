@@ -11,6 +11,7 @@ import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "n
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { _electron } from "playwright";
+import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tcf-")));
 const output = path.resolve("test-results", "content-fade-" + Date.now());
@@ -136,6 +137,7 @@ try {
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
   const archive = await seedArchive(workspace);
   const row = id => page.locator(`.session-row[data-session-id="${id}"]`);
+  await refreshFolderUntil(page, workspace.id, row(archive.sessionId));
   await installRecorder();
 
   // 1. A first open, another chat, and the cached one again: shown as they are, nothing fades.

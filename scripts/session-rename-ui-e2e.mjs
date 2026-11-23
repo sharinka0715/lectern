@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import os from "node:os";
 import path from "node:path";
 import { _electron } from "playwright";
+import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "trn-")));
 const output = path.resolve("test-results", "session-rename-" + Date.now());
@@ -38,6 +39,7 @@ try {
   await writeFile(archive, JSON.stringify(seed) + "\n", { flag: "wx" });
 
   const row = id => page.locator('.session-row[data-session-id="' + id + '"]');
+  await refreshFolderUntil(page, workspace.id, row(archiveId));
   const dialog = page.getByRole("dialog", { name: "重命名会话", exact: true });
   const field = dialog.getByRole("textbox", { name: "会话名称" });
   const save = dialog.getByRole("button", { name: "保存", exact: true });

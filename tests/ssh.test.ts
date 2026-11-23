@@ -284,7 +284,12 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     await runCommand(local, `tmux -L '${socket}' kill-server 2>/dev/null || true`).catch(() => {});
     daemon?.kill('SIGTERM');
     daemon?.stdout?.destroy(); daemon?.stderr?.destroy();
-    if (daemon && daemon.exitCode === null && daemon.signalCode === null) await Promise.race([new Promise(resolve => daemon!.once('exit', resolve)), wait(1000)]);
+    if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
+      // The fallback timer is cleared: left pending it keeps this file's process alive for another second.
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([new Promise(resolve => daemon!.once('exit', resolve)), new Promise(resolve => { timer = setTimeout(resolve, 1000); })]);
+      clearTimeout(timer);
+    }
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -10,6 +10,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { _electron } from "playwright";
+import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tsa-")));
 const output = path.resolve("test-results", "scroll-anchor-" + Date.now());
@@ -96,6 +97,7 @@ try {
   await resize(1320, 840);
   await page.locator('.session-row.active[data-session-live="true"]').waitFor();
   const archiveId = await seedArchive();
+  await refreshFolderUntil(page, "demo-local", page.locator('.session-row[data-session-id="' + archiveId + '"]'));
   await page.locator('.session-row[data-session-id="' + archiveId + '"]').click();
   await page.getByText("问题 39", { exact: true }).waitFor();
   await docked("opened", "bottom-wide.png");

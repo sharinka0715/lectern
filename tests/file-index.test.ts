@@ -158,7 +158,9 @@ test('a folder the user waits for does not queue behind background scans', posix
   const other = (id: string): Workspace => ({ ...ws, id });
   index.prefetch(other('first'));
   index.prefetch(other('second'));
-  await new Promise(resolve => setTimeout(resolve, 20));
+  // Until the first one holds the transport: a fixed pause could let the user's scan get there
+  // first on a loaded machine, take the hold and wait for a release that never comes.
+  while (!scans()) await new Promise(resolve => setTimeout(resolve, 2));
   assert.ok((await values('')).includes('README.md'), 'answered while both background scans wait');
   assert.equal(scans(), 2, 'the held scan and this one; the second prefetch is still queued');
   release();

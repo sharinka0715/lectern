@@ -94,6 +94,12 @@ try {
 
   // The activity card: the subagent part lists both; "查看对话" opens the column on that one.
   const card = page.locator('.activity-float');
+  /** Collapses the activity card before a screenshot. When it is already a pill there is no button,
+   * and waiting for one would only run into the 20-second timeout. */
+  const collapseCard = async () => {
+    const collapse = page.locator('.activity-float-anchor button[aria-label="收起会话活动"]');
+    if (await collapse.count()) await collapse.click().catch(() => {});
+  };
   if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
   const section = page.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: '子代理' }) });
   await section.waitFor();
@@ -124,7 +130,7 @@ try {
   ]));
   await detail.locator('article.message-assistant', { hasText: '接着检查依赖' }).waitFor();
   assert.equal(await detail.locator('details.tool-block[data-tool-name="Read"]').getAttribute('data-tool-state'), 'completed');
-  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
+  await collapseCard();
   await page.waitForTimeout(500); // messages fade in
   await page.screenshot({ path: path.join(results, 'subagent-column-running.png') });
 
@@ -186,7 +192,7 @@ try {
   assert.deepEqual(await cardRows(), [['toolu_e2e_live', 'running'], ['toolu_e2e_done', 'completed']]);
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(results, 'subagent-column-order.png') });
-  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
+  await collapseCard();
   const facts = await finished.locator('.subagent-detail-head small').innerText();
   assert.match(facts, /已续接 1 次/);
   await page.waitForTimeout(1500);
@@ -242,7 +248,7 @@ try {
   assert.deepEqual(await rows(), expected, 'the column lists the same');
   assert.deepEqual(await column.locator('.task-column-list .task-state').allInnerTexts(), expected.map(([, state]) => ({ running: '运行中', stopped: '已停止', completed: '已完成' })[state]));
   assert.equal(await page.locator('.message-user', { hasText: '请十二个子代理分头检查各个目录' }).count(), 0, 'still not loaded');
-  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
+  await collapseCard();
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(results, 'subagent-column-listed.png') });
   // Only the meta files change: one ends, an ended one is resumed (finished cleared).
@@ -276,7 +282,7 @@ try {
   await page.waitForFunction(id => document.querySelector(`[data-subagent-detail="${id}"] details.tool-block[data-tool-name="Grep"]`)?.dataset.toolState === 'interrupted', live);
   assert.equal(await leftOver.locator('summary .tool-state').innerText(), '已中断');
   assert.equal(await column.locator(`[data-subagent-detail="${live}"] [data-tool-state="pending"]`).count(), 0);
-  await page.locator('.activity-float-anchor button[aria-label="收起会话活动"]').click().catch(() => {});
+  await collapseCard();
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(results, 'subagent-column-interrupted.png') });
   // The session runs on outside Lectern's panes (a terminal of its own): its native record names a live

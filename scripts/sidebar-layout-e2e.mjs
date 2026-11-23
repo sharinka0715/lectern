@@ -5,6 +5,7 @@ import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/pro
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from 'playwright';
+import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 import { waitUntil } from './fixtures/loopback-ssh.mjs';
 
 // Keep the demo's Unix-domain tmux socket within macOS's path limit.
@@ -124,7 +125,7 @@ async function checkBackgroundReplyStatus() {
     { role: 'assistant', content: [{ type: 'text', text: archivedReply }], stop_reason: 'end_turn' },
   ));
   const otherRow = sessionRow(historyId);
-  await otherRow.waitFor();
+  await refreshFolderUntil(page, workspace.id, otherRow);
   const idleDiscovery = await page.evaluate(id => window.desktop.discover(id), workspace.id);
   assert.equal(idleDiscovery.sessions.find(chat => chat.id === liveId)?.status, 'idle');
   // Reproduce a slow directory scan while the real reader continues polling tmux.
@@ -346,7 +347,7 @@ try {
   })).join('\n') + '\n';
   await writeFile(olderLog, olderRecords(48, '较早的会话', '已经读过的回复'));
   const olderRow = sessionRow(olderId);
-  await olderRow.waitFor();
+  await refreshFolderUntil(page, 'layout', olderRow);
   assert.equal(await olderRow.locator('.state-unread').count(), 0);
   await appendFile(olderLog, olderRecords(24, '较早会话的新问题', '一条未读的回复'));
   await olderRow.locator('.state-unread').waitFor();

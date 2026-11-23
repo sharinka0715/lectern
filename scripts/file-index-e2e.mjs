@@ -58,9 +58,19 @@ async function scans(workspaceId) {
   const events = [];
   for (const name of files) for (const line of (await readFile(path.join(logs, name), 'utf8')).split('\n')) {
     if (!line.includes('completion.index.scanned')) continue;
-    try { const entry = JSON.parse(line); if (entry.event === 'completion.index.scanned' && entry.data.workspaceId === workspaceId) events.push(entry.data); } catch { /* partial line */ }
+    try { const entry = JSON.parse(line); if (entry.event === 'completion.index.scanned' && entry.data.workspaceId === workspaceId) events.push({ ...entry.data, loggedAt: Date.parse(entry.timestamp) }); } catch { /* partial line */ }
   }
   return events;
+}
+/** Waits until the working directory's newest index is older than the TTL (its scan started
+ * `durationMs` before it was logged), and so is any rescan that lands meanwhile. */
+async function untilRootExpired() {
+  for (;;) {
+    const started = (await scans('big')).filter(scan => scan.depth === 0).map(scan => scan.loggedAt - scan.durationMs);
+    const wait = Math.max(...started) + ttlMs + 500 - Date.now();
+    if (wait <= 0) return;
+    await sleep(wait);
+  }
 }
 async function until(check, label, timeout = 15000) {
   for (const end = Date.now() + timeout; Date.now() < end; await sleep(50)) { const value = await check(); if (value) return value; }
@@ -155,7 +165,7 @@ try {
     const rootScans = async () => (await scans('big')).filter(scan => scan.depth === 0).length;
     await page.locator(composer).fill('');
     // Longer than the TTL: a rescan an earlier keystroke started has landed and expired too.
-    await sleep(ttlMs + 2000);
+    await untilRootExpired();
     const before = await rootScans();
     await timeList('@ after expiry (stale list)', '@', 'README.md');
     await until(async () => await rootScans() > before, 'an expired index is rescanned');
@@ -168,7 +178,7 @@ try {
     assert.ok(fresh.includes('README.md') && !fresh.includes('added-after-scan.md'), 'a fresh index answers from memory: ' + fresh);
     assert.equal(await rootScans(), scansWhileFresh, 'a fresh index is not rescanned');
     await page.locator(composer).fill('');
-    await sleep(ttlMs);
+    await untilRootExpired();
     const stale = await timeList('@ after expiry', '@', 'package.json');
     assert.ok(stale.options.some(text => text.includes('README.md')), 'the expired list is shown at once');
     const shown = Date.now();

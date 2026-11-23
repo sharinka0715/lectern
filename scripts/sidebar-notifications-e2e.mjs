@@ -4,6 +4,7 @@ import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright';
+import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 
 // Isolated demo, real tmux and JSONL. No normal user profile, SSH or model requests.
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-sidebar-receipts-'));
@@ -39,7 +40,7 @@ try {
   const line = (type, message, timestamp = new Date().toISOString()) => JSON.stringify({ type, uuid: randomUUID(), sessionId: id, cwd: ws.cwd, timestamp, message }) + '\n';
   const archived = page.locator(`.session-row[data-session-id="${id}"]`);
   await writeFile(log, line('user', {content:'已经存在的历史'}, '2026-01-01T00:00:00Z') + line('assistant', {content:'旧回复', stop_reason:'end_turn'}, '2026-01-01T00:00:01Z'));
-  await archived.waitFor(); assert.equal(await archived.locator('.session-status-dot').count(), 0);
+  await refreshFolderUntil(page, ws.id, archived); assert.equal(await archived.locator('.session-status-dot').count(), 0);
   await page.getByRole('textbox', {name:'发送给 Claude 的消息'}).fill('你好');
   await page.getByRole('button', {name:'发送消息', exact:true}).click();
   const busy = await inspect(live, 'working', '.session-title'); assert.deepEqual(busy.rgb, idle.rgb); assert.notEqual(busy.animation, 'none');

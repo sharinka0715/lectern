@@ -130,6 +130,7 @@ export function startTerminalLink(child: ChildProcessWithoutNullStreams, paneId:
   child.on('exit', () => finish('exited'));
   return new Promise((resolve, reject) => {
     settle = { resolve, reject };
-    setTimeout(() => { if (!ready) finish('timeout'); }, 15_000);
+    // Unref'd: it still fires in the app, but does not keep a finished Node process (a unit test) alive for 15 s.
+    setTimeout(() => { if (!ready) finish('timeout'); }, 15_000).unref();
   });
 }

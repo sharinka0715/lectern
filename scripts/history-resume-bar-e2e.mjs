@@ -6,6 +6,7 @@ import { waitUntil } from "./fixtures/loopback-ssh.mjs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { _electron } from "playwright";
+import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tbr-")));
 const output = path.resolve("test-results", "history-resume-bar-" + Date.now());
@@ -134,6 +135,7 @@ try {
   const row = id => page.locator('.session-row[data-session-id="' + id + '"]');
   const liveId = await page.locator('.session-row.active[data-session-live="true"]').getAttribute("data-session-id");
   const archiveId = await seedArchive();
+  await refreshFolderUntil(page, "demo-local", row(archiveId));
   await row(archiveId).click();
   await page.getByText("assistant 47", { exact: true }).waitFor();
   await resume.waitFor();
