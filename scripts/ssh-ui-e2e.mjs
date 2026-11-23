@@ -245,7 +245,19 @@ try {
   await page.screenshot({ path: path.join(resultDirectory, 'moved-resume-error.png') });
   await openConversation(0);
   assert.equal(await primary.locator('.error-banner').count(), 0, 'The failure does not follow a pane to another conversation');
-  await openConversation(1);
+
+  // Reopening the saved conversation can fail before it can be resumed again.
+  await app.evaluate(() => { globalThis.__sshUI.watchFail = true; });
+  await machine.locator(`.session-row[data-session-id="${ids[1]}"]`).click();
+  const readError = primary.locator('.error-banner').filter({ hasText: 'connection reset while reading history' });
+  await readError.waitFor();
+  const resumeCount = () => app.evaluate(() => globalThis.__sshUI.calls.filter(call => call.method === 'resume').length);
+  const resumesBeforeReadRetry = await resumeCount();
+  await app.evaluate(() => { globalThis.__sshUI.watchFail = false; });
+  await readError.getByRole('button', { name: '重试', exact: true }).click();
+  await primary.locator('.message-assistant').filter({ hasText: paths[1] }).waitFor();
+  assert.equal(await resumeCount(), resumesBeforeReadRetry, 'Retrying the history read does not resume the conversation');
+
   const movedError = primary.locator('.error-banner').filter({ hasText: 'Synthetic moved resume failure' });
   await movedError.getByRole('button', { name: '重试', exact: true }).click();
   await promotedResume.waitFor({ state: 'detached' });
