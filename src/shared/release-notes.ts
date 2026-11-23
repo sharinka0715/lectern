@@ -36,8 +36,13 @@ export function isLaterVersion(a: string, b: string): boolean {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.2',
-    features: [],
+    features: [
+      ['侧栏可将所有本地和 SSH 项目的会话合在一起，按最近更新或进行中优先排序。',
+        'The sidebar can list conversations across local and SSH projects by recency or with active conversations first.'],
+    ],
     fixes: [
+      ['切到其他会话后，侧栏会继续显示原会话的回复状态，并在回复完成后更新。',
+        'The sidebar keeps showing a reply in progress after you switch conversations and updates when the reply finishes.'],
       ['续接进度和失败提示只随对应会话显示，切换分屏或同时续接其他会话时仍可独立重试。',
         'Resume progress and failures stay with each conversation, so you can retry after moving between panes or resuming another chat.'],
     ],
