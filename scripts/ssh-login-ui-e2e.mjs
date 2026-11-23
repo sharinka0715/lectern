@@ -196,13 +196,18 @@ try {
   // Off: only Lectern's own connection. With no master of its own yet, the machine asks for a login,
   // which leaves a private master even though ssh_config would persist one.
   await reuse.uncheck();
-  await page.waitForFunction(async () => (await window.desktop.sshConnectionPreferences()).reuseConnections === false);
-  assert.deepEqual(JSON.parse(await readFile(path.join(profile, 'ssh-settings.json'), 'utf8')), { reuseConnections: false });
-  mark = (await sshCalls()).length;
-  const refused = await check();
+  // The transport applies the new preference after the settings file is written.
+  let refused;
+  for (let i = 0; i < 100; i++) {
+    mark = (await sshCalls()).length;
+    refused = await check();
+    if (!refused.ok) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   assert.equal(refused.ok, false);
   assert.match(refused.message, /Permission denied/);
   assert.ok((await commandsSince(mark)).every(line => /ControlPath=\/tmp\/lectern-ssh-/.test(line)), 'commands no longer use the user\'s master');
+  assert.deepEqual(JSON.parse(await readFile(path.join(profile, 'ssh-settings.json'), 'utf8')), { reuseConnections: false });
   mark = (await sshCalls()).length;
   await settings.getByRole('button', { name: '登录 实验集群', exact: true }).click();
   await login.getByText("dev@lab's password:", { exact: true }).waitFor();
