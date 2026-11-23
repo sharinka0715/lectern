@@ -84,3 +84,20 @@ test('折叠的思考与相邻操作合成一行，像 Claude Code 的「Thought
   assert.equal(toolActivity(thought('short', 0, 300)).subject, '1 秒', 'at least one second, as the TUI shows');
   assert.equal(summarizeActivities([toolActivity(tools[0])]).pending, 0, 'a thought is never an operation in progress');
 });
+
+test('正文按写入时的工作目录分段，工具前后的正文各带自己的目录', () => {
+  const text = '在根目录 notes.md\n\n进入 sub 后 notes.md\n\n仍在 sub';
+  // A directory starts at the separator before its text (where a call between them sits).
+  const second = text.indexOf('\n\n进入'), third = text.indexOf('\n\n仍在');
+  const cwds = [{ textOffset: 0, cwd: '/w' }, { textOffset: second, cwd: '/w/sub' }];
+  const texts = (message: Parameters<typeof replyParts>[0]) => replyParts(message, true).flatMap(part => part.kind === 'text' ? [[part.key, part.text, part.cwd]] : []);
+  // Usually a call (the cd) separates them; without one, the text is split where the directory changes.
+  assert.deepEqual(texts({ text, tools: [call('cd', 'Bash', second)], cwds }), [
+    ['start', text.slice(0, second), '/w'], ['after:tool:cd', text.slice(second), '/w/sub'],
+  ]);
+  assert.deepEqual(texts({ text, tools: [], cwds }), [['start', text.slice(0, second), '/w'], [`cwd:${second}`, text.slice(second), '/w/sub']]);
+  assert.deepEqual(texts({ text, tools: [call('read', 'Read', third)], cwds: [{ textOffset: second, cwd: '/w/sub' }] }), [
+    ['start', text.slice(0, second), undefined], [`cwd:${second}`, text.slice(second, third), '/w/sub'], ['after:tool:read', text.slice(third), '/w/sub'],
+  ]);
+  assert.deepEqual(texts({ text, tools: [] }), [['start', text, undefined]], 'no directories: one part as before');
+});

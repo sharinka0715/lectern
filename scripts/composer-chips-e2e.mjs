@@ -374,6 +374,8 @@ try {
   await bubble.locator("[data-attachment-chip]").nth(1).waitFor();
   const bubbleChips = locator => locator.locator("[data-attachment-chip]").evaluateAll(nodes => nodes.map(node => [node.dataset.attachmentChip, node.dataset.mention]));
   assert.deepEqual(await bubbleChips(bubble), [["todo.txt", "@todo.txt"], ["notes.md", "@notes.md"]]);
+  // Claude Code is still where the chat started: the picked file goes as the folder-relative path, as typed.
+  assert.equal((await prompts()).find(text => text.startsWith("手打"))?.trim(), "手打 @todo.txt 和 @missing.txt 以及 @notes.md");
   assert.equal(await bubble.locator(".attachment-cards").count(), 0, "no row: no image, and named files are not repeated as cards");
   const copyAll = async locator => {
     await locator.evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); getSelection().removeAllRanges(); getSelection().addRange(range); });
@@ -405,6 +407,50 @@ try {
   await typed.locator(".message-content").screenshot({ path: path.join(output, "bubble.png") });
   await typed.locator('[data-attachment-chip="plan v2.md"]').click();
   await drawer.getByText("计划").waitFor();
+  await drawer.getByRole("button", { name: "关闭文件预览" }).click();
+
+  step("after Claude Code cd's into a subfolder, a file picked from the @ list is sent as its absolute path");
+  const finished = start => text => text.endsWith("\n") && text.split("\n").some(line => line.includes("已收到你的消息：" + start) && line.includes('"stop_reason"'));
+  await page.locator(".send-button").waitFor({ timeout: 30000 });
+  await input.fill("进入子目录 mock-cd:docs");
+  await page.locator(".send-button:not([disabled])").waitFor({ timeout: 30000 });
+  await input.press("Enter");
+  for (let i = 0; i < 150 && !finished("进入子目录")(await readFile(transcript, "utf8")); i++) await page.waitForTimeout(100);
+  await page.locator('.message-assistant[data-source="jsonl"]').filter({ hasText: "已收到你的消息：进入子目录" }).waitFor();
+  const launch = await realpath(cwd), sub = path.join(launch, "docs");
+  const mention = file => /^[\p{L}\p{N}\p{M}_./~-]+$/u.test(file) ? "@" + file : `@"${file}"`;
+  await input.click();
+  await input.pressSequentially("再看 ");
+  await pick("@todo", /todo\.txt/);
+  assert.equal(await shownText(), "再看 ▣ ");
+  assert.deepEqual(await labels(), ["todo.txt"], "the chip keeps the file's name");
+  await page.locator(".send-button:not([disabled])").waitFor({ timeout: 30000 });
+  await input.press("Enter");
+  for (let i = 0; i < 100 && !(await prompts()).some(text => text.startsWith("再看")); i++) await page.waitForTimeout(100);
+  // Claude Code reads a mention from where it is now (docs/): the folder-relative todo.txt would be lost.
+  assert.equal((await prompts()).find(text => text.startsWith("再看"))?.trim(), `再看 ${mention(path.join(launch, "todo.txt"))}`);
+  const moved = page.locator('.message-user[data-source="jsonl"]').filter({ hasText: "再看" });
+  await moved.locator("[data-attachment-chip]").waitFor();
+  assert.deepEqual(await bubbleChips(moved), [["todo.txt", mention(path.join(launch, "todo.txt"))]]);
+  await moved.locator('[data-attachment-chip="todo.txt"]').click();
+  await drawer.getByText("待办").waitFor();
+  await drawer.getByRole("button", { name: "关闭文件预览" }).click();
+  await moved.locator(".message-content").screenshot({ path: path.join(output, "after-cd.png") });
+
+  step("a prompt's mentions are the files Claude Code read from where it was");
+  for (let i = 0; i < 150 && !finished("再看")(await readFile(transcript, "utf8")); i++) await page.waitForTimeout(100);
+  await writeFile(path.join(cwd, "docs", "notes.md"), "# 子目录\n子目录里的笔记\n");
+  const compare = { type: "user", uuid: randomUUID(), sessionId, cwd: sub, message: { role: "user", content: [{ type: "text", text: "比较 @notes.md 和 @../notes.md" }] } };
+  const done = { type: "assistant", uuid: randomUUID(), parentUuid: compare.uuid, sessionId, cwd: sub, message: { role: "assistant", id: randomUUID(), stop_reason: "end_turn", content: "好。" } };
+  await appendFile(transcript, [compare, done].map(row => JSON.stringify(row) + "\n").join(""));
+  const compared = page.locator(".message-user").filter({ hasText: "比较" });
+  await compared.locator("[data-attachment-chip]").nth(1).waitFor();
+  assert.deepEqual(await bubbleChips(compared), [["notes.md", "@notes.md"], ["notes.md", "@../notes.md"]]);
+  await compared.locator("[data-attachment-chip]").first().click();
+  await drawer.getByText("子目录里的笔记").waitFor();
+  await drawer.getByRole("button", { name: "关闭文件预览" }).click();
+  await compared.locator("[data-attachment-chip]").nth(1).click();
+  await drawer.getByText("补全选中的文件").waitFor();
   await drawer.getByRole("button", { name: "关闭文件预览" }).click();
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ success: true, output }));

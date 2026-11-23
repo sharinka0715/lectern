@@ -1,11 +1,11 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from './i18n';
 import type { LiveShell } from "../shared/activity";
-import { useArtifactResolutions, useArtifactScope } from "./ArtifactReferenceScope";
+import { ReplyCwd, useArtifactResolutions, useArtifactScope } from "./ArtifactReferenceScope";
 import { showContextMenu } from "./ContextMenu";
 import { messageMenu, toolMenu } from "./message-menus";
 import { ArtifactMarkdown, FileLink, LinkedToolText, LinkedUserText } from "./ArtifactLinks";
-import { pathBasename } from "./artifact-paths";
+import { isRelativePath, pathBasename, pathFromCwd } from "./artifact-paths";
 import { AttachmentImage } from './ChatImage';
 import { MessageAttachmentCards, MessageFileChip } from './AttachmentCards';
 import { confirmFile, isAttachedPath, isChipPath } from './attachment-registry';
@@ -68,9 +68,11 @@ function ToolCall({ row, compact, onOpenPath, grouped = false }: { row: ToolActi
   const stateLabel = t(({ error: 'chat.stateError', pending: 'chat.statePending', completed: 'chat.stateCompleted', discussion: 'chat.stateDiscussion', cancelled: 'chat.stateCancelled',
     interrupted: 'chat.stateInterrupted', incomplete: 'chat.stateIncomplete' } as const)[state]);
   const showDiff = row.category === 'write' && (tool.name !== 'Write' || !!tool.editPatch);
-  return <><details ref={details} className={`tool-block${compact ? ' activity-row' : ''}`} data-tool-id={tool.id} data-tool-name={tool.name} data-tool-state={state}
+  // Paths in the call are from the directory it was made in; in its result, from where the command left it.
+  const menuFile = file && tool.cwd?.startsWith('/') ? pathFromCwd(tool.cwd, file) : file;
+  return <ReplyCwd cwd={tool.cwd}><details ref={details} className={`tool-block${compact ? ' activity-row' : ''}`} data-tool-id={tool.id} data-tool-name={tool.name} data-tool-state={state}
     onToggle={event => setOpen(event.currentTarget.open)}
-    onContextMenu={event => showContextMenu(event, toolMenu(event, tool, { file, open, toggle: () => { if (details.current) details.current.open = !details.current.open; },
+    onContextMenu={event => showContextMenu(event, toolMenu(event, tool, { file: menuFile, open, toggle: () => { if (details.current) details.current.open = !details.current.open; },
       onOpenPath, workspaceId: scope?.workspaceId }), tool.name)}>
     <summary title={tool.name}>
       {!compact && <Terminal size={14} />}
@@ -84,10 +86,11 @@ function ToolCall({ row, compact, onOpenPath, grouped = false }: { row: ToolActi
     {open && <div className="tool-detail">
       {showDiff ? <EditDiff tool={tool} onOpenPath={onOpenPath} /> : <ToolInput tool={tool} onOpen={onOpenPath} />}
       {tool.result !== undefined && tool.result.trim() !== '' && <div className="tool-output" data-error={tool.isError || undefined}>
-        <div className="tool-detail-label">{t(tool.isError ? 'chat.error' : 'chat.result')}</div><LinkedToolText text={tool.result} onOpen={onOpenPath} />
+        <div className="tool-detail-label">{t(tool.isError ? 'chat.error' : 'chat.result')}</div>
+        <ReplyCwd cwd={tool.resultCwd ?? tool.cwd}><LinkedToolText text={tool.result} onOpen={onOpenPath} /></ReplyCwd>
       </div>}
     </div>}
-  </details>{state === 'pending' && !grouped && <LiveShellOutput toolId={tool.id} />}</>;
+  </details>{state === 'pending' && !grouped && <LiveShellOutput toolId={tool.id} />}</ReplyCwd>;
 }
 
 function TaskNotification({ text, onOpenPath }: { text: string; onOpenPath: OpenPath }) {
@@ -119,7 +122,7 @@ function ThoughtRow({ row, onOpenPath }: { row: ToolActivity; onOpenPath: OpenPa
     onToggle={event => setOpen(event.currentTarget.open)}>
     <summary title={t('chat.thinkingTitle')}><span className="activity-verb">{t('chat.verbThink')}</span>
       {row.subject && <span className="activity-subject">{row.subject}</span>}<ChevronRight size={13} aria-hidden="true" /></summary>
-    {open && <div className="tool-detail thought-text"><div className="markdown"><ArtifactMarkdown onOpen={onOpenPath} text={row.tool.result ?? ''} /></div></div>}
+    {open && <div className="tool-detail thought-text"><div className="markdown"><ReplyCwd cwd={row.tool.cwd}><ArtifactMarkdown onOpen={onOpenPath} text={row.tool.result ?? ''} /></ReplyCwd></div></div>}
   </details>;
 }
 
@@ -151,16 +154,25 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   // A user message shows the files its @-mentions name as chips in their place, like the input box,
   // with its images (and attached files it does not name) in a row above the text. A mention
   // counts when the transcript recorded the file, Lectern attached or knows it, or the reference
-  // check finds that very file.
+  // check finds that very file. Claude Code read a relative mention from its directory then (the
+  // prompt's cwd): the file recorded or found there comes first, then the folder's.
   const user = message.role === 'user', workspaceId = useArtifactScope()?.workspaceId;
+  const cwd = user ? message.cwds?.[0]?.cwd : undefined;
+  const located = useCallback((path: string) => cwd?.startsWith('/') && isRelativePath(path) ? pathFromCwd(cwd, path) : undefined, [cwd]);
   const candidates = useMemo(() => {
     if (!user) return [];
     const files = (message.attachments ?? []).flatMap(file => file.path ? [file.path] : []);
-    return mentionCandidates(message.text, path => isChipPath(workspaceId, path) || files.some(file => samePath(file, path)));
-  }, [user, message.text, message.attachments, workspaceId]);
+    const attached = (path: string, at = located(path)) => files.some(file => samePath(file, path) || !!at && samePath(file, at));
+    const fromCwd = mentionCandidates(message.text, path => !located(path) || attached(path)).map(path => located(path)!);
+    return [...fromCwd, ...mentionCandidates(message.text, path => isChipPath(workspaceId, path) || attached(path))];
+  }, [user, message.text, message.attachments, workspaceId, located]);
   const found = useArtifactResolutions(candidates);
-  const layout = useMemo(() => user ? messageFileLayout(message.text, message.attachments ?? [], path => isChipPath(workspaceId, path) || confirmsMention(path, found?.get(path))) : undefined,
-    [user, message.text, message.attachments, workspaceId, found]);
+  const layout = useMemo(() => user ? messageFileLayout(message.text, message.attachments ?? [], path => {
+    const at = located(path);
+    // Until the check answers, a file there might still come first.
+    if (at && !found) return false;
+    return at && confirmsMention(at, found?.get(at)) ? at : isChipPath(workspaceId, path) || confirmsMention(path, found?.get(path));
+  }, located) : undefined, [user, message.text, message.attachments, workspaceId, found, located]);
   // Their mentions pasted into the input box are chips there too.
   useEffect(() => { if (workspaceId) for (const chip of layout?.chips ?? []) if (!isAttachedPath(chip.path)) confirmFile(workspaceId, chip.path); }, [layout, workspaceId]);
   const shown = useMemo(() => layout ? { ...message, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
@@ -177,7 +189,7 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
         node: <MessageFileChip chip={chip} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} /> }));
       return <div key={part.key} className="user-text"><LinkedUserText text={part.text} chips={chips} onOpen={onOpenPath} /></div>;
     }
-    if (part.kind === 'text') return <div key={part.key} className="markdown"><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></div>;
+    if (part.kind === 'text') return <div key={part.key} className="markdown"><ReplyCwd cwd={part.cwd}><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></ReplyCwd></div>;
     return part.rows.length === 1 ? <ActivityRow key={part.key} row={part.rows[0]} compact={compact} onOpenPath={onOpenPath} />
       : <ActivityGroup key={part.key} rows={part.rows} onOpenPath={onOpenPath} />;
   });

@@ -75,6 +75,12 @@ interface TurnMemory {
   restoredDraft?: string; restoredUuid?: string;
 }
 
+/** Where Claude Code works now, when that is not where the conversation started (the folder). */
+export function workingDirectory(current: string | undefined, folder: readonly string[] | undefined): SessionSnapshot['workingDirectory'] {
+  const launch = folder?.[0];
+  return current && launch && !folder.some(path => path.replace(/\/+$/, '') === current.replace(/\/+$/, '')) ? { current, launch } : undefined;
+}
+
 /** The conversation's activity for its snapshot. Claude Code 2.1.310+ (`listed`): every
  * subagent of the session's folder, each with the state its meta file and the process give
  * (core/subagent-status.ts); otherwise what the loaded transcript says. */
@@ -864,7 +870,7 @@ export class Controller extends EventEmitter {
         executionMode: watch.settingsHandle ? this.executionModes.get(watch.settingsHandle) : undefined,
         executionModeLastObserved: !!watch.settingsHandle && !executionMode && this.executionModes.has(watch.settingsHandle),
         contextUsage: result.hasMore ? watch.snapshot.contextUsage : watch.display.contextUsage,
-        cliVersion,
+        cliVersion, workingDirectory: workingDirectory(watch.display.workingDirectory, result.folderPaths),
         directoryTrust: watch.manualRecovery || watch.snapshot.terminalControl ? result.directoryTrust : settingsOverlap ? watch.snapshot.directoryTrust : result.directoryTrust,
         status, notice: watch.display.notice,
       };

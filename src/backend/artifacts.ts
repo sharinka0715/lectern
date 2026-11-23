@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { open, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { finished } from 'node:stream/promises';
-import type { ArtifactDirectory, ArtifactEntry, ArtifactPreview, ArtifactResolution, Workspace } from '../shared/types';
+import type { ArtifactDirectory, ArtifactEntry, ArtifactPreview, ArtifactReference, ArtifactResolution, Workspace } from '../shared/types';
 import { quoteShell as q, Transport, validateWorkspace } from './transport';
 import { extractOfficeText } from './office-preview';
 import { THUMB_BYTES, THUMB_INPUT_BYTES, ThumbnailCache, thumbnailPreview, thumbnailShell } from './image-thumbnail';
@@ -189,7 +189,7 @@ const outputDirectories = new Set(['dist', 'build', 'target', 'coverage']);
 // directory index. An incomplete traversal cannot establish uniqueness, so the
 // sentinel is required. Paths outside the folder are only checked, never searched.
 function referenceScript(base: string, direct: Map<number, Target>, keys: Set<string>, protectedRoots: string[], privacyRoots: string[] = [],
-  external = new Map<number, Target>(), searched = new Set<string>()) {
+  external = new Map<number, Target>(), searched = new Set<string>(), exact = new Map<number, Target & { external: boolean }>()) {
   const literalGlob = (value: string) => value.replace(/[\\*?\[\]]/g, '\\$&');
   const pruned = generatedDirectories.filter(name => !searched.has(name));
   const generated = '\\( -type d \\( ' + pruned.map(name => '-name ' + q(name)).join(' -o ') + ' \\) \\)';
@@ -197,6 +197,8 @@ function referenceScript(base: string, direct: Map<number, Target>, keys: Set<st
     ...[...protectedRoots, ...privacyRoots].filter(root => within(root.toLowerCase(), base.toLowerCase()) && root.toLowerCase() !== base.toLowerCase()).map(root =>
       '-ipath ' + q(literalGlob('./' + root.slice(base.replace(/\/$/, '').length + 1))))].join(' -o ');
   const wanted = [...keys].map(key => key.includes('/') ? '-path ' + q('*/' + literalGlob(key)) : '-name ' + q(literalGlob(key))).join(' -o ');
+  const inside = (tag: string, target: Target) => `if probe ${q(target.path === '.' ? '.' : './' + target.path)} ${target.documents && !/\.(md|markdown)$/i.test(target.path) ? 'dir' : 'any'}; then printf '${tag}\\n'; fi`;
+  const outside = (tag: string, target: Target) => `if (base=/; cd / && probe ${q('.' + target.absolute)} any); then printf '${tag}\\n'; fi`;
   return `set -f
 export LC_ALL=C
 base=${q(base)}
@@ -210,8 +212,9 @@ probe() (
   item=./$rest
   [ ! -L "$item" ] && [ -r "$item" ] && { { [ -d "$item" ] && [ -x "$item" ]; } || { [ "$2" != dir ] && [ -f "$item" ]; }; }
 )
-${[...direct].map(([i, target]) => `if probe ${q(target.path === '.' ? '.' : './' + target.path)} ${target.documents && !/\.(md|markdown)$/i.test(target.path) ? 'dir' : 'any'}; then printf 'd${i}\\n'; fi`).join('\n')}
-${[...external].map(([i, target]) => `if (base=/; cd / && probe ${q('.' + target.absolute)} any); then printf 'e${i}\\n'; fi`).join('\n')}
+${[...direct].map(([i, target]) => inside(`d${i}`, target)).join('\n')}
+${[...external].map(([i, target]) => outside(`e${i}`, target)).join('\n')}
+${[...exact].map(([i, target]) => (target.external ? outside : inside)(`c${i}`, target)).join('\n')}
 ${wanted ? `{ if find -P . \\( ${prune} \\) -prune -o \\( ${wanted} \\) \\( -type f -o -type d \\) -exec sh -c '
   for p do [ -r "$p" ] && { [ ! -d "$p" ] || [ -x "$p" ]; } && printf "%s\\n" "$p"; done; :
 ' sh {} + 2>/dev/null; then printf 'complete\\n'; fi; } |
@@ -295,16 +298,36 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
     return target;
   }
 
-  async resolveReferences(workspace: Workspace, references: string[]): Promise<ArtifactResolution[]> {
-    if (!Array.isArray(references) || references.length > 32 || references.some(ref => typeof ref !== 'string') ||
-      references.reduce((n, ref) => n + Buffer.byteLength(ref), 0) > 16384) throw new Error(t('artifacts.batchTooLarge'));
+  /** A relative reference with a `cwd` (the directory Claude Code was in when it wrote it) is first
+   * checked there, never searched for there. Not found there, the folder's own rules below apply when
+   * that directory is in the folder and the path does not climb out of it (`../`). */
+  async resolveReferences(workspace: Workspace, references: ArtifactReference[]): Promise<ArtifactResolution[]> {
+    const valid = (ref: ArtifactReference) => typeof ref === 'string' || typeof ref === 'object' && ref !== null && typeof ref.path === 'string' && typeof ref.cwd === 'string';
+    if (!Array.isArray(references) || references.length > 32 || !references.every(valid) ||
+      references.reduce((n, ref) => n + (typeof ref === 'string' ? Buffer.byteLength(ref) : Buffer.byteLength(ref.path) + Buffer.byteLength(ref.cwd)), 0) > 16384) throw new Error(t('artifacts.batchTooLarge'));
     if (!references.length) return [];
-    const locate = await this.locator(workspace, references);
+    const paths = references.map(ref => typeof ref === 'string' ? ref : ref.path);
+    const anchored = references.map((ref, i) => {
+      if (typeof ref === 'string' || !ref.cwd.startsWith('/') || asciiControl.test(ref.cwd) || /^[~/]/.test(paths[i])) return undefined;
+      try { assertReference(paths[i]); } catch { return undefined; }
+      return { cwd: ref.cwd, path: posix.join(ref.cwd, paths[i]) };
+    });
+    const locate = await this.locator(workspace, [...paths, ...anchored.flatMap(item => item ? [item.cwd, item.path] : [])]);
+    const inFolder = (path: string) => { try { return !locate(path).external; } catch { return false; } };
     const matches: ArtifactResolution[] = references.map(() => null);
     const direct = new Map<number, Target>(), external = new Map<number, Target>(), keys = new Set<string>(), suffixes = new Map<number, string>();
+    const exact = new Map<number, ReturnType<typeof locate>>(), exactFound = new Set<number>();
     let root: Target | undefined;
     try { root = locate('.'); } catch { /* Still allow exact paths to permitted Markdown trees. */ }
-    for (const [i, ref] of references.entries()) {
+    for (const [i, ref] of paths.entries()) {
+      const fromCwd = anchored[i];
+      if (fromCwd) {
+        let target: ReturnType<typeof locate>;
+        try { target = locate(fromCwd.path); } catch { continue; }
+        if (target.external && target.privacyRoots.some(folder => within(target.absolute, folder))) { matches[i] = 'outside'; continue; }
+        exact.set(i, target);
+        if (!inFolder(fromCwd.cwd) || /^\.\.(?:\/|$)/.test(posix.normalize(ref))) continue;
+      }
       let target: ReturnType<typeof locate>;
       try { target = locate(ref); } catch { continue; }
       if (target.external) {
@@ -321,10 +344,10 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
         keys.add(relative); suffixes.set(i, relative);
       }
     }
-    if (!direct.size && !keys.size && !external.size) return matches;
-    const base = root?.absolute ?? direct.values().next().value?.base ?? '/';
-    const searched = new Set(references.flatMap(ref => ref.split('/')).filter(name => outputDirectories.has(name)));
-    const result = await this.transport.run(workspace, referenceScript(base, direct, keys, root?.protectedRoots ?? [], root?.privacyRoots ?? [], external, searched), {
+    if (!direct.size && !keys.size && !external.size && !exact.size) return matches;
+    const base = root?.absolute ?? [...direct.values(), ...[...exact.values()].filter(target => !target.external)][0]?.base ?? '/';
+    const searched = new Set(paths.flatMap(ref => ref.split('/')).filter(name => outputDirectories.has(name)));
+    const result = await this.transport.run(workspace, referenceScript(base, direct, keys, root?.protectedRoots ?? [], root?.privacyRoots ?? [], external, searched, exact), {
       tag: 'artifact.resolve', maxBytes: 160 * 1024, timeoutMs: 8000,
     });
     const found = new Map<string, string>(), seen = new Set<string>();
@@ -332,6 +355,7 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
     for (const line of result.stdout.toString('utf8').split('\n')) {
       if (line === '!') complete = true;
       else if (line.startsWith('?')) seen.add(line.slice(1));
+      else if (/^c\d+$/.test(line)) exactFound.add(Number(line.slice(1)));
       else if (/^[de]\d+$/.test(line)) {
         const i = Number(line.slice(1)), target = (line[0] === 'd' ? direct : external).get(i);
         if (target) matches[i] = { path: target.path };
@@ -346,7 +370,9 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
       }
     }
     return matches.map((match, i) => {
-      const ref = references[i], key = suffixes.get(i) ?? ref, path = match ? undefined : found.get(key);
+      const hit = exactFound.has(i) && exact.get(i);
+      if (hit) return { path: hit.path };
+      const ref = paths[i], key = suffixes.get(i) ?? ref, path = match ? undefined : found.get(key);
       return path ? { path } : !match && complete && keys.has(ref) && !ref.includes('/') && !seen.has(ref) ? 'missing' : match;
     });
   }

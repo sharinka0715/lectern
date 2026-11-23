@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chipInsertion, chipOrder, chipToken, chipTokens, completionEdit, displayFromDraft, draftFromDisplay, mentionCandidates, reconcileChips, removeChips, snapSelection, type ChipSource } from '../src/renderer/composer-chips';
+import { chipInsertion, chipOrder, chipToken, chipTokens, completionEdit, displayFromDraft, draftFromDisplay, mentionCandidates, reconcileChips, removeChips, sentFromDisplay, snapSelection, type ChipSource } from '../src/renderer/composer-chips';
 
 // A small chip table like the renderer's: one id per mention as written.
 function table() {
@@ -165,4 +165,16 @@ test('a draft put back turns known files into chips; other mentions are checked 
   assert.equal(show(display), '看 [/up/a.png] 和 [src/app.ts] ，以及 [docs/my notes.md] 还有 @src/ [src/app.ts] @agent-reviewer dev@example.com');
   assert.equal(draftFromDisplay(display, mentionOf, known), draft);
   assert.deepEqual(mentionCandidates(draft, checked.attached), ['agent-reviewer']);
+});
+
+test('after a cd, chips of folder files are sent as absolute paths; typed mentions and attachments as written', () => {
+  const { source, mentionOf, known, mentions } = table();
+  const chip = (path: string) => source.attached(path) || ['src/app.ts', 'my notes.md'].includes(path);
+  const draft = '看 @src/app.ts 和 @"my notes.md"，附件 @/up/a.png，手打的 @typed.ts';
+  const display = displayFromDraft(draft, { ...source, attached: chip });
+  const pathOf = (id: number) => mentions.get(id)?.path;
+  assert.equal(sentFromDisplay(display, mentionOf, pathOf, '/home/dev/project', known),
+    '看 @/home/dev/project/src/app.ts 和 @"/home/dev/project/my notes.md"，附件 @/up/a.png，手打的 @typed.ts');
+  // The box still shows the same chips and keeps the draft as written.
+  assert.equal(draftFromDisplay(display, mentionOf, known), draft);
 });

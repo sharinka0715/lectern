@@ -27,7 +27,7 @@ import { gitChanges, privacyGuarded } from './git-changes';
 import type { AnswerPrompt } from './ssh-login';
 import { linkScript, startTerminalLink, type TerminalLink } from './terminal-link';
 import { diagnostic, errorDetails, getDiagnosticsInfo, summarize } from '../diagnostics';
-import { missingCwdNotice, scanHistoryProjects } from './history';
+import { missingCwdNotice, projectSlug, scanHistoryProjects } from './history';
 import { normalizeSessionTitle } from '../shared/session-title';
 import { readRecentCustomTitle } from './session-title';
 import { renameInactiveSession } from './history-rename';
@@ -87,7 +87,9 @@ export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmu
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
 export interface ReadResult { /** Asked for with `listSubagents`: every subagent of the session (subagent-files.ts). */ subagents?: SubagentListing;
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
-  sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean }; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
+  sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean };
+  /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
+  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
@@ -97,13 +99,7 @@ export class SessionGoneError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionGoneError'; }
 }
 
-export function projectSlug(cwd: string): string {
-  const slug = cwd.replace(/[^A-Za-z0-9]/g, '-');
-  if (slug.length <= 200) return slug;
-  let hash = 0;
-  for (let i = 0; i < cwd.length; i++) hash = (Math.imul(hash, 31) + cwd.charCodeAt(i)) | 0;
-  return slug.slice(0, 200) + '-' + Math.abs(hash).toString(36);
-}
+export { projectSlug };
 function assertSessionId(value: string): void { if (!UUID.test(value)) throw new Error('Invalid Claude session UUID'); }
 function assertPaneId(value: string): void { if (!/^%\d+$/.test(value)) throw new Error('Invalid tmux pane ID'); }
 function expandPath(value: string): string { return value === '~' ? '"$HOME"' : value.startsWith('~/') ? `"$HOME"/${q(value.slice(2))}` : q(value); }
@@ -1249,7 +1245,7 @@ ${after}`;
     const runtimeInstanceId = runtimeIdentity(workspace, location, pane);
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
-    return { subagents, sessionProcess: elsewhere, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {

@@ -52,6 +52,21 @@ test('a user message keeps every known file in its place as a chip; the row abov
   assert.deepEqual(messageFileLayout('只有文字', [], none), { chips: [], row: [] });
 });
 
+test("a user message's mentions are the files Claude Code read from its directory then", () => {
+  const sub = '/home/dev/project/sub', root = '/home/dev/project';
+  const located = (path: string) => path.startsWith('/') ? undefined : `${sub}/${path}`.replace(/\/[^/]+\/\.\.\//, '/');
+  // Claude Code recorded both: the file at the prompt's directory is the mention's, not the first that ends the same way.
+  const files = [{ id: 'root', name: 'notes.md', path: `${root}/notes.md` }, { id: 'sub', name: 'notes.md', path: `${sub}/notes.md` }];
+  let layout = messageFileLayout('@notes.md 和 @../notes.md', files, () => false, located);
+  assert.deepEqual(layout.chips.map(chip => [chip.mention, chip.attachment?.id]), [['@notes.md', 'sub'], ['@../notes.md', 'root']]);
+  // Not recorded: found from the directory (the chip opens that path), else as before.
+  layout = messageFileLayout('@a.png @b.md @c.md', [], path => path === 'a.png' ? `${sub}/a.png` : path === 'b.md', located);
+  assert.deepEqual(layout.chips.map(chip => [chip.mention, chip.path]), [['@a.png', `${sub}/a.png`], ['@b.md', 'b.md']]);
+  assert.deepEqual(layout.row, [{ key: `path:${sub}/a.png`, path: `${sub}/a.png`, attachment: undefined }]);
+  // Sent after a cd as an absolute path, a mention put back in the box is still confirmed by the check.
+  assert.ok(confirmsMention(`${sub}/notes.md`, { path: 'sub/notes.md' }));
+});
+
 test('a reference check confirms the very file a mention names, not one found elsewhere', () => {
   assert.ok(confirmsMention('src/app.ts', { path: 'src/app.ts' }));
   assert.ok(confirmsMention('./src/app.ts', { path: 'src/app.ts' }));

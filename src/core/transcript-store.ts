@@ -17,6 +17,8 @@ export interface TranscriptRow {
   order: number;
   kind: Kind;
   timestamp?: string;
+  /** Claude Code's working directory when it wrote the record. */
+  cwd?: string;
   text?: string;
   attachments?: TranscriptAttachment[];
   responseId?: string;
@@ -24,7 +26,7 @@ export interface TranscriptRow {
   realRequest?: boolean;
   usage?: ContextUsageObservation;
   tools?: ToolBlock[];
-  results?: (Pick<ToolBlock, 'id' | 'editPatch' | 'cellEdit'> & { result: string; isError: boolean })[];
+  results?: (Pick<ToolBlock, 'id' | 'editPatch' | 'cellEdit' | 'resultCwd'> & { result: string; isError: boolean })[];
   preservation?: Preservation;
   taskList?: ConversationTask[];
   peers?: PeerMessage[];
@@ -97,6 +99,8 @@ function commandText(text: string): string | undefined {
 
 function normalize(record: JsonRecord, key: string, order: number, parent: string | null, bodies: boolean): TranscriptRow {
   const row: TranscriptRow = { key, order, parent, kind: 'hidden', timestamp: string(record.timestamp) };
+  const cwd = bodies ? string(record.cwd) : undefined;
+  if (cwd) row.cwd = cwd;
   if (record.type === 'system') {
     if (record.subtype === 'compact_boundary') {
       row.kind = 'compact';
@@ -198,10 +202,10 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
       const thought = foldedThought(block, record, key, index, text.length, bodies, !thoughts);
       if (thought) {
         thoughts++;
-        row.tools.push(thought);
+        row.tools.push(cwd ? { ...thought, cwd } : thought);
       } else if (block.type === 'tool_use') {
         row.tools.push({ id: string(block.id) ?? `${key}:tool:${index}`, name: string(block.name) ?? 'Tool',
-          input: bodies ? string(block.input) ?? JSON.stringify(block.input ?? {}, null, 2) : '', textOffset: text.length });
+          input: bodies ? string(block.input) ?? JSON.stringify(block.input ?? {}, null, 2) : '', textOffset: text.length, ...(cwd && { cwd }) });
       } else if (bodies) {
         const paragraph = blockText(block, !!row.attachments, true);
         if (paragraph) text += (text ? '\n\n' : '') + paragraph;
@@ -219,7 +223,7 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
       const cell = typeof detail.notebook_path === 'string' && typeof detail.old_source === 'string' && typeof detail.new_source === 'string'
         ? { before: detail.old_source, after: detail.new_source } : undefined;
       row.results = results.flatMap(block => typeof block.tool_use_id === 'string'
-        ? [{ id: block.tool_use_id, result: bodies ? contentText(block.content, !!row.attachments) : '', isError: block.is_error === true, ...(patch && { editPatch: patch }), ...(cell && { cellEdit: cell }) }] : []);
+        ? [{ id: block.tool_use_id, result: bodies ? contentText(block.content, !!row.attachments) : '', isError: block.is_error === true, ...(patch && { editPatch: patch }), ...(cell && { cellEdit: cell }), ...(cwd && { resultCwd: cwd }) }] : []);
     } else {
       const text = contentText(content, !!row.attachments);
       const command = commandText(text);

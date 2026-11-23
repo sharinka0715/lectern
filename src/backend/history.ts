@@ -114,9 +114,30 @@ export function metadataFromPrefix(text: string): { cwd?: string; latestAt?: str
   return { cwd, latestAt };
 }
 
+/** Claude Code's project folder name for a working directory (where it keeps that directory's conversations). */
+export function projectSlug(cwd: string): string {
+  const slug = cwd.replace(/[^A-Za-z0-9]/g, '-');
+  if (slug.length <= 200) return slug;
+  let hash = 0;
+  for (let i = 0; i < cwd.length; i++) hash = (Math.imul(hash, 31) + cwd.charCodeAt(i)) | 0;
+  return slug.slice(0, 200) + '-' + Math.abs(hash).toString(36);
+}
+
+/** The directory a conversation started in, from a later working directory (a subdirectory after a
+ * `cd`): the nearest one up the tree the file's project folder is named after. */
+export function launchDirectory(file: string, cwd: string): string | undefined {
+  const project = path.posix.basename(path.posix.dirname(file));
+  for (let dir = cwd; ; dir = path.posix.dirname(dir)) {
+    if (projectSlug(dir) === project || dir.replace(/[/.]/g, '-') === project) return dir;
+    if (dir === '/') return undefined;
+  }
+}
+
 export function historyMetadata(frame: MetadataFrame): { cwd?: string; latestAt?: string; cwdSource?: 'head' | 'tail' } {
   const head = metadataFromPrefix(frame.head), tail = metadataFromPrefix(frame.tail);
-  return { cwd: head.cwd ?? tail.cwd, cwdSource: head.cwd ? 'head' : tail.cwd ? 'tail' : undefined, latestAt: [head.latestAt, tail.latestAt].filter(Boolean).sort().at(-1) };
+  // The end of a file is where Claude Code is now, maybe below where the conversation started.
+  const tailCwd = tail.cwd && (launchDirectory(frame.path, tail.cwd) ?? tail.cwd);
+  return { cwd: head.cwd ?? tailCwd, cwdSource: head.cwd ? 'head' : tailCwd ? 'tail' : undefined, latestAt: [head.latestAt, tail.latestAt].filter(Boolean).sort().at(-1) };
 }
 
 /** Larger snapshot/queue records can precede the first cwd. Expand only those

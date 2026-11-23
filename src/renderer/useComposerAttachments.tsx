@@ -4,8 +4,8 @@ import type { Workspace } from '../shared/types';
 import { attachmentKind, findMentions, generatedName, maxAttachmentBytes, mentionFor, needsName, pasteAttaches } from '../shared/attachments';
 import { ComposerAttachments, ComposerChipLayer, type ComposerItem } from './AttachmentCards';
 import { attachmentEntry, chipEntry, chipFor, chipMention, confirmFile, folderThumbnail, isChipPath, knownChip, localThumbnail, onFolderThumbnail, rememberAttachment, settleChip, updateChip, uploadingChip, verifyMentions } from './attachment-registry';
-import { pathBasename } from './artifact-paths';
-import { chipInsertion, chipOrder, chipToken, chipTokens, completionEdit, displayFromDraft, draftFromDisplay, mentionCandidates, reconcileChips, removeChips, snapSelection, type ChipSource, type ChipToken } from './composer-chips';
+import { isRelativePath, pathBasename, pathFromCwd } from './artifact-paths';
+import { chipInsertion, chipOrder, chipToken, chipTokens, completionEdit, displayFromDraft, draftFromDisplay, mentionCandidates, reconcileChips, removeChips, sentFromDisplay, snapSelection, type ChipSource, type ChipToken } from './composer-chips';
 import { ImagePreviewDialog } from './ChatImage';
 
 interface Options {
@@ -464,6 +464,19 @@ export function useComposerAttachments(options: Options) {
     lastSelection.current = [edit.caret, edit.caret];
     return true;
   }
+  /** The text to send for `draft`, decided now: while Claude Code works elsewhere than the folder
+   * (`launch`, its absolute path), chips of folder files go as absolute paths (sentFromDisplay),
+   * which are then known files of the folder too (chips again when put back or pasted). */
+  function submitted(draft: string, launch: string | undefined) {
+    const workspace = latest.current.workspace;
+    if (!launch || !workspace) return draft;
+    const shown = view.current.draft === draft ? view.current.text : displayFromDraft(draft, source);
+    for (const token of chipTokens(shown, knownChip)) {
+      const path = chipEntry(token.id)?.path;
+      if (path && isRelativePath(path)) confirmFile(workspace.id, pathFromCwd(launch, path));
+    }
+    return sentFromDisplay(shown, chipMention, id => chipEntry(id)?.path, launch, knownChip);
+  }
   /** A click on a chip selects it (to cut, copy or delete it whole). */
   function pick(token: ChipToken) {
     const input = latest.current.inputRef.current;
@@ -485,5 +498,5 @@ export function useComposerAttachments(options: Options) {
     inputRef={options.inputRef} onPick={pick} onOpen={open} /> : null;
 
   return { pending: shown.map(file => file.name), text, setText, strip, layer, onKeyDown, inputProps,
-    dragging: dragging && options.enabled, onPaste, dropTarget, choose, fileInput, chooseFile };
+    dragging: dragging && options.enabled, onPaste, dropTarget, choose, fileInput, chooseFile, submitted };
 }

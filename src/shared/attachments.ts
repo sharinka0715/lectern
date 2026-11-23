@@ -45,7 +45,8 @@ export function samePath(recorded: string, mentioned: string): boolean {
 }
 
 interface AttachmentLike { id: string; path?: string; image?: true; directory?: true }
-/** A file an @-mention names, shown in its place as a chip; `mention` is the text it stands for (and copies as). */
+/** A file an @-mention names, shown in its place as a chip; `mention` is the text it stands for (and copies as).
+ * `path` is the file's path as found (the mention's, or where Claude Code read it from). */
 export interface MentionChip<T> { start: number; end: number; path: string; mention: string; attachment?: T }
 /** A file in the row above a user message's text. */
 export interface FileRowItem<T> { key: string; path?: string; attachment?: T }
@@ -57,15 +58,21 @@ export interface FileRowItem<T> { key: string; path?: string; attachment?: T }
  * order the text names them, and every attached file the text does not name;
  * a file named in the text is not repeated there as a card (its chip already
  * says it). A mention counts when the transcript recorded its file, or when
- * `known` says so (a Lectern attachment, a file the reference check found).
+ * `known` says so (a Lectern attachment, a file the reference check found; a
+ * string: found at that path). `located` is where Claude Code read a relative
+ * mention from (joined to the prompt's directory): a file recorded there is the
+ * mention's before one that only ends the same way.
  * Images embedded in the message keep their own place in the text.
  */
-export function messageFileLayout<T extends AttachmentLike>(text: string, attachments: readonly T[], known: (path: string) => boolean) {
+export function messageFileLayout<T extends AttachmentLike>(text: string, attachments: readonly T[], known: (path: string) => boolean | string,
+  located: (path: string) => string | undefined = () => undefined) {
   const files = attachments.filter(file => file.path || !file.image);
   const chips: MentionChip<T>[] = [];
   for (const mention of findMentions(text)) {
-    const attachment = files.find(file => file.path && samePath(file.path, mention.path));
-    if (attachment || known(mention.path)) chips.push({ ...mention, mention: text.slice(mention.start, mention.end), attachment });
+    const at = located(mention.path);
+    const attachment = (at && files.find(file => file.path && samePath(file.path, at))) || files.find(file => file.path && samePath(file.path, mention.path));
+    const found = !attachment && known(mention.path);
+    if (attachment || found) chips.push({ ...mention, ...typeof found === 'string' && { path: found }, mention: text.slice(mention.start, mention.end), attachment });
   }
   const row: FileRowItem<T>[] = [], shown = new Set<string>();
   for (const chip of chips) {

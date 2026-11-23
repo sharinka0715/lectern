@@ -101,6 +101,34 @@ test('workspace reference lookup returns only unique readable targets and checks
   await assert.rejects(() => access.resolve(workspace.id, Array(33).fill('x')), /批次/);
 });
 
+test("a reply's relative paths are resolved from the directory Claude Code was in when it wrote them", posix, async t => {
+  const { base, cwd, config, workspace, artifacts } = await fixture(t);
+  const sub = join(cwd, 'sub'), outside = join(base, 'added dir');
+  for (const folder of [join(sub, 'deep'), join(cwd, 'other'), outside]) await mkdir(folder, { recursive: true });
+  await Promise.all([join(cwd, 'notes.md'), join(sub, 'notes.md'), join(sub, 'deep/x.md'), join(cwd, 'other/unique.md'), join(cwd, 'root-only.md'),
+    join(outside, 'data.csv'), join(sub, '.env')].map(file => writeFile(file, file)));
+  const access = new ArtifactAccess(() => workspace, artifacts, { allowOutside: async () => false, saveAs: async () => undefined });
+  const at = (dir: string, ...paths: string[]) => paths.map(path => ({ path, cwd: dir }));
+  // Without a directory (or written at the root) a name in two places is as before; at the root, the root's file is the one meant.
+  assert.deepEqual(await access.resolve(workspace.id, ['notes.md', ...at(cwd, 'notes.md', 'sub/notes.md', 'unique.md', '../added dir/data.csv')]), [
+    null, { path: 'notes.md' }, { path: 'sub/notes.md' }, { path: 'other/unique.md' }, { path: join(outside, 'data.csv') },
+  ]);
+  // In a subfolder: exact there first; not there, the folder's rules; never above it for `../`.
+  assert.deepEqual(await access.resolve(workspace.id, at(sub, 'notes.md', './notes.md', '../notes.md', 'deep/x.md', 'x.md', 'unique.md', 'root-only.md',
+    '../unique.md', '../absent.md', 'absent.md', '.env', '../../added dir/data.csv')), [
+    { path: 'sub/notes.md' }, { path: 'sub/notes.md' }, { path: 'notes.md' }, { path: 'sub/deep/x.md' }, { path: 'sub/deep/x.md' },
+    { path: 'other/unique.md' }, { path: 'root-only.md' }, null, null, 'missing', null, { path: join(outside, 'data.csv') },
+  ]);
+  // Outside the folder (an --add-dir directory): only that path is checked there, nothing is searched.
+  assert.deepEqual(await access.resolve(workspace.id, at(outside, 'data.csv', './data.csv', 'notes.md', 'unique.md', 'sub/notes.md')), [
+    { path: join(outside, 'data.csv') }, { path: join(outside, 'data.csv') }, null, null, null,
+  ]);
+  // Protected places stay closed from any directory; a directory that is not absolute is ignored.
+  assert.deepEqual(await access.resolve(workspace.id, [...at(config, 'private.ts'), ...at('sub', 'notes.md'), ...at(base, 'Project with spaces/notes.md')]),
+    [null, null, { path: 'notes.md' }]);
+  await assert.rejects(() => access.resolve(workspace.id, [{ path: 'x', cwd: 1 } as never]), /批次/);
+});
+
 test('reference searches use the selected transport and discard a changed workspace while in flight', posix, async t => {
   const { base, workspace } = await fixture(t);
   const ssh: Workspace = { id: 'ssh', name: 'same folder', kind: 'ssh', host: 'fixture-host', cwd: '~/project' };

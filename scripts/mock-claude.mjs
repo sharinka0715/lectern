@@ -53,11 +53,14 @@ if (!id || !config) throw new Error('The fixture requires an isolated config and
 mkdirSync(config, { recursive: true });
 appendFileSync(path.join(config, 'launches.jsonl'), JSON.stringify({ args, id }) + '\n');
 const cwd = process.cwd();
+// Where it works now: a prompt with `mock-cd:<dir>` runs `cd <dir>` first. Like Claude Code, later
+// records carry the new directory and @-mentions are read from it; the file stays in the launch's project.
+let current = cwd;
 const project = path.join(config, 'projects', cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
 mkdirSync(project, { recursive: true });
 const file = path.join(project, `${id}.jsonl`);
 const record = (type, content, extra = {}) => ({
-  type, uuid: randomUUID(), sessionId: id, cwd, timestamp: new Date().toISOString(),
+  type, uuid: randomUUID(), sessionId: id, cwd: current, timestamp: new Date().toISOString(),
   message: { role: type, content, ...extra },
 });
 // The newest record with a UUID: the parent of rows written with explicit links (permission prompts below).
@@ -180,7 +183,7 @@ function askPermission(text, mode, ms) {
     undefined, { id: randomUUID(), stop_reason: 'tool_use', model: fixtureModels[selectedModel] });
   permission = { focus: 0, call, written: false };
   const prompt = linked('user', [{ type: 'text', text }], lastUuid);
-  const date = { type: 'attachment', uuid: randomUUID(), parentUuid: prompt.uuid, sessionId: id, cwd, attachment: { type: 'date', date: new Date().toISOString().slice(0, 10) } };
+  const date = { type: 'attachment', uuid: randomUUID(), parentUuid: prompt.uuid, sessionId: id, cwd: current, attachment: { type: 'date', date: new Date().toISOString().slice(0, 10) } };
   if (mode === 'first') {
     permission.written = true;
     append({ ...call, parentUuid: date.uuid });
@@ -221,10 +224,18 @@ async function answer(text) {
   append(record('user', [{ type: 'text', text }]));
   // Like Claude Code, every @-mentioned file that exists becomes an attachment row after the prompt.
   for (const match of text.matchAll(/(^|\s)@(?:"([^"\n]+)"|([^\s"]+))/g)) {
-    const filename = path.resolve(cwd, match[2] ?? match[3]);
+    const filename = path.resolve(current, match[2] ?? match[3]);
     if (!statSync(filename, { throwIfNoEntry: false })?.isFile()) continue;
-    append({ type: 'attachment', uuid: randomUUID(), sessionId: id, cwd, timestamp: new Date().toISOString(),
-      attachment: { type: 'file', filename, displayPath: path.relative(cwd, filename) } });
+    append({ type: 'attachment', uuid: randomUUID(), sessionId: id, cwd: current, timestamp: new Date().toISOString(),
+      attachment: { type: 'file', filename, displayPath: path.relative(current, filename) } });
+  }
+  const move = /(?:^|\s)mock-cd:(\S+)/.exec(text);
+  if (move && statSync(path.resolve(current, move[1]), { throwIfNoEntry: false })?.isDirectory()) {
+    // The call is written in the old directory, its result in the new one.
+    const call = { type: 'tool_use', id: 'toolu_mock_' + randomUUID().slice(0, 8), name: 'Bash', input: { command: `cd ${move[1]}`, description: 'Change directory' } };
+    append(record('assistant', [call], { id: randomUUID(), stop_reason: 'tool_use', model: fixtureModels[selectedModel] }));
+    current = path.resolve(current, move[1]);
+    append(record('user', [{ type: 'tool_result', tool_use_id: call.id, content: '' }]));
   }
   const response = /hello|你好/i.test(text)
     ? '你好！这是运行在真实 tmux 中的离线模拟会话。\n\n回复先从终端画面逐段出现，然后由 JSONL 正文在原气泡内完成对齐。中文与 emoji 🧭 都会完整保留。\n\n你可以关闭窗口再回来，继续这个会话。'

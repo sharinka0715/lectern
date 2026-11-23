@@ -42,10 +42,24 @@ export function parentPath(path: string): string | undefined {
   return clean.slice(0, i);
 }
 
+/** Not absolute, home-relative or a drive path. */
+export const isRelativePath = (path: string) => !/^(?:[~/\\]|[a-z]:[\\/])/i.test(path);
+
 export function relativeToFile(file: string, path: string): string {
-  if (/^(?:[~/\\]|[a-z]:[\\/])/i.test(path)) return path;
+  if (!isRelativePath(path)) return path;
   const parent = parentPath(file);
   return (parent && parent !== '.' ? parent.replace(/\/$/, '') : '.') + '/' + path;
+}
+
+/** A relative path written in the (absolute, POSIX) directory `cwd`, as an absolute path. */
+export function pathFromCwd(cwd: string, path: string): string {
+  if (!isRelativePath(path)) return path;
+  const parts: string[] = [];
+  for (const part of (cwd + '/' + path).split('/')) {
+    if (part === '..') parts.pop();
+    else if (part && part !== '.') parts.push(part);
+  }
+  return '/' + parts.join('/');
 }
 
 // Chinese prose need not put spaces around filenames. These are fallback spans,

@@ -1029,19 +1029,21 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     const stillSelected = () => sessionRequest.current === request && selected.current.workspaceId === workspace.id && selected.current.sessionId === sessionId;
     setSending(true);
     setError("");
+    // After a `cd`, files picked from the @ list go as absolute paths (decided now, with where Claude Code works now).
+    const sent = attachments.submitted(text, snapshot?.sessionId === sessionId ? snapshot.workingDirectory?.launch : undefined);
     // Like the native client, the composer clears and a plain message shows
     // at once; the main process still reports success only after typing it.
     const turnInput = !!(paneId && snapshot?.panePid && (inTurn || restoredDraft));
-    const pending = !turnInput && showsOutgoing(text)
-      ? startOutgoing(`${workspace.id}:${sessionId}`, text, snapshot?.messages, `outgoing:${Date.now()}`) : undefined;
+    const pending = !turnInput && showsOutgoing(sent)
+      ? startOutgoing(`${workspace.id}:${sessionId}`, sent, snapshot?.messages, `outgoing:${Date.now()}`) : undefined;
     if (pending) setOutgoing(pending);
     setDraft(current => (current === text ? "" : current));
     transcript.current?.scrollToLatest();
     try {
       if (turnInput && paneId && snapshot?.panePid) {
-        const action: TurnAction = restoredDraft ? {kind:'sendRestored',text,original:restoredDraft} : {kind:mode,text};
+        const action: TurnAction = restoredDraft ? {kind:'sendRestored',text:sent,original:restoredDraft} : {kind:mode,text:sent};
         await window.desktop.turnAction(workspace.id,sessionId,paneId,snapshot.panePid,action);
-      } else await window.desktop.sendMessage(workspace.id, sessionId, text);
+      } else await window.desktop.sendMessage(workspace.id, sessionId, sent);
       if (
         selected.current.workspaceId === workspace.id &&
         selected.current.sessionId === sessionId

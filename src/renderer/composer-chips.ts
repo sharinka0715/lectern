@@ -5,7 +5,8 @@
 // A layer over the textarea draws the chip (the file's name) on those spaces.
 // The token never changes once typed, so native undo, redo and drag keep working.
 // The draft (what is sent, saved and restored) has the @-mention in its place.
-import { findMentions } from '../shared/attachments';
+import { findMentions, mentionFor } from '../shared/attachments';
+import { isRelativePath, pathFromCwd } from './artifact-paths';
 
 const space = ' ';
 const digitZero = 0xE0030;
@@ -84,6 +85,20 @@ export function draftFromDisplay(text: string, mentionOf: (id: number) => string
   }
   add(text.slice(from));
   return draft;
+}
+
+/**
+ * The draft as sent while Claude Code works elsewhere than the folder (after a `cd`): it reads an
+ * @-mention from its current directory, so a chip of a folder file (`pathOf`: picked from the @ list or
+ * found by the reference check, relative to the folder) goes as that file's absolute path under
+ * `launch`, the folder's. Attachments (absolute already) and typed text stay as written.
+ */
+export function sentFromDisplay(text: string, mentionOf: (id: number) => string | undefined, pathOf: (id: number) => string | undefined,
+  launch: string, known?: (id: number) => boolean): string {
+  return draftFromDisplay(text, id => {
+    const mention = mentionOf(id), path = pathOf(id);
+    return mention !== undefined && path && isRelativePath(path) ? mentionFor(pathFromCwd(launch, path)) : mention;
+  }, known);
 }
 
 /**

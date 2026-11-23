@@ -56,6 +56,9 @@ export interface ArtifactEntry {
 export interface ArtifactDirectory { path: string; entries: ArtifactEntry[]; truncated: boolean; nextOffset?: number }
 /** No existence check is made for paths outside the workspace until the user opens them. */
 export type ArtifactResolution = { path: string } | 'outside' | 'missing' | null;
+/** A path as written, or with the directory Claude Code was in when it wrote it (the record's
+ * `cwd`, absolute): a relative path is looked for there first. */
+export type ArtifactReference = string | { path: string; cwd: string };
 export type ArtifactPreview = {
   path: string;
   name: string;
@@ -119,6 +122,10 @@ export interface ToolBlock {
   /** No result, and none will come: the subagent that called it was interrupted or stopped, or ended
    * (or its end is unknown) without one. Shown as such, not as in progress (subagent-reader.ts). */
   unfinished?: 'interrupted' | 'incomplete';
+  /** Claude Code's working directory when it wrote the call, and when it wrote the result (a `cd` in
+   * the command already shows in the result's). Relative paths in each are resolved from there. */
+  cwd?: string;
+  resultCwd?: string;
 }
 /** One changed file of a git working tree (paths relative to its root). */
 export interface GitChange {
@@ -165,6 +172,10 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   text: string;
   tools: ToolBlock[];
+  /** The working directory along a message's text: from each `textOffset` on, the `cwd` Claude Code
+   * recorded with that text (it changes after a `cd`). Relative paths in the text are resolved from there;
+   * a prompt has one, where Claude Code read its @-mentions. */
+  cwds?: { textOffset: number; cwd: string }[];
   source: 'jsonl' | 'preview' | 'pending';
   status: 'streaming' | 'complete';
   timestamp?: string;
@@ -370,6 +381,9 @@ export interface SessionSnapshot {
   contextUsage?: import('../core/session-telemetry').ContextUsageObservation;
   /** Claude Code version of the running process (status line), else of the latest record. */
   cliVersion?: string;
+  /** Only while Claude Code works elsewhere than where the conversation started (the newest record's
+   * `cwd` after a `cd`): that directory, and the folder's absolute path (`launch`) its files are relative to. */
+  workingDirectory?: { current: string; launch: string };
   /** Claude Code 2.1.310+: `activity` lists every subagent of the session, each with its state
    * from its meta file (core/subagent-status.ts), whatever part of the transcript is loaded. */
   subagentsListed?: boolean;
@@ -540,7 +554,7 @@ export interface DesktopAPI {
   /** Embedded images are encoded on this computer; images attached by path, on the machine they are on. */
   previewMessageAttachmentThumbnail(workspaceId: string, sessionId: string, id: string): Promise<ArtifactPreview>;
   downloadMessageAttachment(workspaceId: string, sessionId: string, id: string): Promise<boolean>;
-  resolveArtifactReferences(workspaceId: string, paths: string[]): Promise<ArtifactResolution[]>;
+  resolveArtifactReferences(workspaceId: string, references: ArtifactReference[]): Promise<ArtifactResolution[]>;
   listArtifactDirectory(workspaceId: string, path?: string, offset?: number): Promise<ArtifactDirectory>;
   previewArtifact(workspaceId: string, path: string): Promise<ArtifactPreview>;
   downloadArtifact(workspaceId: string, path: string): Promise<boolean>;
