@@ -208,3 +208,20 @@ export const permissionLayout = (s: NativePermissionScreen) => JSON.stringify([s
 /** The same dialog in two frames: focus may differ, nothing else. */
 export const samePermission = (a: NativePermissionScreen, b: NativePermissionScreen) => permissionLayout(a) === permissionLayout(b);
 export const focusedPermission = (screen: NativePermissionScreen) => screen.options.findIndex(option => option.focused);
+
+/**
+ * How many rows at the bottom of the capture a key on this dialog is guarded on (`tail -n`):
+ * from the lowest full-width rule below which the frame reads as exactly `screen`. Claude
+ * Code blinks the waiting call's bullet above the dialog (● and a blank, about every 0.6 s)
+ * and may retitle that row; a digest of the whole frame refused the key whenever that
+ * happened between the read and the key, all three tries on a slow Mac or a slow link.
+ * Undefined (the whole frame) when no rule reproduces the reading.
+ */
+export function permissionGuardLines(viewport: string, screen: NativePermissionScreen, options: { generic?: boolean } = {}): number | undefined {
+  if (!viewport.endsWith('\n')) return;
+  const rows = viewport.split('\n').slice(0, -1), wanted = JSON.stringify(screen);
+  for (let top = rows.length - 1; top >= 0; top--) {
+    if (!fullRule.test(stripTerminalEscapes(rows[top]).replace(/\s+$/u, ''))) continue;
+    if (JSON.stringify(parsePermissionScreen(rows.slice(top).join('\n') + '\n', options)) === wanted) return rows.length - top;
+  }
+}

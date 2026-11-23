@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parsePermissionScreen } from '../src/core/permission-screen';
+import { parsePermissionScreen, permissionGuardLines } from '../src/core/permission-screen';
 import { performPermissionAction, PermissionInputUnconfirmed } from '../src/backend/native-permission-actions';
 import { NavigationKeyNotSent, TranscriptChangedNoKeys } from '../src/backend/native-settings';
 import type { PermissionAction } from '../src/shared/native-permission';
@@ -15,15 +15,16 @@ const focused = (n: number) => bash.replace(' ❯ 1. Yes', '   1. Yes').replace(
 type Step = string | ((keys: string[]) => string);
 /** Frames returned in turn after each key; a key may also throw. */
 function driver(frames: Step[], options: { notSentOnce?: string; recordChanged?: boolean } = {}) {
-  const keys: string[] = [], attempts: string[] = [];
+  const keys: string[] = [], attempts: string[] = [], guarded: (number | undefined)[] = [];
   let index = 0, failed = false;
   return {
-    keys, attempts,
+    keys, attempts, guarded,
     frame: async () => {
       const step = frames[Math.min(index++, frames.length - 1)];
       return { paneId: '%3', panePid: 77, viewport: typeof step === 'function' ? step(keys) : step, nativeStatus: 'waiting', nativeWaitingFor: 'permission prompt' };
     },
-    questionKey: async (key: string) => {
+    questionKey: async (key: string, tailLines?: number) => {
+      guarded.push(tailLines);
       if (options.notSentOnce === key && !failed) { failed = true; throw new NavigationKeyNotSent(); }
       if (options.recordChanged) { attempts.push(key); throw new TranscriptChangedNoKeys(); }
       keys.push(key);
@@ -37,6 +38,16 @@ test('Yes on the focused row is one Enter, confirmed by the dialog closing', asy
   const d = driver([bash, bash, done]);
   await run(d, { kind: 'choose', number: 1 });
   assert.deepEqual(d.keys, ['Enter']);
+});
+
+test('each key is guarded on the dialog rows of the frame just read, not on the blinking call above', async () => {
+  const blank = (text: string) => text.replace('⏺ Writing a greeting file', '  Writing a greeting file');
+  const d = driver([bash, blank(bash), focused(2), blank(focused(2)), done]);
+  await run(d, { kind: 'choose', number: 2 });
+  assert.deepEqual(d.keys, ['Down', 'Enter']);
+  const lines = permissionGuardLines(bash, parsePermissionScreen(bash)!);
+  assert.ok(lines && lines < bash.split('\n').length - 10);
+  assert.deepEqual(d.guarded, [lines, lines]);
 });
 
 test('another row is reached one verified arrow at a time, through stale redraws', async () => {

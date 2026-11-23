@@ -75,6 +75,7 @@ test('an immediate read requested during a read waits for it, so a record being 
     while (held.length) held.shift()!.release();
     controller.unwatchSession();
     await backend.dispose();
-    await rm(root, { recursive: true, force: true });
+    // Something may still be writing below claude/ for a moment (ENOTEMPTY on the Linux runner).
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

@@ -21,7 +21,8 @@ export interface FileIndexLimits {
   maxEntries: number; maxBytes: number; maxDepth: number;
   /** A folder below the scanned one holding more entries is listed but not entered. */
   fanout: number;
-  /** The endpoint stops walking after this; the transport gives up after timeoutMs. */
+  /** The endpoint walks for at least this long, at most a second more (its clock counts whole
+   * seconds; 0: not at all); the transport gives up after timeoutMs. */
   scanSeconds: number; timeoutMs: number;
   /** Memory: indexes kept (LRU over workspace + folder) and their entries in total. */
   maxIndexes: number; maxCachedEntries: number;
@@ -58,7 +59,10 @@ const up = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf
 // "./path" (D: a folder that is entered), P + folder (more than `fanout` entries:
 // its children are dropped), then E (finished) or T<n> (stopped by a limit; the
 // first n queued folders, root first and then the D lines in order, were finished).
-// A folder is printed twice by find; a file once. `srand()` returns the clock in seconds.
+// A folder is printed twice by find; a file once. `srand()` returns the clock in seconds, so the
+// deadline is one more whole second away: with `now() + limit`, a walk that started late in a
+// second had little over limit - 1 seconds (about 2 of 3; a slow Mac took 1.4-1.9 s for the
+// 120,000-file e2e tree and was cut now and then, its deeper folders never listed).
 const walker = String.raw`function q(s) { gsub(/'/, "'\\''", s); return "'" s "'" }
 function now() { srand(); return srand() }
 function stop() { cut = 1; exit }
@@ -87,7 +91,7 @@ function entry(p, isdir,   lp, leaf, above, tag) {
 function load(name, set,   a, k) { split(ENVIRON[name], a, "\n"); for (k in a) if (a[k] != "") set[a[k]] = 1 }
 BEGIN {
   split(ENVIRON["LECTERN_LIMITS"], v, " "); maxn = v[1] + 0; maxb = v[2] + 0; maxd = v[3] + 0; fan = v[4] + 0
-  deadline = now() + v[5]; prune = ENVIRON["LECTERN_PRUNE"]; want = ENVIRON["LECTERN_NAME"]
+  deadline = now() + v[5] + (v[5] + 0 > 0); prune = ENVIRON["LECTERN_PRUNE"]; want = ENVIRON["LECTERN_NAME"]
   load("LECTERN_HEAVY", heavy); load("LECTERN_KEEP", keep); load("LECTERN_HIDE", hide)
   nq = 1; queue[1] = "."
   for (depth = 1; nq > 0; depth++) {

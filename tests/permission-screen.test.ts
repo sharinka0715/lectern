@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { focusedPermission, parsePermissionScreen, samePermission } from '../src/core/permission-screen';
+import { focusedPermission, parsePermissionScreen, permissionGuardLines, samePermission } from '../src/core/permission-screen';
 
 // Frames captured from Claude Code 2.1.328 in an isolated profile with a loopback model.
 const frame = (name: string) => readFileSync(new URL(`./fixtures/permission-2.1.328/${name}`, import.meta.url), 'utf8');
@@ -74,4 +74,29 @@ test('Claude Code 2.1.329 asks before a dynamic workflow runs: the title is the 
   assert.ok(samePermission(parsed, moved)); assert.equal(focusedPermission(moved), 1);
   // Without the title's question it is not a confirmation.
   assert.equal(parsePermissionScreen(screen.replace(' Run a dynamic workflow?', ' Run a dynamic workflow')), undefined);
+});
+
+test('a key on a permission dialog is guarded on the dialog, not on the blinking call above it', () => {
+  // Claude Code blinks the waiting call's bullet (⏺ or ●, and a blank) about every 0.6 s.
+  const shown = frame('bash.txt'), blank = shown.replace('⏺ Writing a greeting file', '  Writing a greeting file');
+  assert.notEqual(blank, shown);
+  const screen = parsePermissionScreen(shown)!, rows = shown.split('\n').slice(0, -1);
+  const lines = permissionGuardLines(shown, screen)!;
+  assert.match(rows[rows.length - lines], /^─{20,}$/u, 'from the dialog\'s upper rule');
+  assert.equal(rows.length - lines, rows.findIndex(row => /^─{20,}$/u.test(row)));
+  const tail = (text: string) => text.split('\n').slice(0, -1).slice(-lines).join('\n');
+  assert.equal(tail(blank), tail(shown), 'the blink is outside the guarded rows');
+  assert.equal(permissionGuardLines(blank, parsePermissionScreen(blank)!), lines);
+  // A rule in the transcript above does not widen it; a frame without the dialog's rule is guarded whole.
+  const ruled = shown.replace('\n\n❯ run the bash step', '\n' + '─'.repeat(120) + '\n❯ run the bash step');
+  assert.equal(permissionGuardLines(ruled, parsePermissionScreen(ruled)!), lines);
+  assert.equal(permissionGuardLines(shown.trimEnd(), screen), undefined);
+  // Every kind: the rows from the rule read as the same dialog.
+  for (const name of ['permission-2.1.328/edit.txt', 'permission-2.1.328/write.txt', 'auto-mode-billing-2.1.330/streamed.txt',
+    'auto-mode-unavailable-2.1.330/dialog.txt', 'auto-mode-unavailable-2.1.330/accept-edits-asks.txt', 'native-dialog-2.1.330/mcp-server.txt']) {
+    const text = readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'), generic = name.startsWith('native-dialog');
+    const parsed = parsePermissionScreen(text, { generic })!, n = permissionGuardLines(text, parsed, { generic })!;
+    assert.ok(n > 0, name);
+    assert.deepEqual(parsePermissionScreen(text.split('\n').slice(0, -1).slice(-n).join('\n') + '\n', { generic }), parsed, name);
+  }
 });

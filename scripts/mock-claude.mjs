@@ -136,7 +136,7 @@ const draw = () => {
       labels, '←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel');
   } else if (permission) {
     const rule = '╌'.repeat(64), options = ['Yes', "Yes, and don't ask again for echo commands in this project", 'No'];
-    lines.push('⏺ Write a marker file', `  ⎿  $ ${command}`, '', '─'.repeat(64), ' Bash command', ' Write a marker file', rule, ` ${command}`, rule,
+    lines.push(`${permission.blink ? ' ' : '⏺'} Write a marker file`, `  ⎿  $ ${command}`, '', '─'.repeat(64), ' Bash command', ' Write a marker file', rule, ` ${command}`, rule,
       ' Do you want to proceed?', ...options.map((label, i) => ` ${i === permission.focus ? '❯' : ' '} ${i + 1}. ${label}`), '', ' Esc to cancel · Tab to amend');
   } else if (fixtureState === 'waiting') {
     lines.push('Permission required', 'Do you want to allow this action?', '❯ 1. Yes', '  2. No', 'Enter to confirm · Esc to cancel');
@@ -150,7 +150,13 @@ const draw = () => {
         + (typeof fixtureAgents === 'number' && !input ? ' · ↓ to manage' : ''));
     if (fixtureAgents) lines.push(...agentRows());
   }
-  process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
+  // Ticking task rows (agents:N) and the blinking call above a permission dialog redraw in place,
+  // as a TUI updates them: rows that do not change stay on screen throughout, and the frame ends up
+  // as the cleared one would (erased after each row and around a bare line feed). Clearing first
+  // let a read on a slow macOS runner, where the pty hands a frame over in pieces, catch the redraw
+  // half done and refuse a key over rows that never changed.
+  if (typeof fixtureAgents === 'number' || permission) process.stdout.write('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J');
+  else process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Claude Code's own session record (<config>/sessions/<pid>.json), where Lectern reads the native
@@ -173,15 +179,18 @@ function setPresence(status, waitingFor) {
 // writes the call to the transcript only after `ms` (default 4000) or once answered; `permission-first`
 // writes it at once but ahead of the prompt and its attachments, as Claude Code 2.1.300 and 2.1.310 can
 // for a new session's first response. Up/Down/Enter, 1–3 and Esc answer as in Claude Code.
+// Claude Code blinks the waiting call's bullet above its dialog (⏺ and a blank, about every 0.6 s):
+// LECTERN_MOCK_BLINK_MS sets the period (0: steady). A key guard must not depend on that row.
 let permission;
-const command = 'echo allowed > allowed.txt';
+const command = 'echo allowed > allowed.txt', blinkMs = Number(process.env.LECTERN_MOCK_BLINK_MS ?? 600);
 const linked = (type, content, parentUuid, extra = {}) => ({ ...record(type, content, extra), parentUuid: parentUuid ?? null });
 function askPermission(text, mode, ms) {
   busy = true;
   history.push({ role: 'user', text });
   const call = linked('assistant', [{ type: 'tool_use', id: 'toolu_mock_' + randomUUID().slice(0, 8), name: 'Bash', input: { command, description: 'Write a marker file' } }],
     undefined, { id: randomUUID(), stop_reason: 'tool_use', model: fixtureModels[selectedModel] });
-  permission = { focus: 0, call, written: false };
+  permission = { focus: 0, call, written: false, blink: false };
+  if (blinkMs > 0) permission.blinker = setInterval(() => { if (permission) { permission.blink = !permission.blink; draw(); } }, blinkMs);
   const prompt = linked('user', [{ type: 'text', text }], lastUuid);
   const date = { type: 'attachment', uuid: randomUUID(), parentUuid: prompt.uuid, sessionId: id, cwd: current, attachment: { type: 'date', date: new Date().toISOString().slice(0, 10) } };
   if (mode === 'first') {
@@ -196,9 +205,9 @@ function askPermission(text, mode, ms) {
   setPresence('waiting', 'permission prompt');
 }
 function decide(choice) {
-  const { call, written, timer } = permission;
+  const { call, written, timer, blinker } = permission;
   permission = undefined;
-  clearTimeout(timer);
+  clearTimeout(timer); clearInterval(blinker);
   if (!written) append(call);
   const toolId = call.message.content[0].id;
   if (choice === 1 || choice === 2) {

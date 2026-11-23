@@ -59,7 +59,7 @@ function installRecorder() {
         if (r.type === "attributes" && r.oldValue === null && r.target.hasAttribute(r.attributeName)) {
           const el = r.target, entry = { id: id(el), el: name(el), parent: name(el.parentElement), text: el.textContent.slice(0, 30), t: performance.now() };
           if (r.attributeName === "data-fade") { log.entered.push(entry); counts.set(entry.id, (counts.get(entry.id) ?? 0) + 1); }
-          else log.leaving.push({ ...entry, mode: el.getAttribute("data-leaving") });
+          else log.leaving.push({ ...entry, mode: el.getAttribute("data-leaving"), top: el.getBoundingClientRect().top });
         }
         if (r.type === "childList") for (const node of r.removedNodes)
           // React's removal comes first, with the element already put back: only the final one counts.
@@ -221,13 +221,17 @@ try {
   for (const [name, { before, after, frames, seen }] of Object.entries({ pill, card })) {
     const ghost = frames.flatMap(frame => frame.ghosts.filter(item => item.mode === "pin"));
     const easing = frames.map(frame => frame.dock).filter(height => height < before.dock - 1 && height > after + 1);
-    report[name] = { before, after, ghostTops: ghost.map(item => Math.round(item.top)), dock: frames.map(frame => Math.round(frame.dock)), maxGap: maxGap(frames),
+    // Where the pinned card was put back; a busy runner may draw no frame in its 180 ms fade.
+    const pinnedAt = seen.leaving.find(entry => entry.mode === "pin")?.top, pinnedTop = ghost[0]?.top ?? pinnedAt;
+    report[name] = { before, after, ghostTops: ghost.map(item => Math.round(item.top)), pinnedAt, dock: frames.map(frame => Math.round(frame.dock)), maxGap: maxGap(frames),
       entered: seen.entered.map(entry => entry.el), leaving: seen.leaving.map(entry => [entry.el, entry.mode]) };
     assert.ok(seen.entered.some(entry => entry.parent.startsWith("div.composer-area")), `${name}: it fades in: ${report[name].entered}`);
     assert.ok(seen.leaving.some(entry => entry.mode === "pin"), `${name}: it fades out pinned: ${JSON.stringify(report[name].leaving)}`);
     assert.deepEqual(seen.leaving.filter(entry => entry.el.startsWith("article")), [], `${name}: no message left meanwhile`);
-    assert.ok(ghost.length && Math.abs(ghost[0].top - before.top) <= 4, `${name}: where it was (${before.top} → ${ghost[0]?.top})`);
-    assert.ok(after < before.dock - 1 && easing.length >= 2, `${name}: the input area eases to its new height: ${report[name].dock}`);
+    assert.ok(pinnedTop !== undefined && Math.abs(pinnedTop - before.top) <= 4, `${name}: where it was (${before.top} → ${pinnedTop})`);
+    // One frame between the two heights shows it eased (a jump has none); a busy macOS runner
+    // drops frames and showed only one (182, 179, 145) where a desktop shows several.
+    assert.ok(after < before.dock - 1 && easing.length >= 1, `${name}: the input area eases to its new height: ${report[name].dock}`);
     assert.ok(maxGap(frames) <= 2, `${name}: the latest line stays just above the input area (${maxGap(frames)}px)`);
   }
   await page.locator(".message-assistant").filter({ hasText: "已允许并运行" }).waitFor();

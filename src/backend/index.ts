@@ -1626,10 +1626,10 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
         const frame = await read(false);
         return { ...frame, panePid: last!.pane.pid, nativeStatus: last!.pane.native?.status, nativeWaitingFor: last!.pane.native?.waitingFor };
       },
-      questionKey: async key => {
+      questionKey: async (key, tailLines) => {
         if (!last) throw new Error(t('backend.questionScreenUnchecked'));
         const binding = key === 'BTab' ? 'shift+tab' : key.replace(/^C-/, 'ctrl+');
-        await input(last.pane.id, binding, ['Question', 'Select', 'Confirmation', 'Tabs', 'TextInput'], this.tmux('send-keys', '-t', last.pane.id, key), false);
+        await input(last.pane.id, binding, ['Question', 'Select', 'Confirmation', 'Tabs', 'TextInput'], this.tmux('send-keys', '-t', last.pane.id, key), false, tailLines);
       },
       pasteQuestion: async text => {
         if (!last) throw new Error(t('backend.questionInputUnchecked'));

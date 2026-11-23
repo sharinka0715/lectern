@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { focusedPermission, parsePermissionScreen, samePermission, type NativePermissionScreen } from '../core/permission-screen';
+import { focusedPermission, parsePermissionScreen, permissionGuardLines, samePermission, type NativePermissionScreen } from '../core/permission-screen';
 import { turnComposer } from '../core/turn-controls';
 import type { PermissionAction } from '../shared/native-permission';
 import { NavigationKeyNotSent, TranscriptChangedNoKeys } from './native-settings';
@@ -26,14 +26,19 @@ const equalScreen = (a: NativePermissionScreen, b: NativePermissionScreen) => sa
  */
 export async function performPermissionAction(driver: Pick<QuestionDriver, 'frame' | 'questionKey'>, paneId: string, panePid: number,
   expected: NativePermissionScreen, action: PermissionAction, assertCurrent: () => void): Promise<void> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 20_000, generic = expected.kind === 'native-dialog';
   const check = () => { assertCurrent(); if (Date.now() >= deadline) throw new Error(t('native.permissionTimeout')); };
+  // Keys are guarded on the dialog's own rows in the last frame read (permissionGuardLines):
+  // the waiting call's row above it blinks.
+  let guardLines: number | undefined;
   const inspect = async () => {
     check();
     const frame = await driver.frame();
     check();
     if (frame.paneId !== paneId || frame.panePid !== panePid || frame.nativeStatus === 'shell') throw changed();
-    return { frame, screen: parsePermissionScreen(frame.viewport, { generic: expected.kind === 'native-dialog' }) };
+    const screen = parsePermissionScreen(frame.viewport, { generic });
+    guardLines = screen && permissionGuardLines(frame.viewport, screen, { generic });
+    return { frame, screen };
   };
   const initial = (await inspect()).screen;
   if (!initial || !equalScreen(initial, expected)) throw changed();
@@ -43,7 +48,7 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
     for (let attempt = 0; ; attempt++) {
       check();
       awaitingEffect = true;
-      try { await driver.questionKey(value); return; }
+      try { await driver.questionKey(value, guardLines); return; }
       catch (error) {
         // Only an explicit "not sent" receipt on an unchanged dialog may retry. A changed
         // transcript is not sent either, but the same guard would refuse it again.

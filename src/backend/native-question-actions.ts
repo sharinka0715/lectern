@@ -11,8 +11,9 @@ export type QuestionKey = 'Up' | 'Down' | 'Left' | 'Right' | 'Space' | 'Enter' |
 interface QuestionFrame { paneId: string; panePid: number; viewport: string; nativeStatus?: string; nativeWaitingFor?: string }
 export interface QuestionDriver {
   frame(): Promise<QuestionFrame>;
-  /** Both methods must bind the actual dispatch to the pane and last frame on the target. */
-  questionKey(key: QuestionKey): Promise<void>;
+  /** Both methods must bind the actual dispatch to the pane and last frame on the target
+   * (`tailLines`: only that many rows at its bottom, the dialog the key acts on). */
+  questionKey(key: QuestionKey, tailLines?: number): Promise<void>;
   pasteQuestion(text: string): Promise<void>;
 }
 

@@ -164,12 +164,17 @@ test('with subagents listed and ticking below the input box, inline and menu swi
 });
 
 test('with subagents listed and ticking below the input box, the stop key is not refused', { skip: process.platform === 'win32', timeout: 60_000 }, async t => {
+  // A reply that lasts (about 6 s) but fits the pane: a frame taller than the pane scrolls at
+  // every redraw, and a read on a slow runner could catch the input box half redrawn.
+  const pace = process.env.LECTERN_MOCK_STREAM_MS;
+  process.env.LECTERN_MOCK_STREAM_MS = '250';
+  t.after(() => { if (pace === undefined) delete process.env.LECTERN_MOCK_STREAM_MS; else process.env.LECTERN_MOCK_STREAM_MS = pace; });
   await withFixture(t, true, async (backend, workspace, capture, socket) => {
     await listAgents(workspace, 'ready agents:7@40');
     const session = await backend.createSession(workspace), paneId = session.paneId!;
     for (let i = 0; i < 120 && !(await capture(paneId)).includes('↓ 2 more'); i++) await pause(25);
     const pid = Number((await runCommand(workspace, ['tmux', '-L', socket, 'display-message', '-p', '-t', paneId, '#{pane_pid}'].map(quoteShell).join(' '))).stdout.toString());
-    await backend.sendMessage(workspace, session.id, 'a long reply to stop ' + '继续'.repeat(200));
+    await backend.sendMessage(workspace, session.id, 'a reply to stop while the subagent timers tick');
     for (let i = 0; i < 120 && !(await capture(paneId)).includes('esc to interrupt'); i++) await pause(25);
     // A read of a redraw half done (40 ms ticks, see above) is refused before any key is sent: once more then.
     const stop = () => backend.turnAction(workspace, session.id, paneId, pid, { kind: 'stop' });

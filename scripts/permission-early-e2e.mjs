@@ -13,8 +13,10 @@ import { _electron } from 'playwright';
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-permission-early-'));
 const results = path.resolve('test-results');
 await mkdir(results, { recursive: true });
+// The call above the dialog blinks every 40 ms (Claude Code: about 600 ms), faster than a read and its
+// key: each answer is refused unless the key is guarded on the dialog alone (permissionGuardLines).
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath,
-  LECTERN_LOG_DIR: path.join(profile, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '0' };
+  LECTERN_LOG_DIR: path.join(profile, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_MOCK_BLINK_MS: '40' };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 const exe = process.argv[2];

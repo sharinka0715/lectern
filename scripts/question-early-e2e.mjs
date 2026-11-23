@@ -80,7 +80,17 @@ try {
     for (const end = Date.now() + 30000; Date.now() < end; await new Promise(resolve => setTimeout(resolve, 200))) {
       const rows = await records();
       const result = rows.find(row => blocks(row).some(block => block.type === 'tool_result' && block.tool_use_id === id));
-      if (result) { assert.ok(callIn(rows, id), 'the call is in the transcript with its result'); return result.toolUseResult?.answers; }
+      if (result) {
+        assert.ok(callIn(rows, id), 'the call is in the transcript with its result');
+        if (result.toolUseResult?.answers) return result.toolUseResult.answers;
+        // Claude Code 2.1.329 sometimes writes this result without toolUseResult (macOS CI, twice); its
+        // text has the answers: Your questions have been answered: "Q"="A", "Q2"="A2". …
+        const text = blocks(result).filter(block => block.type === 'tool_result')
+          .map(block => typeof block.content === 'string' ? block.content : (block.content ?? []).map(part => part.text ?? '').join('')).join('\n');
+        console.error('RESULT without toolUseResult', id, text.slice(0, 2000));
+        const found = Object.fromEntries([...text.matchAll(/"([^"]*)"="([^"]*)"/g)].map(match => [match[1], match[2]]));
+        return Object.keys(found).length ? found : undefined;
+      }
     }
     throw new Error(`no result for ${id}`);
   };
