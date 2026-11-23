@@ -139,7 +139,27 @@ function mergeDraft(existing: string, text: string) {
   if (!text.trim() || existing.includes(text)) return existing;
   return `${text}\n\n${existing}`;
 }
-export default function App({view = "primary"}: {view?: ChatView}) {
+type ResumeState = 'pending' | { error: string };
+
+export default function App() {
+  // A split can promote a conversation to the other pane during its resume.
+  const [resumes, setResumes] = useState<ReadonlyMap<string, ResumeState>>(() => new Map());
+  const setResume = useCallback((scope: string, status?: ResumeState) => {
+    setResumes(current => {
+      const next = new Map(current);
+      if (status) next.set(scope, status);
+      else next.delete(scope);
+      return next;
+    });
+  }, []);
+  return <ChatPane view="primary" resumes={resumes} setResume={setResume} />;
+}
+
+function ChatPane({ view, resumes, setResume }: {
+  view: ChatView;
+  resumes: ReadonlyMap<string, ResumeState>;
+  setResume: (scope: string, status?: ResumeState) => void;
+}) {
   const prefs = useDesktopState();
   const primary = view === "primary";
   const [preferencesOpen,setPreferencesOpen] = useState<boolean | "new-machine">(false);
@@ -227,7 +247,10 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     setArtifact(undefined);
     if (artifactOpener.current?.isConnected) artifactOpener.current.focus({ preventScroll: true });
   }, []);
-  const [busy, setBusy] = useState(false);
+  const [actionBusy, setBusy] = useState(false);
+  const resumeState = resumes.get(activityScope);
+  const resuming = resumeState === 'pending';
+  const busy = actionBusy || resuming;
   const connectionOf = useMachineConnections();
   const navigated = useNavigated();
   const [machinePrompt, setMachinePrompt] = useState<{ key: string; host: string; port?: number; label: string }>();
@@ -833,39 +856,34 @@ export default function App({view = "primary"}: {view?: ChatView}) {
 
   async function resume() {
     markNavigated();
-    if (!workspace || !sessionId || hostBlocked) return;
+    if (!workspace || !sessionId || hostBlocked || busy) return;
     const shown = snapshot?.workspaceId === workspace.id && snapshot.sessionId === sessionId;
     // Do not advance the selection: the transcript is keyed by it and would remount.
-    // Opening another conversation meanwhile still advances it and ends this resume.
+    // If the user navigates away, let the resume finish in the background.
     const selectionRequest = sessionRequest.current;
-    setBusy(true);
+    const stillShowing = () => mounted.current && selected.current.workspaceId === workspace.id &&
+      selected.current.sessionId === sessionId;
+    setResume(activityScope, 'pending');
     setError("");
     try {
       const resumed = await window.desktop.resumeSession(
         workspace.id,
         sessionId,
       );
-      if (
-        sessionRequest.current !== selectionRequest ||
-        selected.current.workspaceId !== workspace.id ||
-        selected.current.sessionId !== sessionId
-      )
-        return;
-      patchWorkspace(workspace.id, (current) => ({
-        ...(current ?? { workspace, panes: [] }),
-        sessions: (current?.sessions ?? []).map((item) =>
-          item.id === sessionId ? resumed : item,
-        ),
-      }));
-      // The loaded transcript stays on screen: the main process already re-read
-      // this conversation and pushed the snapshot with the new pane. Only a pane
-      // that never loaded it (an earlier read failed) opens it again.
-      if (!shown) await openSession(workspace.id, sessionId);
+      if (stillShowing()) {
+        patchWorkspace(workspace.id, (current) => ({
+          ...(current ?? { workspace, panes: [] }),
+          sessions: (current?.sessions ?? []).map((item) =>
+            item.id === sessionId ? resumed : item,
+          ),
+        }));
+        // The main process refreshes existing readers. Read it again only if
+        // this pane never loaded the transcript and has not navigated.
+        if (!shown && sessionRequest.current === selectionRequest) await openSession(workspace.id, sessionId);
+      }
+      setResume(activityScope);
     } catch (e) {
-      if (sessionRequest.current === selectionRequest) setError(errorText(e));
-      else reportActionError(e, "续接会话失败");
-    } finally {
-      setBusy(false);
+      setResume(activityScope, { error: errorText(e) });
     }
   }
 
@@ -1244,8 +1262,9 @@ export default function App({view = "primary"}: {view?: ChatView}) {
     window.addEventListener("lectern-return-to-chat", returnToChat);
     return () => window.removeEventListener("lectern-return-to-chat", returnToChat);
   }, [view]);
-  const bannerText = error || snapshot?.error || workspaceError;
-  const bannerOrigin = error ? errorState.origin ?? workspace : workspace;
+  const resumeError = !paneId && resumeState && resumeState !== 'pending' ? resumeState.error : '';
+  const bannerText = resumeError || error || snapshot?.error || workspaceError;
+  const bannerOrigin = !resumeError && error ? errorState.origin ?? workspace : workspace;
   // At startup a machine that is not connected shows only in the sidebar: what
   // was restored from last time raises no connection prompt until the user
   // goes somewhere (a machine, folder or conversation) or acts on a folder.
@@ -1349,7 +1368,8 @@ export default function App({view = "primary"}: {view?: ChatView}) {
         </div>
       </ResizableSidebar>}
 
-      <SplitWorkspace view={view} second={primary && prefs.split ? <App view="secondary"/> : null}>
+      <SplitWorkspace view={view} second={primary && prefs.split
+        ? <ChatPane view="secondary" resumes={resumes} setResume={setResume} /> : null}>
       <main className={`main-area${drawer || taskShown ? " artifact-open" : ""}`} {...attachments.dropTarget}>
         <header className="topbar">
           <div className="topbar-left">
@@ -1444,8 +1464,11 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             {bannerOrigin?.kind === "ssh" && bannerOrigin.host && needsSshLogin(bannerText) && <button
               onClick={() => loginTo({ host: bannerOrigin.host!, port: bannerOrigin.port })}>{t('app.login', { machine: machineLabel(bannerOrigin) })}</button>}
             <button
+              disabled={!!resumeError && (busy || hostBlocked)}
               onClick={() => {
-                if (error && errorState.origin && errorState.origin.id !== workspace?.id) {
+                if (resumeError) {
+                  void resume();
+                } else if (error && errorState.origin && errorState.origin.id !== workspace?.id) {
                   setError("");
                   void refresh(errorState.origin.id);
                 } else if (workspace) {
@@ -1465,7 +1488,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
             <button
               className="icon-button"
               aria-label={t('app.dismissError')}
-              onClick={() => setError("")}
+              onClick={() => resumeError ? setResume(activityScope) : setError("")}
             >
               <X size={15} />
             </button>
@@ -1666,8 +1689,8 @@ export default function App({view = "primary"}: {view?: ChatView}) {
           {sessionId && snapshot && !snapshot.pendingFork && !paneId && snapshot.status === "idle" && session?.path && (
             <div className="resume-bar">
               <span>{t('app.savedOnMachine')}</span>
-              <button onClick={() => void resume()} disabled={busy || hostBlocked}>
-                {busy ? (
+              <button onClick={() => void resume()} disabled={busy || hostBlocked} aria-busy={resuming || undefined}>
+                {resuming ? (
                   <Loader2 size={14} className="rotating" />
                 ) : (
                   <RefreshCw size={14} />

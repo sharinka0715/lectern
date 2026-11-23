@@ -78,8 +78,15 @@ try {
       fixture.current = next;
       return next;
     });
+    fixture.resumeGates = new Map();
     replace('resumeSession', async (event, workspaceId, sessionId) => {
       fixture.calls.push({ method: 'resume', workspaceId });
+      const gate = fixture.resumeGates.get(workspaceId);
+      if (gate) {
+        const error = await gate.promise;
+        fixture.resumeGates.delete(workspaceId);
+        if (error) throw new Error(error);
+      }
       fixture.live[workspaceId] = true;
       const workspace = (await workspaces(event)).find(item => item.id === workspaceId);
       // Like the main process: the reader already showing it reads once more and pushes the live pane.
@@ -175,6 +182,76 @@ try {
   await page.locator('.error-banner').getByRole('button', { name: '重试', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.message-assistant')?.textContent.includes('service-b'));
 
+  const [first, second] = stored;
+  const holdResumes = (...workspaceIds) => app.evaluate((_electron, workspaceIds) => {
+    const { resumeGates } = globalThis.__sshUI;
+    for (const id of workspaceIds) {
+      let finish;
+      const promise = new Promise(resolve => { finish = resolve; });
+      resumeGates.set(id, { promise, finish });
+    }
+  }, workspaceIds);
+  // Control two slow resumes independently, including the older request finishing first.
+  await holdResumes(first.id, second.id);
+  const resume = page.getByRole('button', { name: '续接会话', exact: true });
+  const openConversation = async (index) => {
+    await machine.locator(`.session-row[data-session-id="${ids[index]}"]`).click();
+    await page.locator('.message-assistant').filter({ hasText: paths[index] }).waitFor();
+  };
+  await openConversation(0);
+  await resume.click();
+  await resume.locator('.rotating').waitFor();
+  await openConversation(1);
+  assert.equal(await resume.isEnabled(), true, 'Another history can be resumed while the first request is pending');
+  assert.equal(await resume.locator('.rotating').count(), 0, 'Another history never inherits the first spinner');
+  await resume.click();
+  await resume.locator('.rotating').waitFor();
+  await openConversation(0);
+  await resume.locator('.rotating').waitFor();
+  await openConversation(1);
+  await app.evaluate((_electron, id) => { globalThis.__sshUI.resumeGates.get(id).finish(); }, first.id);
+  await page.waitForFunction(id => document.querySelector(`.session-row[data-session-id="${id}"]`)?.dataset.sessionLive === 'true', ids[0]);
+  assert.equal(await resume.isDisabled(), true, 'Finishing the first request leaves the second pending');
+  assert.equal(await resume.locator('.rotating').count(), 1);
+  await openConversation(0);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  assert.equal(await resume.count(), 0, 'A live conversation stays usable during another resume');
+  await openConversation(1);
+  await resume.locator('.rotating').waitFor();
+  await app.evaluate((_electron, id) => { globalThis.__sshUI.resumeGates.get(id).finish('Synthetic resume failure'); }, second.id);
+  await page.locator('.error-banner').getByText('Synthetic resume failure', { exact: false }).waitFor();
+  assert.equal(await resume.isEnabled(), true, 'The failed resume can be retried');
+
+  // The right-hand chat becomes the primary view when the left pane closes.
+  await openConversation(0);
+  await page.getByRole('button', { name: '并排打开对话', exact: true }).click();
+  const primary = page.locator('.desk-pane[data-view="primary"]');
+  const secondary = page.locator('.desk-pane[data-view="secondary"]');
+  const secondaryResume = secondary.getByRole('button', { name: '续接会话', exact: true });
+  const promotedResume = primary.getByRole('button', { name: '续接会话', exact: true });
+  await secondary.locator('.message-assistant').filter({ hasText: paths[1] }).waitFor();
+  await holdResumes(second.id);
+  await secondaryResume.click();
+  await secondaryResume.locator('.rotating').waitFor();
+  await primary.getByRole('button', { name: '关闭此分屏', exact: true }).click();
+  await secondary.waitFor({ state: 'detached' });
+  await primary.locator('.message-assistant').filter({ hasText: paths[1] }).waitFor();
+  await promotedResume.locator('.rotating').waitFor();
+  await app.evaluate((_electron, id) => { globalThis.__sshUI.resumeGates.get(id).finish('Synthetic moved resume failure'); }, second.id);
+  await promotedResume.locator('.rotating').waitFor({ state: 'detached' });
+  assert.equal(await promotedResume.isEnabled(), true, 'A failed resume releases the button in the surviving pane');
+  assert.match(await primary.locator('.error-banner').allTextContents().then(lines => lines.join(' ')),
+    /Synthetic moved resume failure/, 'The failure belongs to the conversation shown in the surviving pane');
+  await page.screenshot({ path: path.join(resultDirectory, 'moved-resume-error.png') });
+  await openConversation(0);
+  assert.equal(await primary.locator('.error-banner').count(), 0, 'The failure does not follow a pane to another conversation');
+  await openConversation(1);
+  const movedError = primary.locator('.error-banner').filter({ hasText: 'Synthetic moved resume failure' });
+  await movedError.getByRole('button', { name: '重试', exact: true }).click();
+  await promotedResume.waitFor({ state: 'detached' });
+  await page.waitForFunction(() => document.querySelector('.desk-pane[data-view="primary"] textarea')?.disabled === false);
+  assert.equal(await primary.locator('.error-banner').count(), 0, 'Retry clears the failure and reopens the composer');
+
   // The machine's own folder dialog browses that machine.
   const browsed = await app.evaluate(() => globalThis.__sshUI.browses.at(-1).target);
   assert.ok(browsed.kind === 'ssh' && browsed.host === host && !browsed.port, JSON.stringify(browsed));
@@ -215,7 +292,7 @@ try {
     assert.ok(stored.some(workspace => workspace.name === 'Local form fixture' && workspace.kind === 'local' && workspace.port === undefined));
   }
   const fixture = await app.evaluate(() => ({ calls: globalThis.__sshUI.calls, scans: globalThis.__sshUI.scans, prefetches: globalThis.__sshUI.prefetches }));
-  assert.equal(fixture.calls.filter(call => call.method === 'resume').length, 1);
+  assert.equal(fixture.calls.filter(call => call.method === 'resume').length, 5);
   const watched = new Set(fixture.calls.filter(call => call.method === 'watch').map(call => call.workspaceId));
   assert.ok([...watched].every(id => fixture.prefetches.includes(id)), 'every opened SSH conversation indexes its folder for @');
   assert.ok(fixture.calls.every(call => ['discover', 'watch', 'resume'].includes(call.method)));
@@ -224,7 +301,7 @@ try {
     .join('\n').split('\n').filter(Boolean).map(line => JSON.parse(line));
   assert.ok(!events.some(event => event.event.startsWith('transport.command')), 'This UI test must never launch SSH or any native backend command');
   const report = { success: true, scope: 'renderer SSH workflow only; local synthetic IPC', manualFolderScope: true, noScanOnMachineRegistration: true, configInheritancePreserved: true, noDuplicateFolders: true,
- initialConnectionErrorsVisible: true, watchErrorsRetriable: true, readonlyTerminal: true, noNativeCommandsOrModelRequests: true, scans: fixture.scans.length };
+ initialConnectionErrorsVisible: true, watchErrorsRetriable: true, movedResumeErrorRetriable: true, readonlyTerminal: true, noNativeCommandsOrModelRequests: true, scans: fixture.scans.length };
   await writeFile(path.join(resultDirectory, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ ...report, resultDirectory }));
 } catch (error) {
