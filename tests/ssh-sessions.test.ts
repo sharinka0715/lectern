@@ -323,7 +323,8 @@ test('real OpenSSH with MaxSessions 8: Lectern stays within it alone, and within
     'Host lectern-sessions', '  HostName 127.0.0.1', `  Port ${port}`, `  User ${userInfo().username}`, '  HostKeyAlias lectern-sessions',
     `  IdentityFile ${join(directory, 'client-key')}`, `  UserKnownHostsFile ${join(directory, 'known_hosts')}`, '  IdentitiesOnly yes',
     // The user's own multiplexing; Lectern's own connection overrides it when not reusing.
-    '  ControlMaster auto', `  ControlPath ${join(directory, 'user-%C')}`, '  ControlPersist 60',
+    // The directory is unique per run. A short socket name leaves room for OpenSSH's temporary suffix on macOS.
+    '  ControlMaster auto', `  ControlPath ${join(directory, 'user.sock')}`, '  ControlPersist 60',
   ].join('\n') + '\n', { mode: 0o600 });
   daemon = spawn('/usr/sbin/sshd', ['-D', '-e', '-f', join(directory, 'sshd_config')], { stdio: ['ignore', 'pipe', 'pipe'] });
   daemon.stderr?.on('data', b => { log += b.toString(); });
