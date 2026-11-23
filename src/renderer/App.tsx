@@ -1,7 +1,7 @@
 import { PreferencesDialog } from "./PreferencesDialog";
 import { WindowTitlebar } from "./WindowTitlebar";
 import { SplitButtons, SplitWorkspace } from "./SplitWorkspace";
-import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, sameChat, setDesktop, showChat, shownIn, splitChat, useDesktopState, type ChatTarget } from "./desktop-state";
+import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, sameChat, setDesktop, showChat, shownIn, splitChat, unfocusedChat, useDesktopState, type ChatTarget } from "./desktop-state";
 import { Search, Settings2 } from "lucide-react";
 import type { ChatView } from "../shared/types";
 import "./workbench.css";
@@ -42,6 +42,7 @@ import { ActivityFloat } from "./ActivityFloat";
 import { TaskColumn } from "./TaskColumn";
 import { imeOwnsKey, isEnterKey } from "./enter-key";
 import { useComposerAttachments } from "./useComposerAttachments";
+import { messageFileNames } from "../shared/attachments";
 import { liveShells as foregroundShells, panelActivities, shellScreenLines, type ActivityKind, type SessionActivity } from "../shared/activity";
 import { LiveShells } from "./MessageDisplay";
 import { ArtifactDrawer, type ArtifactTarget } from "./ArtifactDrawer";
@@ -82,6 +83,7 @@ import { TurnPanel } from "./TurnControls";
 import { TurnProgress } from './TurnProgress';
 import { RewindPicker } from "./RewindPicker";
 import { useComposerCompletion } from "./useComposerCompletion";
+import { useComposerFocus } from "./useComposerFocus";
 import { composerPlaceholder, isMessageInputReady } from "./composer-state";
 import { DraftSettings } from "./DraftSettings";
 import type { LaunchChoices } from "../shared/model-catalog";
@@ -188,9 +190,10 @@ function ChatPane({ view, resumes, setResume }: {
       .catch(error => reportActionError(error, "更新窗口外观失败"));
   }, [primary, prefs.theme]);
   useEffect(() => {
-    if (primary) void window.desktop?.setLaunchPreferences?.({ enableWorkflows: prefs.enableWorkflows })
+    if (primary) void window.desktop?.setLaunchPreferences?.({ enableWorkflows: prefs.enableWorkflows,
+      promptCacheTtlPreset: prefs.promptCacheTtlPreset })
       .catch(error => reportActionError(error, "同步会话启动选项失败"));
-  }, [primary, prefs.enableWorkflows]);
+  }, [primary, prefs.enableWorkflows, prefs.promptCacheTtlPreset]);
   const [info, setInfo] = useState<AppInfo>({
     platform: "",
     version: "",
@@ -385,7 +388,6 @@ function ChatPane({ view, resumes, setResume }: {
   const permission = snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId &&
     snapshot.paneId && snapshot.panePid && !directoryTrust && !question ? snapshot.permission : undefined;
   const permissionBusy = !!snapshot?.permissionBusy || answeringScopes.has(settingScope);
-  const focusComposerWhenReady = useRef<string | undefined>(undefined);
   async function answerPermission(action: PermissionAction) {
     if (!permission || !paneId || !snapshot?.panePid || permissionBusy || terminalLocked ||
         sessionRequest.current !== selectionGeneration || selected.current.workspaceId !== workspaceId || selected.current.sessionId !== sessionId)
@@ -398,7 +400,7 @@ function ChatPane({ view, resumes, setResume }: {
       await window.desktop.answerPermission(workspaceId, sessionId, paneId, snapshot.panePid, permission.token, action);
       // After a refusal Claude waits for guidance: the cursor goes where it is
       // typed as soon as the input box is usable again.
-      if (reject) focusComposerWhenReady.current = settingScope;
+      if (reject) composerFocus.request();
     } finally {
       setAnsweringScopes(previous => { const next = new Set(previous); next.delete(settingScope); return next; });
     }
@@ -445,11 +447,6 @@ function ChatPane({ view, resumes, setResume }: {
       navigationStatus: snapshot.navigationStatus,
       nativeInputReady: snapshot.nativeInputReady,
     }));
-  useEffect(() => {
-    if (!canSend || focusComposerWhenReady.current !== settingScope) return;
-    focusComposerWhenReady.current = undefined;
-    inputRef.current?.focus();
-  }, [canSend, settingScope]);
   const canRewind = canSend && !inTurn && !restoredDraft && !sending && !!snapshot?.nativeInputReady;
   // A new chat (no session yet) can be typed into; its first send starts Claude.
   // A folder view that could not be read stays closed until a retry; a new chat
@@ -479,6 +476,11 @@ function ChatPane({ view, resumes, setResume }: {
   const hostName = workspace?.kind === "ssh" ? machineLabel(workspace) : undefined;
   const hostBlocked = !!workspace && hostLacks.length > 0 && !paneId;
   const canType = canSend || (isDraft && !launch && !busy && !hostBlocked);
+  // Sending, a reply starting or ending, a card or a setting switch must not cost the input box its focus:
+  // the box the user is in takes typing on (pastes and the @ list too); only sending waits for canType.
+  const composerFocus = useComposerFocus({ inputRef, area: composerDock, canType, scope: `${workspaceId}:${sessionId}`,
+    card: !!(question || permission || directoryTrust) });
+  const typing = canType || composerFocus.lock.holding;
   const [draftChoices, setDraftChoicesState] = useState<LaunchChoices>({});
   useEffect(() => { setDraftChoicesState(launchChoicesByFolder.get(workspaceId) ?? {}); }, [workspaceId]);
   const setDraftChoices = useCallback((next: LaunchChoices) => {
@@ -533,15 +535,17 @@ function ChatPane({ view, resumes, setResume }: {
     setDraft(d => d || launch.text);
     setLaunch(undefined);
   }
-  // Pasted or dropped files become @-mentions; on an SSH machine they are uploaded first.
-  // The input box shows them as cards and only the text in the textarea (the draft keeps both).
-  const attachments = useComposerAttachments({ workspace, sessionId, enabled: canType && !rewindOpen,
-    draft, inputRef, setDraft,
+  // Pasted or dropped files and files picked from the @ list become @-mentions where the caret
+  // is; on an SSH machine dropped and pasted files are uploaded first. The input box shows each
+  // mention as a chip in the text and the files as cards above it; the draft keeps the mentions.
+  const attachments = useComposerAttachments({ workspace, sessionId, enabled: typing && !rewindOpen,
+    draft, inputRef, setDraft, openFile: path => openArtifact({ path }),
     showing: (ws, sid) => mounted.current && selected.current.workspaceId === ws && selected.current.sessionId === sid,
     stash: (ws, sid, update) => { const key = draftKey(ws, sid); unsentDrafts.set(key, update(unsentDrafts.get(key) ?? "")); },
+    usedNames: () => snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId ? messageFileNames(snapshot.messages) : [],
     onError: showToast });
   const completion = useComposerCompletion({ workspaceId, sessionId: sessionId || (isDraft ? "draft" : ""), view,
-    enabled: canType && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef });
+    enabled: typing && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef, onFile: attachments.chooseFile });
   const uploading = attachments.pending.length > 0;
   function openRewind() { setRewindScope(JSON.stringify([workspaceId, sessionId])); }
   useEffect(() => { setRewindScope(undefined); }, [workspaceId, sessionId, paneId]);
@@ -990,6 +994,12 @@ function ChatPane({ view, resumes, setResume }: {
       }
       setDraftChoices({});
       if (pending) setOutgoing({ ...pending, scope: `${target.id}:${next.id}` });
+      // What was typed while the chat started goes with it.
+      const typed = unsentDrafts.get(draftKey(target.id, ''));
+      if (typed) {
+        unsentDrafts.delete(draftKey(target.id, ''));
+        unsentDrafts.set(draftKey(target.id, next.id), mergeDraft(unsentDrafts.get(draftKey(target.id, next.id)) ?? '', typed));
+      }
       const opening = openSession(target.id, next.id);
       setLaunch({ id, workspaceId: target.id, text, choices, phase: 'waiting', sessionId: next.id, startedAt: Date.now() });
       await opening;
@@ -1037,25 +1047,27 @@ function ChatPane({ view, resumes, setResume }: {
     const stillSelected = () => sessionRequest.current === request && selected.current.workspaceId === workspace.id && selected.current.sessionId === sessionId;
     setSending(true);
     setError("");
+    // After a `cd`, files picked from the @ list go as absolute paths (decided now, with where Claude Code works now).
+    const sent = attachments.submitted(text, snapshot?.sessionId === sessionId ? snapshot.workingDirectory?.launch : undefined);
     // Like the native client, the composer clears and a plain message shows
     // at once; the main process still reports success only after typing it.
     const turnInput = !!(paneId && snapshot?.panePid && (inTurn || restoredDraft));
-    const pending = !turnInput && showsOutgoing(text)
-      ? startOutgoing(`${workspace.id}:${sessionId}`, text, snapshot?.messages, `outgoing:${Date.now()}`) : undefined;
+    const pending = !turnInput && showsOutgoing(sent)
+      ? startOutgoing(`${workspace.id}:${sessionId}`, sent, snapshot?.messages, `outgoing:${Date.now()}`) : undefined;
     if (pending) setOutgoing(pending);
     setDraft(current => (current === text ? "" : current));
     transcript.current?.scrollToLatest();
     try {
       if (turnInput && paneId && snapshot?.panePid) {
-        const action: TurnAction = restoredDraft ? {kind:'sendRestored',text,original:restoredDraft} : {kind:mode,text};
+        const action: TurnAction = restoredDraft ? {kind:'sendRestored',text:sent,original:restoredDraft} : {kind:mode,text:sent};
         await window.desktop.turnAction(workspace.id,sessionId,paneId,snapshot.panePid,action);
-      } else await window.desktop.sendMessage(workspace.id, sessionId, text);
+      } else await window.desktop.sendMessage(workspace.id, sessionId, sent);
       if (
         selected.current.workspaceId === workspace.id &&
         selected.current.sessionId === sessionId
       ) {
         transcript.current?.scrollToLatest();
-        inputRef.current?.focus();
+        composerFocus.request();
       }
       // The controller's bubble normally replaces it at once; never leave one behind.
       if (pending) setTimeout(() => setOutgoing(current => (current === pending ? undefined : current)), 8000);
@@ -1338,6 +1350,7 @@ function ChatPane({ view, resumes, setResume }: {
             else if (!info.demo) setWorkspaceModal({ machine });
           }}
           draftWorkspaceId={visibleSelection?.draft ? visibleSelection.workspaceId : undefined}
+          splitOpen={unfocusedChat(prefs)}
           onRename={async (id, chat, title) => {
             try {
               await renameTreeSession(id, chat, title);
@@ -1648,7 +1661,7 @@ function ChatPane({ view, resumes, setResume }: {
               onAction={answerQuestion} onViewTerminal={() => setTerminalOpen(true)} />)}
           {permission && !terminalOpen && (terminalLocked ?
             <div className="resume-bar"><span>{t('app.permissionInTerminal')}</span><button onClick={() => setTerminalOpen(true)}>{t('app.viewTerminal')}</button></div> :
-            <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.toolUseId, permission.kind])}
+            <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.cardId, permission.kind])}
               permission={permission} unconfirmed={snapshot?.permissionUnconfirmed} busy={permissionBusy || busy || sending || settingUIBusy || !!snapshot?.settingBusy || !!snapshot?.trustBusy}
               onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} />)}
           {directoryTrust && (
@@ -1705,7 +1718,7 @@ function ChatPane({ view, resumes, setResume }: {
           <TurnPanel state={controls} busy={sending || terminalLocked || busy} act={action => void actOnTurn(action)}/>
           <TurnProgress snapshot={snapshot} />
           <form
-            className={`composer${!canType ? " composer-inactive" : ""}${attachments.dragging ? " composer-drop" : ""}`}
+            className={`composer${composerFocus.lock.disabled ? " composer-inactive" : ""}${attachments.dragging ? " composer-drop" : ""}`}
             data-drop-hint={workspace?.kind === "ssh" ? t('app.dropUpload') : t('app.dropReference')}
             onSubmit={(event) => {
               event.preventDefault();
@@ -1713,6 +1726,7 @@ function ChatPane({ view, resumes, setResume }: {
             }}
           >
             {attachments.strip}
+            <div className="composer-input">
             <textarea
               ref={inputRef}
               aria-label={t('app.messageLabel')}
@@ -1726,13 +1740,14 @@ function ChatPane({ view, resumes, setResume }: {
                 launching: launch?.phase === "creating", pendingFirst: !!launch && launch.phase !== "creating",
                 hostBlocked: hostBlocked ? t('hostTools.composerBlocked', { ...machineParams(hostName), tools: toolList(hostLacks) }) : undefined,
               })}
-              {...completion.inputProps}
+              {...attachments.inputProps(completion.inputProps)}
               onPaste={attachments.onPaste}
               value={attachments.text}
-              disabled={!canType}
+              disabled={composerFocus.lock.disabled}
+              aria-disabled={!canType || undefined}
               rows={1}
               onKeyDown={(event) => {
-                if (completion.onKeyDown(event) || imeOwnsKey(event.nativeEvent)) return;
+                if (completion.onKeyDown(event) || imeOwnsKey(event.nativeEvent) || attachments.onKeyDown(event)) return;
                 // Shift + either Enter starts a new line. macOS has no native newline for
                 // Shift + keypad Enter, so both insert it here (undoable, like typing).
                 if (isEnterKey(event) && event.shiftKey) {
@@ -1748,6 +1763,8 @@ function ChatPane({ view, resumes, setResume }: {
                 }
               }}
             />
+            {attachments.layer}
+            </div>
             {completion.popup}
             <div className="composer-toolbar">
             <button type="button" className="composer-attach" aria-label={t('app.addFile')} disabled={!canType || rewindOpen}

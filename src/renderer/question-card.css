@@ -71,5 +71,8 @@
 .permission-native { max-height: 9lh; overflow: auto; }
 .permission-native p { margin: 6px 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--secondary-text); overflow-wrap: anywhere; }
 .permission-native p strong { color: var(--text); font-weight: 550; }
+/* Help links in the native text open in the system browser; a generic dialog also shows its key hints. */
+.permission-native a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.permission-native p.permission-native-footer { font-family: var(--font-mono); }
 .question-mark.key { width: auto; min-width: 1.35rem; padding: 0 6px; border-radius: 5px; font-size: var(--text-meta); }
 .question-option-copy small.permission-native-label { font-style: italic; }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 // @ts-expect-error The compatibility matrix scripts are plain ES modules.
 import { selectVersions } from '../scripts/cc-matrix/versions.mjs';
 // @ts-expect-error The compatibility matrix scripts are plain ES modules.
-import { startFakeApi } from '../scripts/cc-matrix/fake-api.mjs';
+import { cacheTtls, startFakeApi } from '../scripts/cc-matrix/fake-api.mjs';
 
 test('compatibility matrix: one release per block of ten, plus latest and stable', () => {
   const published = ['2.1.299', '2.1.300', '2.1.301', '2.1.310', '2.1.311', '2.1.319', '2.1.321', '2.1.322', '2.1.329', '2.1.330-beta.1'];
@@ -33,6 +33,18 @@ test('compatibility matrix fake API: the marker picks the script, the step follo
     assert.ok(models.data.length > 1);
     assert.equal(api.external.length, 0);
   } finally { await api.close(); }
+});
+
+test('compatibility matrix fake API: the prompt-cache lifetimes a request asks for', () => {
+  const ephemeral = (ttl?: string) => ({ type: 'ephemeral', ...(ttl && { ttl }) });
+  assert.deepEqual(cacheTtls({ messages: [{ role: 'user', content: 'no markers' }] }), []);
+  // A marker without a ttl is the API's default five minutes.
+  assert.deepEqual(cacheTtls({ system: [{ type: 'text', text: 's', cache_control: ephemeral() }] }), ['5m']);
+  assert.deepEqual(cacheTtls({
+    system: [{ type: 'text', text: 's', cache_control: ephemeral('1h') }],
+    tools: [{ name: 'Bash', cache_control: ephemeral('1h') }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'q', cache_control: ephemeral('5m') }] }],
+  }), ['1h', '5m']);
 });
 
 test('compatibility matrix fake API: the safety check can be answered or failed in each way', async () => {

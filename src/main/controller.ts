@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { TurnAction } from '../shared/turn-controls';
-import { checkpointPosition, type RewindTarget } from '../backend/native-turn-controls';
+import { checkpointPosition, RewindRecordChanged, type RewindTarget } from '../backend/native-turn-controls';
 import { canInterruptTurn, readRewind, turnComposer } from '../core/turn-controls';
 import { Backend, validateWorkspace, type HistoryCursor } from '../backend';
 import { repairSlices } from '../backend/transcript-pages';
@@ -21,20 +21,23 @@ import { focusedSettingCommandHistory, isIdleEmptyComposer, observeUltracode } f
 import { parseExecutionMode } from '../core/session-telemetry';
 import { CompactSamples, parseTurnProgress, showsCompactCompletion } from '../core/turn-progress';
 import { parseQuestionScreen } from '../core/question-screen';
-import { parsePermissionScreen } from '../core/permission-screen';
-import { observePermission, pendingToolId, type WatchedPermission } from './session-permission';
+import { permissionLayout } from '../core/permission-screen';
+import { earlyPermission, observePermission, pendingToolId, permissionDialog, type WatchedPermission } from './session-permission';
 import { PermissionInputUnconfirmed } from '../backend/native-permission-actions';
 import type { PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
 import { QuestionInputUnconfirmed } from '../backend/native-question-actions';
-import { observeQuestion, pendingQuestionId, type WatchedQuestion } from './session-question';
+import { TranscriptChangedNoKeys } from '../backend/native-settings';
+import { answeredQuestionId, earlyQuestion, observeQuestion, ownQuestion, pendingQuestionId, type OwnedQuestion, type WatchedQuestion } from './session-question';
 import { SessionSettingsCache, type SessionSettingsHandle } from './session-settings-cache';
 import { ModelCatalogs } from './model-catalogs';
+import { sightQuota, type QuotaSighting } from './quota-as-of';
 import { effortsFor, isEffortLevel, isModelValue, type LaunchChoices, type ModelCatalogState } from '../shared/model-catalog';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import type { DirectoryTrustDecision, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, SubagentListing, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
 import { WorkspaceStore } from './store';
 import { commandPolicy } from '../shared/native-commands';
+import { samePrompt } from '../shared/native-prompt';
 import type { TerminalLink } from '../backend/terminal-link';
 import { diagnostic, errorDetails, getDiagnosticsInfo, summarize } from '../diagnostics';
 import { t } from '../shared/i18n';
@@ -45,7 +48,13 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   settingsHandle?: SessionSettingsHandle;
   compactSamples: CompactSamples;
   question?: WatchedQuestion;
+  /** The question dialog last seen with its pending call or answered from a card, while it stays up (ownQuestion). */
+  questionOwned?: OwnedQuestion;
+  /** The current turn's newest answered AskUserQuestion as last read (answeredQuestionId). */
+  questionAnswered?: string;
   permission?: WatchedPermission;
+  /** The permission dialog last seen with its pending call (permissionLayout), while it stays up. */
+  permissionOwned?: string;
   terminalVisible?: boolean;
   nativeTasks?: SessionSnapshot['tasks'];
   terminalEpoch?: number;
@@ -65,6 +74,12 @@ interface TurnMemory {
   pane: string; pid: number;
   pickerOpen?: boolean; checkpointUuid?: string;
   restoredDraft?: string; restoredUuid?: string;
+}
+
+/** Where Claude Code works now, when that is not where the conversation started (the folder). */
+export function workingDirectory(current: string | undefined, folder: readonly string[] | undefined): SessionSnapshot['workingDirectory'] {
+  const launch = folder?.[0];
+  return current && launch && !folder.some(path => path.replace(/\/+$/, '') === current.replace(/\/+$/, '')) ? { current, launch } : undefined;
 }
 
 /** The conversation's activity for its snapshot. Claude Code 2.1.310+ (`listed`): every
@@ -126,7 +141,10 @@ export class Controller extends EventEmitter {
   private readonly statusLines = new WeakMap<SessionSettingsHandle, NonNullable<SessionSnapshot['statusLine']>>();
   private readonly statusLineManaged = new WeakSet<SessionSettingsHandle>();
   constructor(readonly store: WorkspaceStore, readonly backend: Backend, private readonly settingsCache = new SessionSettingsCache(),
-    private readonly turnMemory = new Map<string,TurnMemory>(), private readonly catalogs = new ModelCatalogs(backend)) {
+    private readonly turnMemory = new Map<string,TurnMemory>(), private readonly catalogs = new ModelCatalogs(backend),
+    // What was seen of each Claude Code process's 5h/7d figures (quota-as-of.ts), shared with
+    // siblings so that a conversation reopened in another reader keeps it.
+    private readonly quotaSightings = new WeakMap<SessionSettingsHandle, QuotaSighting>()) {
     super();
     this.catalogs.on('change', this.onCatalogChange);
   }
@@ -178,7 +196,7 @@ export class Controller extends EventEmitter {
     else this.schedulePoll(watch, 0);
   }
   private readsInBackground(watch: Watch) { return !!watch.snapshot.paneId && !watch.failures; }
-  sibling() { return new Controller(this.store, this.backend, this.settingsCache, this.turnMemory, this.catalogs); }
+  sibling() { return new Controller(this.store, this.backend, this.settingsCache, this.turnMemory, this.catalogs, this.quotaSightings); }
   async saveWorkspace(workspace: Workspace) {
     validateWorkspace(workspace);
     const previous = this.store.list().find(item => item.id === workspace.id);
@@ -587,6 +605,8 @@ export class Controller extends EventEmitter {
     try {
       const forceViewport = !!(freshViewport || watch.terminalVisible || watch.snapshot.terminalControl || settingBusyAtRead || watch.snapshot.status === 'working');
       const listing = listsFolder(watch, Date.now()), elsewhere = looksElsewhere(watch, listing);
+      // Before the read: figures it returns are no newer than they were then (quota-as-of.ts).
+      const readAt = Date.now();
       const result = await this.backend.readSession(watch.workspace, watch.sessionId, forceViewport, watch.display.activity.targets(), true, !!watch.terminalVisible, true, listing, elsewhere);
       const applied = this.watch === watch;
       // Incremental chunks must not be deduplicated by hash: two equal byte
@@ -680,7 +700,11 @@ export class Controller extends EventEmitter {
       let statusLine: SessionSnapshot['statusLine'];
       if (handle && statusLineManaged && result.statusLine?.sessionId === watch.sessionId) {
         if (settingRevisionAtRead === this.settingRevision && !settingBusy) {
-          statusLine = result.statusLine;
+          const sighting = sightQuota(this.quotaSightings.get(handle), result.statusLine,
+            { lastReply: watch.display.lastReplyAt, processStart: result.nativeStartedAt }, readAt);
+          this.quotaSightings.set(handle, sighting);
+          statusLine = sighting.asOf !== undefined && (result.statusLine.fiveHour || result.statusLine.sevenDay)
+            ? { ...result.statusLine, quotaAsOf: Math.floor(sighting.asOf / 1000) } : result.statusLine;
           const previous = this.statusLines.get(handle);
           if (previous && previous.modelId !== statusLine.modelId) this.settingsCache.invalidateSelection(handle, 'model');
           else if (previous && previous.effort !== statusLine.effort) this.settingsCache.invalidateSelection(handle, 'effort');
@@ -724,26 +748,51 @@ export class Controller extends EventEmitter {
       const messages = presentedMessages(watch);
       // 接管后的 JSONL-only 模式仍可识别新问题。跨越一次输入的旧轮询不能恢复已消费的按钮。
       const questionReadCurrent = settingRevisionAtRead === this.settingRevision && !this.turnBusy && !watch.snapshot.terminalControl;
-      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust) watch.question = undefined;
+      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust)
+        watch.question = watch.questionOwned = undefined;
       if (questionReadCurrent) {
         const waiting = result.nativeStatus === 'waiting' && (!result.nativeWaitingFor || result.nativeWaitingFor === 'input needed');
-        const owner = (questionScreen || waiting) && pendingQuestionId(messages);
-        const screen = questionScreen || (owner && waiting && result.active && !result.directoryTrust && !result.hasMore && result.viewport
+        const owner = (questionScreen || waiting) && pendingQuestionId(messages) || undefined;
+        // Before the transcript has the call, Claude Code's own record of waiting for an answer
+        // vouches for a complete question dialog in place of the input box (earlyQuestion).
+        const asking = result.nativeStatus === 'waiting' && result.nativeWaitingFor === 'input needed';
+        const screen = questionScreen || ((owner && waiting || asking) && result.active && !result.directoryTrust && !result.hasMore && result.viewport
           ? parseQuestionScreen(result.viewport, {pendingToolUse:true}) : undefined);
-        watch.question = screen && owner && handle?.panePid && !settingBusy && !trustBusy &&
-          (!result.nativeStatus || waiting) && result.session.status !== 'error'
+        // Claude Code writes a deferred call together with its result: a newly answered question
+        // means the card shown so far was answered; its frames still on screen are late (ownQuestion).
+        const answered = answeredQuestionId(messages), newlyAnswered = answered !== undefined && answered !== watch.questionAnswered;
+        watch.questionAnswered = answered;
+        const now = Date.now();
+        watch.questionOwned = ownQuestion(watch.questionOwned, screen, owner, newlyAnswered ? watch.question?.screen : undefined, now);
+        const early = !!screen && !owner && earlyQuestion(screen, result.nativeStatus, result.nativeWaitingFor, watch.questionOwned, now);
+        const before = watch.question, beforeOwner = before?.owner;
+        watch.question = screen && (owner && (!result.nativeStatus || waiting) || early) && handle?.panePid && !settingBusy && !trustBusy &&
+          result.session.status !== 'error'
           ? observeQuestion(watch.question, screen, handle, owner, result.transcriptPosition) : undefined;
+        if (watch.question && (watch.question.snapshot.interactionId !== before?.snapshot.interactionId || watch.question.owner !== beforeOwner))
+          diagnostic.event('controller.question.card', { cardId: watch.question.snapshot.interactionId, toolUseId: watch.question.owner,
+            adopted: watch.question === before, nativeWaitingFor: result.nativeWaitingFor });
       }
       const question = watch.question?.snapshot;
-      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = undefined;
+      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = watch.permissionOwned = undefined;
       if (questionReadCurrent && !question) {
-        // A tool permission dialog replaces the input box. Only the current
-        // turn's pending call can own it; menu-like text in the reply cannot.
+        // A dialog replaces the input box. The current turn's pending call owns it; menu-like
+        // text in the reply cannot. Before the transcript has the call, Claude Code's own record
+        // of waiting for it vouches for it (earlyPermission); while it waits, a native dialog
+        // Lectern does not know is read by its common layout (permissionDialog).
         const screen = (!result.nativeStatus || result.nativeStatus === 'waiting') && result.active && !result.directoryTrust && !result.hasMore && result.viewport
-          ? parsePermissionScreen(result.viewport) : undefined;
+          ? permissionDialog(result.viewport, result.nativeStatus) : undefined;
         const owner = screen && pendingToolId(messages);
-        watch.permission = screen && owner && handle?.panePid && !settingBusy && !trustBusy && result.session.status !== 'error'
-          ? observePermission(watch.permission, screen, handle, owner, result.transcriptPosition) : undefined;
+        const layout = screen && permissionLayout(screen);
+        if (owner) watch.permissionOwned = layout;
+        else if (layout !== watch.permissionOwned) watch.permissionOwned = undefined;
+        const early = !!screen && !owner && earlyPermission(screen, result.nativeStatus, result.nativeWaitingFor, watch.permissionOwned);
+        const before = watch.permission, beforeOwner = before?.owner;
+        watch.permission = screen && (owner || early) && handle?.panePid && !settingBusy && !trustBusy && result.session.status !== 'error'
+          ? observePermission(watch.permission, screen, handle, owner || undefined, result.transcriptPosition) : undefined;
+        if (watch.permission && (watch.permission !== before || watch.permission.owner !== beforeOwner))
+          diagnostic.event('controller.permission.card', { cardId: watch.permission.snapshot.cardId, toolUseId: watch.permission.owner,
+            adopted: watch.permission === before, nativeWaitingFor: result.nativeWaitingFor, kind: watch.permission.screen.kind });
       }
       const permission = watch.permission?.snapshot;
       // Progress never falls back to scrollback. Keep at most one live sample
@@ -824,7 +873,7 @@ export class Controller extends EventEmitter {
         executionMode: watch.settingsHandle ? this.executionModes.get(watch.settingsHandle) : undefined,
         executionModeLastObserved: !!watch.settingsHandle && !executionMode && this.executionModes.has(watch.settingsHandle),
         contextUsage: result.hasMore ? watch.snapshot.contextUsage : watch.display.contextUsage,
-        cliVersion,
+        cliVersion, workingDirectory: workingDirectory(watch.display.workingDirectory, result.folderPaths),
         directoryTrust: watch.manualRecovery || watch.snapshot.terminalControl ? result.directoryTrust : settingsOverlap ? watch.snapshot.directoryTrust : result.directoryTrust,
         status, notice: watch.display.notice,
       };
@@ -879,7 +928,33 @@ export class Controller extends EventEmitter {
     this.schedulePoll(watch, stalePicker ? 0 : delay, stalePicker || soonFresh);
     });
   }
+  /** Answering checks the record a card was read with (transcriptVersionGuard), so a click while
+   * Claude Code appends to the transcript is refused before any key (TranscriptChangedNoKeys). That
+   * is how a card read off the screen alone met its call (2.1.300 and 2.1.310 write it about 170 ms
+   * after the dialog, longer on a slow disk), and how any card met the request, title and mode records
+   * written around a call. The click was lost: the card came back with a new token. Nothing was
+   * sent, so the card stays unconsumed; read again, and when the read keeps the same card (the same
+   * screen, the same call or now its call; observeQuestion, observePermission: token kept, newer
+   * position) send the same answer once more. Another screen, call or an answered question is a new
+   * card or none, and the refusal stands. */
+  private async rereadOnRefusal(workspaceId: string, sessionId: string, card: () => WatchedQuestion | WatchedPermission | undefined,
+    answer: () => Promise<void>): Promise<void> {
+    const before = card();
+    try { return await answer(); }
+    catch (error) {
+      if (!(error instanceof TranscriptChangedNoKeys) || !before || before.consumed) throw error;
+      await this.refresh(workspaceId, sessionId);
+      const same = card() === before && !before.consumed;
+      diagnostic.event('controller.card.reread', { sessionId, toolUseId: before.owner, same });
+      if (!same) throw error;
+      return answer();
+    }
+  }
   async answerQuestion(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
+    return this.rereadOnRefusal(workspaceId, sessionId, () => this.watch?.question,
+      () => this.answerQuestionOnce(workspaceId, sessionId, paneId, panePid, token, action));
+  }
+  private async answerQuestionOnce(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
     const watch = this.watch;
     const current = watch?.question;
     if (!watch || watch.workspace.id !== workspaceId || watch.sessionId !== sessionId || !current || current.consumed ||
@@ -900,6 +975,8 @@ export class Controller extends EventEmitter {
       await this.backend.answerQuestion(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent);
     } catch (error) {
       if (error instanceof QuestionInputUnconfirmed) current.unconfirmed = true;
+      // Refused before any key: the card stands unless the next read says otherwise (rereadOnRefusal).
+      if (error instanceof TranscriptChangedNoKeys) current.consumed = false;
       throw error;
     } finally {
       this.sending = this.turnBusy = false;
@@ -909,6 +986,10 @@ export class Controller extends EventEmitter {
     }
   }
   async answerPermission(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: PermissionAction) {
+    return this.rereadOnRefusal(workspaceId, sessionId, () => this.watch?.permission,
+      () => this.answerPermissionOnce(workspaceId, sessionId, paneId, panePid, token, action));
+  }
+  private async answerPermissionOnce(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: PermissionAction) {
     const watch = this.watch;
     const current = watch?.permission;
     if (!watch || watch.workspace.id !== workspaceId || watch.sessionId !== sessionId || !current || current.consumed ||
@@ -929,6 +1010,7 @@ export class Controller extends EventEmitter {
       await this.backend.answerPermission(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent);
     } catch (error) {
       if (error instanceof PermissionInputUnconfirmed) current.unconfirmed = true;
+      if (error instanceof TranscriptChangedNoKeys) current.consumed = false;
       throw error;
     } finally {
       this.sending = this.turnBusy = false;
@@ -953,34 +1035,49 @@ export class Controller extends EventEmitter {
     this.sending = this.turnBusy = true;
     this.settingRevision++;
     try {
-      let selectedUuid: string | undefined, target: RewindTarget | undefined, assertCurrent: (() => void) | undefined;
-      if (action.kind === 'rewindTo' || action.kind === 'checkpoint' || action.kind === 'restore') {
-        // The native index counts the whole active branch, never the current
-        // JSONL page. Drain older pages before matching even a recent duplicate.
-        while (watch.older) {
-          if (this.watch !== watch) throw new Error(t('controller.rewindSwitched'));
-          await this.loadEarlierMessages(workspaceId, sessionId, watch.older.ticket);
+      let selectedUuid: string | undefined, target: RewindTarget | undefined, result: Awaited<ReturnType<Backend['turnAction']>>;
+      for (let attempt = 1; ; attempt++) {
+        let assertCurrent: (() => void) | undefined;
+        if (action.kind === 'rewindTo' || action.kind === 'checkpoint' || action.kind === 'restore') {
+          // The native index counts the whole active branch, never the current
+          // JSONL page. Drain older pages before matching even a recent duplicate.
+          while (watch.older) {
+            if (this.watch !== watch) throw new Error(t('controller.rewindSwitched'));
+            await this.loadEarlierMessages(workspaceId, sessionId, watch.older.ticket);
+          }
+          // Claude Code's list: the prompts, and the local commands it lists between them (rewindPoints).
+          const branch = watch.display.rewindPoints();
+          selectedUuid = action.kind === 'rewindTo' ? action.uuid : action.kind === 'restore' ? memory.checkpointUuid
+            : menu && Number.isInteger(action.index) ? branch?.[(menu.before ?? 0) + action.index!]?.uuid : undefined;
+          const index = branch?.findIndex(point => point.uuid === selectedUuid) ?? -1;
+          if (!branch || !selectedUuid || index < 0 || branch.filter(point => point.uuid === selectedUuid).length !== 1 || watch.display.historyIncomplete)
+            throw new Error(t('controller.rewindTargetUnverified'));
+          const chosen = target = { index, prompts: branch.map(point => point.text) };
+          const position = watch.snapshot.transcriptPosition;
+          assertCurrent = () => {
+            if (this.watch !== watch || watch.failures || watch.snapshot.paneId !== pane || watch.snapshot.panePid !== pid ||
+                (position && (position.inode !== watch.snapshot.transcriptPosition?.inode || position.offset !== watch.snapshot.transcriptPosition?.offset) &&
+                  JSON.stringify(watch.display.rewindPoints()) !== JSON.stringify(branch)))
+              throw new Error(t('controller.rewindBranchChanged'));
+          };
+          assertCurrent();
+          if (action.kind === 'checkpoint' && menu) checkpointPosition(menu, chosen);
         }
-        const users = () => watch.display.getMessages().filter(m => m.role === 'user' && m.rewindUuid);
-        const branch = users();
-        selectedUuid = action.kind === 'rewindTo' ? action.uuid : action.kind === 'restore' ? memory.checkpointUuid
-          : menu && Number.isInteger(action.index) ? branch[(menu.before ?? 0) + action.index!]?.rewindUuid : undefined;
-        const index = branch.findIndex(m => m.rewindUuid === selectedUuid);
-        if (!selectedUuid || index < 0 || branch.filter(m => m.rewindUuid === selectedUuid).length !== 1 || watch.display.historyIncomplete)
-          throw new Error(t('controller.rewindTargetUnverified'));
-        target = { index, prompts: branch.map(m => m.text) };
-        const position = watch.snapshot.transcriptPosition;
-        assertCurrent = () => {
-          if (this.watch !== watch || watch.failures || watch.snapshot.paneId !== pane || watch.snapshot.panePid !== pid ||
-              (position && (position.inode !== watch.snapshot.transcriptPosition?.inode || position.offset !== watch.snapshot.transcriptPosition?.offset) &&
-                JSON.stringify(users().map(m => [m.rewindUuid,m.text])) !== JSON.stringify(branch.map(m => [m.rewindUuid,m.text]))))
-            throw new Error(t('controller.rewindBranchChanged'));
-        };
-        assertCurrent();
-        if (action.kind === 'checkpoint' && menu) checkpointPosition(menu, target);
+        if (action.kind === 'openRewind' || action.kind === 'rewindTo') { memory.pickerOpen = true; memory.checkpointUuid = undefined; this.turnMemory.set(turnKey,memory); }
+        try {
+          result = await this.backend.turnAction(watch.workspace,sessionId,pane,pid,action,target,assertCurrent,watch.snapshot.transcriptPosition);
+          break;
+        } catch (error) {
+          // Claude Code wrote to the transcript after the message was chosen (a rename's records
+          // some 250 ms after its title, say), and the terminal is back as it was: nothing was
+          // rewound. Read the transcript again and choose the same message once more.
+          if (action.kind !== 'rewindTo' || attempt > 1 || !(error instanceof RewindRecordChanged) || this.watch !== watch) throw error;
+          diagnostic.event('controller.rewind.reread', { watchId: watch.id, sessionId });
+          await new Promise(resolve => setTimeout(resolve, 250));
+          await this.refresh(workspaceId, sessionId);
+          if (this.watch !== watch) throw error;
+        }
       }
-      if (action.kind === 'openRewind' || action.kind === 'rewindTo') { memory.pickerOpen = true; memory.checkpointUuid = undefined; this.turnMemory.set(turnKey,memory); }
-      const result = await this.backend.turnAction(watch.workspace,sessionId,pane,pid,action,target,assertCurrent,watch.snapshot.transcriptPosition);
       if (action.kind === 'checkpoint' || action.kind === 'rewindTo') memory.checkpointUuid = selectedUuid;
       if (action.kind === 'stop') {
         watch.compactSamples.interrupt();
@@ -1060,7 +1157,7 @@ export class Controller extends EventEmitter {
           watch.manualRecovery = false; this.manualRecoveries.delete(this.recoveryKey(watch.workspace, watch.sessionId)); this.settingRevision++;
         }
         const afterUser = watch.display.getMessages().filter(m => m.role === 'user').at(-1);
-        if (!(afterUser && afterUser.id !== beforeUser && afterUser.text.trim() === text.trim())) {
+        if (!(afterUser && afterUser.id !== beforeUser && samePrompt(text, afterUser.text))) {
           watch.display.optimisticUser(text);
           diagnostic.event('controller.optimistic_user', { inputCaptureId, text: summarize(text) });
         } else diagnostic.event('controller.optimistic_user.skipped', { reason: 'canonical-user-already-arrived', userId: afterUser.id, inputCaptureId });

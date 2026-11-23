@@ -6,6 +6,8 @@ import { ArtifactReferenceScope } from "./ArtifactReferenceScope";
 import { MessageDisplay } from "./MessageDisplay";
 import { ConversationTaskList } from './ConversationTaskList';
 import type { ReplyDetail } from "./desktop-state";
+import { DOCK_ITEMS, FADE_LEAVE_MS, FadeController, dockFades, prefersReducedMotion, transcriptFades, type PinnedBox } from "./content-fade";
+import "./content-fade.css";
 import { t } from '../shared/i18n';
 
 interface Props {
@@ -43,6 +45,13 @@ interface ScrollAnchor {
 /** A line near the bottom edge of the visible conversation, and its distance above that edge. */
 interface BottomAnchor { element: Element; offset: number }
 
+/** Messages that already faded in once (a new chat's first message shows again when the chat opens). */
+const introduced = new Set<string>();
+const introduce = (id: string) => {
+  introduced.add(id);
+  if (introduced.size > 64) introduced.delete(introduced.values().next().value!);
+};
+
 // Capture the visible message immediately before React changes the DOM. A
 // reader can keep scrolling while an IPC request (or another pane's request)
 // is in flight, so its offset at request time would be stale.
@@ -63,6 +72,15 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   private intentAt = -Infinity;
   private pointerHeld = false;
   private pointerAt = -Infinity;
+  // New content fades in, removed content fades out (content-fade.ts): the conversation, and the
+  // input area's cards and bars. Before each change, where those cards were and how tall the area was.
+  private fade?: FadeController;
+  private dockFade?: FadeController;
+  private dockBoxes = new Map<Element, PinnedBox>();
+  private dockHeight?: number;
+  private dockEase?: number;
+  private fadingUntil = -Infinity;
+  private noteFading = () => { this.fadingUntil = performance.now() + FADE_LEAVE_MS + 100; };
 
   componentDidMount() {
     this.mounted = true;
@@ -80,6 +98,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
         this.keepPosition(viewChanged);
       });
       this.resize.observe(viewport, { box: "border-box" });
+      if (this.area.current) this.fade = new FadeController(this.area.current, transcriptFades, { subtree: true, onLeave: this.noteFading });
       this.observeContent();
       this.observeDock();
     }
@@ -90,6 +109,9 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   componentWillUnmount() {
     this.mounted = false;
     this.resize?.disconnect();
+    this.fade?.dispose();
+    this.endDockFade();
+    this.observedContent = this.observedDock = undefined;
     window.removeEventListener("pointerup", this.releasePointer);
     window.removeEventListener("pointercancel", this.releasePointer);
   }
@@ -108,15 +130,28 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     if (this.observedContent) this.resize?.unobserve(this.observedContent);
     this.observedContent = content;
     if (content) this.resize?.observe(content);
+    // The conversation shows (first open, another chat, the cache again): it and what the read
+    // catches up with right after appear as they are. A new chat (only the message just sent, no
+    // history to catch up with) is news: its first message fades in once, and its reply after it.
+    if (!content?.classList.contains("conversation")) return;
+    const sending = this.props.messages?.length && this.props.messages.every(message => message.source === "pending") ? this.props.messages : [];
+    if (!sending.length) this.fade?.settle();
+    this.fade?.enter(sending.filter(message => !introduced.has(message.id))
+      .flatMap(message => [...content.querySelectorAll(`.message[data-message-id="${CSS.escape(message.id)}"]`)]));
+    for (const message of sending) introduce(message.id);
   }
 
   private observeDock() {
     const dock = this.props.dock ?? null;
     if (dock === this.observedDock || !this.resize) return;
     if (this.observedDock) this.resize.unobserve(this.observedDock);
+    this.endDockFade();
     this.observedDock = dock;
-    if (dock) this.resize.observe(dock, { box: "border-box" });
-    else this.fitDock();
+    if (dock) {
+      this.resize.observe(dock, { box: "border-box" });
+      this.dockFade = new FadeController(dock, dockFades, { subtree: false, pinned: element => this.dockBoxes.get(element), onLeave: this.easeDock });
+      this.dockFade.settle();
+    } else this.fitDock();
   }
 
   /** Room under the last message for the input area (and the jump button above it). */
@@ -132,6 +167,49 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   private visibleBottom(box: DOMRect) {
     const dock = this.observedDock;
     return dock?.isConnected ? Math.max(box.top, Math.min(box.bottom, dock.getBoundingClientRect().top)) : box.bottom;
+  }
+
+  /** Before a change: where the input area's cards and bars are (a leaving one stays there while it fades). */
+  private measureDock() {
+    this.dockBoxes.clear();
+    this.dockHeight = undefined;
+    const dock = this.observedDock;
+    if (!dock?.isConnected || !this.dockFade || prefersReducedMotion()) return;
+    let box: DOMRect | undefined;
+    for (const child of dock.children) {
+      if (child.hasAttribute("data-leaving") || !child.matches(DOCK_ITEMS)) continue;
+      box ??= dock.getBoundingClientRect();
+      const rect = child.getBoundingClientRect();
+      this.dockBoxes.set(child, { left: rect.left - box.left, bottom: box.bottom - rect.bottom, width: rect.width, height: rect.height });
+    }
+    this.dockHeight = box?.height;
+  }
+
+  /** A card or bar left the input area: while following the latest message, the area eases to its
+   * new height (the conversation above follows through the ResizeObserver) instead of dropping at
+   * once. Reading older messages, it drops at once as before: the line being read moves with the
+   * area's top either way, and a moving area would race the anchor's corrections. */
+  private easeDock = () => {
+    const dock = this.observedDock, from = this.dockHeight;
+    if (!dock || from === undefined || !this.followLatest) return;
+    window.clearTimeout(this.dockEase);
+    dock.style.transition = "none";
+    dock.style.minHeight = "";
+    const to = dock.getBoundingClientRect().height;
+    if (from - to < 1) { dock.style.transition = ""; return; }
+    this.noteFading();
+    dock.style.minHeight = `${from}px`;
+    void dock.offsetHeight;
+    dock.style.transition = `min-height ${FADE_LEAVE_MS}ms ease`;
+    dock.style.minHeight = `${to}px`;
+    this.dockEase = window.setTimeout(() => { dock.style.minHeight = dock.style.transition = ""; }, FADE_LEAVE_MS + 40);
+  };
+
+  private endDockFade() {
+    this.dockFade?.dispose();
+    this.dockFade = undefined;
+    window.clearTimeout(this.dockEase);
+    if (this.observedDock) this.observedDock.style.minHeight = this.observedDock.style.transition = "";
   }
 
   /** A wheel over the input area scrolls the conversation, unless what is under
@@ -186,6 +264,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   }
 
   getSnapshotBeforeUpdate(previous: Props, previousState: State): ScrollAnchor | null {
+    this.measureDock();
     const viewport = this.viewport.current;
     if (!viewport || this.followLatest ||
       (previous.messages === this.props.messages && previous.replyDetail === this.props.replyDetail && previousState.error === this.state.error)) return null;
@@ -203,6 +282,15 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   }
 
   componentDidUpdate(previous: Props, previousState: State, anchor?: ScrollAnchor | null) {
+    // Removed elements go back in place to fade out before positions are restored below. An older
+    // page (or a fresh read: the page cursor changes, the first saved message too) and another reply
+    // detail are not news: nothing fades. (A new chat's sent message, replaced by the saved one, is.)
+    const head = (messages?: ChatMessage[]) => messages?.find(message => message.source !== "pending")?.id;
+    const quiet = previous.replyDetail !== this.props.replyDetail || (previous.historyPage?.cursor ?? "") !== (this.props.historyPage?.cursor ?? "") ||
+      (head(previous.messages) !== undefined && head(previous.messages) !== head(this.props.messages));
+    this.fade?.flush(!quiet);
+    this.dockFade?.flush(true);
+    this.dockBoxes.clear();
     this.observeDock();
     const viewport = this.viewport.current;
     if (!viewport || (previous.messages === this.props.messages && previous.replyDetail === this.props.replyDetail && previousState.error === this.state.error)) return;
@@ -263,7 +351,10 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     if (this.followLatest !== !readingEarlier) this.props.onFollowLatest(!readingEarlier);
     this.followLatest = !readingEarlier;
     if (this.state.readingEarlier !== readingEarlier) this.setState({ readingEarlier });
-    this.recordBottom();
+    // While something fades out and gives back its height, each frame moves the input area or the
+    // content before the ResizeObserver corrects the position: the scroll that correction caused
+    // must not take the moved line as the new anchor (only the reader's own scrolling does).
+    if (this.userScrolling || performance.now() >= this.fadingUntil) this.recordBottom();
     if (upwards && top < 120) void this.loadEarlier();
   };
 
@@ -294,7 +385,8 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
             this.noteIntent();
             if (event.deltaY < 0 && event.currentTarget.scrollTop <= 0) void this.loadEarlier();
           }}>
-          {messages?.length || this.props.tasks?.length || historyPage?.hasOlder ? <div className="conversation">
+          {/* Keyed: React would otherwise reuse the welcome's div, and the messages would look newly added. */}
+          {messages?.length || this.props.tasks?.length || historyPage?.hasOlder ? <div key="conversation" className="conversation">
             <div className="conversation-intro">
               <span>{workspace?.kind === "ssh" ? <Server size={12} /> : <Laptop size={12} />}
                 {workspace?.kind === "ssh" ? workspace.host : t('workbench.local')}</span>

@@ -28,6 +28,7 @@ import { setMachineConnection, sshMachines, useMachineConnections } from "./ssh-
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
 import { UpdateSettings } from "./UpdatePrompt";
 import { QuitPreferenceSetting } from "./QuitDialog";
+import { SshConnectionSetting } from "./SshConnectionSetting";
 import { defaultQuitPreferences } from "../shared/quit";
 import { updateText } from "../shared/update-strings";
 import { timeZoneChoices, zoneOffset } from "./quota-time";
@@ -50,8 +51,14 @@ import {
   validHost,
   type ConnectionProfile,
 } from "./desktop-state";
-import { dateTimeText, t, type LocalePreference } from '../shared/i18n';
+import { dateTimeText, t, type LocalePreference, type MessageKey } from '../shared/i18n';
+import { promptCacheTtlPreset, promptCacheTtlPresets, type PromptCacheTtlPreset } from '../shared/prompt-cache';
 import type { LocaleState } from '../shared/types';
+
+const cacheTtlLabels: Record<PromptCacheTtlPreset, MessageKey> = {
+  default: 'prefs.cacheTtlDefault', 'both-5m': 'prefs.cacheTtlBoth5m', 'both-1h': 'prefs.cacheTtlBoth1h',
+  'main-1h-other-5m': 'prefs.cacheTtlMain1hOther5m',
+};
 
 const previewSample = () => `${t('prefs.sampleCode')}
 def summarize(path: str, limit: int = 20) -> dict:
@@ -387,6 +394,15 @@ export function PreferencesDialog({
                 <input type="checkbox" checked={settings.enableWorkflows} onChange={e => setDesktop({ enableWorkflows: e.currentTarget.checked })} />
               </label>
               <p>{t('prefs.workflowsHelp')}</p>
+              <label>
+                {t('prefs.cacheTtl')}
+                <select aria-label={t('prefs.cacheTtl')} value={settings.promptCacheTtlPreset}
+                  onChange={e => setDesktop({ promptCacheTtlPreset: promptCacheTtlPreset(e.target.value) })}>
+                  {promptCacheTtlPresets.map(preset => <option key={preset} value={preset}>{t(cacheTtlLabels[preset])}</option>)}
+                </select>
+              </label>
+              <p>{t('prefs.cacheTtlDefaultHelp')}</p>
+              <p>{t('prefs.cacheTtlHelp')}</p>
               <QuitPreferenceSetting resetKey={quitReset} />
               <button className="pref-action" onClick={() => {
                 setDesktop(defaultSessionOptions);
@@ -528,6 +544,7 @@ export function PreferencesDialog({
                   </button>
                 </div>
               )}
+              <SshConnectionSetting />
             </>
           )}
         </section>

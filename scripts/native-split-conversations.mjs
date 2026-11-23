@@ -94,7 +94,7 @@ try {
   // applies concurrent pressure without racing two Playwright mouse pointers.
   const handles=await Promise.all(buttons.map(b=>b.elementHandle()));
   const starts=await page.evaluate(([a,b])=>{
-    if(a.disabled || b.disabled)throw Error('Both split composers must be enabled');
+    if(a.matches(':disabled, [aria-disabled="true"]') || b.matches(':disabled, [aria-disabled="true"]'))throw Error('Both split composers must be enabled');
     const start=performance.now();a.click();const after=performance.now();b.click();return [start,after];
   },handles);
   report.sendSkewMs=Math.round(100*(starts[1]-starts[0]))/100;

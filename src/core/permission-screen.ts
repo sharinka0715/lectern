@@ -1,5 +1,6 @@
 import { stripTerminalEscapes } from './screen';
 import { parseAutoModeBillingNoticeLines, parseAutoModeUnavailableLines } from './auto-mode-screen';
+import { parseNativeDialogLines } from './native-dialog-screen';
 import type { NativePermissionOption, NativePermissionScreen } from '../shared/native-permission';
 
 /**
@@ -27,10 +28,15 @@ const optionRow = /^(❯| ) ([1-9])\. (\S.*)$/u;
 const plainRow = /^(❯| ) (?![1-9]\. )(\S.*)$/u;
 const footerRow = /^Esc to cancel(?: · \S.*)?$/u;
 
-export function parsePermissionScreen(viewport: string): NativePermissionScreen | undefined {
+/** `generic`: when no known dialog matches, any native dialog in the common layout
+ * (core/native-dialog-screen.ts). Only for a pane Claude Code itself reports waiting. */
+export function parsePermissionScreen(viewport: string, options: { generic?: boolean } = {}): NativePermissionScreen | undefined {
   const lines = stripTerminalEscapes(viewport).split('\n').map(line => line.replace(/\s+$/u, ''));
-  const keyed = autoModeUnavailable(lines) ?? autoModeBilling(lines);
-  if (keyed) return keyed;
+  const known = autoModeUnavailable(lines) ?? autoModeBilling(lines) ?? toolDialog(lines);
+  return known ?? (options.generic ? nativeDialog(lines) : undefined);
+}
+
+function toolDialog(lines: string[]): NativePermissionScreen | undefined {
   let end = lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
   // The dialog occupies the bottom of the screen in place of the input box.
@@ -184,11 +190,21 @@ function autoModeBilling(lines: string[]): NativePermissionScreen | undefined {
     options: [{ number: 1, label: 'continue', focused: false, key: 'Enter' }] };
 }
 
-/** The same dialog in two frames: focus may differ, nothing else. */
-export function samePermission(a: NativePermissionScreen, b: NativePermissionScreen): boolean {
-  // A tool dialog's footer may follow the focus; the keyed dialog's footer is its choices.
-  const layout = (s: NativePermissionScreen) => JSON.stringify([s.kind, s.title, s.subtitle, s.content, s.notice, s.question, s.kind && s.footer,
-    s.options.map(o => [o.number, o.label, o.key, o.unavailable])]);
-  return layout(a) === layout(b);
+/** A dialog Lectern does not know, in the common layout: its choices (numbered in screen
+ * order; the driver moves by arrows) or, without any, Enter as option 1; Esc is the cancel. */
+function nativeDialog(lines: string[]): NativePermissionScreen | undefined {
+  const dialog = parseNativeDialogLines(lines);
+  if (!dialog) return;
+  const options: NativePermissionOption[] = dialog.choices.length
+    ? dialog.choices.map((choice, index) => ({ number: index + 1, label: choice.label, focused: choice.focused }))
+    : dialog.enter !== undefined ? [{ number: 1, label: dialog.enter, focused: false, key: 'Enter' }] : [];
+  return { kind: 'native-dialog', title: dialog.title, subtitle: dialog.paragraphs, content: [], question: '', footer: dialog.footer, options,
+    ...dialog.escape !== undefined && { escape: dialog.escape } };
 }
+
+/** Which dialog it is, focus aside. A tool dialog's footer may follow the focus; the keyed dialog's footer is its choices. */
+export const permissionLayout = (s: NativePermissionScreen) => JSON.stringify([s.kind, s.title, s.subtitle, s.content, s.notice, s.question, s.kind && s.footer,
+  s.options.map(o => [o.number, o.label, o.key, o.unavailable])]);
+/** The same dialog in two frames: focus may differ, nothing else. */
+export const samePermission = (a: NativePermissionScreen, b: NativePermissionScreen) => permissionLayout(a) === permissionLayout(b);
 export const focusedPermission = (screen: NativePermissionScreen) => screen.options.findIndex(option => option.focused);

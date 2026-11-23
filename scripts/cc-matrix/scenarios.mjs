@@ -4,7 +4,7 @@
 // script answers. Rows (features) are what the coverage table reports.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { sel } from './app.mjs';
@@ -39,6 +39,7 @@ export const FEATURES = [
   { id: 'question-multi', title: 'AskUserQuestion: multi-question form with review' },
   { id: 'question-single-long', title: 'AskUserQuestion: one long wrapped CJK question after a long preamble, wrapped option descriptions, named session' },
   { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
+  { id: 'question-early', title: 'AskUserQuestion before the transcript has the call (the stream ends late): a card read off the screen, answered into its call' },
   { id: 'thinking', title: 'Thinking folded into a thought row' },
   { id: 'tasks', title: 'Task list tool (TodoWrite / TaskCreate)' },
   { id: 'queue', title: 'Queue a message during a reply' },
@@ -46,6 +47,7 @@ export const FEATURES = [
   { id: 'interrupt', title: 'Interrupt a reply (stop button)' },
   { id: 'compact', title: '/compact with a message queued during compaction' },
   { id: 'rename', title: 'Rename a running session (/rename)' },
+  { id: 'rewind-renamed', title: 'Rewind past one-step /model and /effort switches, right after renaming the session to a name too wide for the input box border, with a wrapped skill description among the /rewind completions' },
   { id: 'session-settings', title: 'Switch model and effort in a running session' },
   { id: 'statusline', title: 'Status line: model, context usage, billing route' },
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
@@ -382,6 +384,16 @@ export const SCENARIOS = [
       api.script('perm-allow', once({ name: 'Bash', input: { command: 'echo allowed > allowed.txt', description: 'Write a marker file' } }, 'Allowed (ccm-perm-allow-done).'));
       api.script('perm-deny', once({ name: 'Write', input: { file_path: path.join(cwd, 'denied.md'), content: '# Denied\n' } }, 'Should not happen (ccm-perm-deny-done).'));
       const card = page.locator(sel.permission);
+      // The card can come before the transcript has its call (read off the screen alone: Claude Code
+      // writes in batches, and 2.1.300/2.1.310 can write a new session's first call ahead of its
+      // prompt). The call must then show up in the chat and own the card: the transcript read right.
+      const owned = async name => {
+        ctx.note(`${name}-card-before-call`, await card.getAttribute('data-permission-call') === null);
+        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.permissionCall, sel.permission, { timeout: 30_000 });
+        const id = await card.getAttribute('data-permission-call'), tools = await ui.tools();
+        assert.equal(tools.find(tool => tool.id === id)?.name, name, JSON.stringify(tools));
+        return id;
+      };
       await check('manual-fallback', async () => {
         await startChat(ctx, folders.perm, 'Write a marker ccm:perm-allow');
         // The folder turns auto mode off: Claude Code falls back to manual mode.
@@ -393,10 +405,12 @@ export const SCENARIOS = [
         const labels = await card.locator('[data-permission-option] strong').allInnerTexts();
         ctx.note('bash-options', labels);
         assert.match(labels[0], /^Yes/);
+        const call = await owned('Bash');
         await card.locator('[data-permission-option="1"]').click();
         await card.waitFor({ state: 'detached', timeout: 30_000 });
         await ui.waitReply('ccm-perm-allow-done');
         assert.equal((await readFile(path.join(cwd, 'allowed.txt'), 'utf8')).trim(), 'allowed');
+        assert.equal((await ui.tools()).find(tool => tool.id === call)?.state, 'completed');
       });
       await check('permission-deny', async () => {
         await ui.waitStatus('idle', 30_000);
@@ -405,6 +419,7 @@ export const SCENARIOS = [
         const labels = await card.locator('[data-permission-option] strong').allInnerTexts();
         ctx.note('write-options', labels);
         assert.match(labels.at(-1), /^No\b/);
+        await owned('Write');
         await card.locator(`[data-permission-option="${labels.length}"]`).click();
         await card.waitFor({ state: 'detached', timeout: 30_000 });
         await ui.waitStatus('idle', 30_000);
@@ -562,7 +577,7 @@ export const SCENARIOS = [
   },
   {
     id: 'question',
-    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long'],
+    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long', 'question-early'],
     timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
@@ -571,8 +586,8 @@ export const SCENARIOS = [
       const snacks = { header: 'Snacks', question: 'Which snacks should we pack?', multiSelect: true, options: [
         { label: 'Fruit', description: 'Fresh fruit.' }, { label: 'Bread', description: 'Fresh bread.' }] };
       const answers = {};
-      const ask = (name, questions, preamble = 'One question first.') => api.script(name, ({ step, toolResults }) => {
-        if (step === 0) return { blocks: [{ type: 'text', text: preamble }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions } }] };
+      const ask = (name, questions, preamble = 'One question first.', plan = {}) => api.script(name, ({ step, toolResults }) => {
+        if (step === 0) return { blocks: [{ type: 'text', text: preamble }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions } }], ...plan };
         answers[name] = toolResults.map(result => result.text).join('\n');
         return { text: `Thanks (ccm-${name}-done).` };
       });
@@ -587,6 +602,11 @@ export const SCENARIOS = [
         question: '处理完成之后还需要顺手做哪些收尾工作？这些都可以在同一批任务里完成，但每多选一项整体时间大约会增加半小时左右，请按实际需要勾选。',
         options: [{ label: '生成索引页', description: '列出全部相册。' }, { label: '清理临时文件', description: '删除中间产物。' }] };
       ask('ask-long', [cleanup, extras]);
+      // The stream ends a while after the call (a gateway's late end of stream): Claude Code
+      // 2.1.300–2.1.330 write the reply and the call only once the question is answered.
+      const coffee = { header: 'Coffee', question: 'How should the coffee be?', multiSelect: false, options: [
+        { label: 'Black', description: 'No milk.' }, { label: 'With milk', description: 'A splash of milk.' }] };
+      ask('ask-early', [coffee], 'Let me check first.', { tailMs: 1500 });
       ask('ask-long-cancel', [cleanup, extras]);
       // One question under a long reply: a wrapped CJK title, wrapped option descriptions.
       const album = { header: '方案', multiSelect: false,
@@ -698,6 +718,21 @@ export const SCENARIOS = [
         }
         assert.equal(result?.toolUseResult, 'User rejected tool use', 'the cancelled review rejected the question');
       });
+      await check('question-early', async () => {
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('Ask me while the reply streams ccm:ask-early');
+        await card.waitFor({ timeout: 60_000 });
+        await heading(coffee.question);
+        const id = await ui.activeSessionId();
+        const records = await readJsonl((await sandbox.projectFiles()).find(file => file.includes(id)));
+        const written = records.some(r => Array.isArray(r.message?.content) && r.message.content.some(b => b.type === 'tool_use' && b.input?.questions?.[0]?.question === coffee.question));
+        ctx.note('question-early', { deferred: !written });
+        // Not in the transcript yet: the card is read off the screen alone and names no call.
+        if (!written) assert.equal(await card.getAttribute('data-question-call'), null);
+        await option(2).click();
+        await ui.waitReply('ccm-ask-early-done');
+        assert.match(answers['ask-early'], /With milk/);
+      });
     },
   },
   {
@@ -795,7 +830,7 @@ export const SCENARIOS = [
         await ui.waitStatus('idle', 30_000);
         await ui.send('/compact');
         // While the summary request is held, the app shows the compaction and only queues.
-        await page.locator('.turn-progress[data-turn-progress="compacting"]').waitFor({ timeout: 60_000 });
+        await page.locator(`${sel.progress}[data-turn-progress="compacting"]`).waitFor({ timeout: 60_000 });
         assert.ok(api.waiting('compact') >= 1, 'the compaction request reached the fake API');
         await ui.type('After compaction ccm:after-compact');
         await page.locator(sel.turnAction).first().waitFor({ timeout: 20_000 });
@@ -813,10 +848,15 @@ export const SCENARIOS = [
   },
   {
     id: 'session',
-    features: ['statusline', 'session-settings', 'rename'],
-    timeoutMs: 200_000,
+    features: ['statusline', 'session-settings', 'rename', 'rewind-renamed'],
+    timeoutMs: 240_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
+      // A user skill whose long CJK description wraps; Claude Code offers it beside /rewind.
+      // Only this scenario's Claude Code processes start while it exists.
+      const skill = path.join(sandbox.config, 'skills', 'review-reminder');
+      await mkdir(skill, { recursive: true });
+      await writeFile(path.join(skill, 'SKILL.md'), '---\nname: review-reminder\ndescription: 读取最近一次代码评审的记录，简要告诉用户还有哪些评审意见没有处理、哪些讨论还没有结论，以及合并之前需要先确认的地方。用户说“评审提醒”时使用。\n---\n\nSay hello.\n');
       api.script('session', () => ({ text: 'Ready for settings (ccm-session-reply).' }));
       api.script('after-settings', () => ({ text: 'Using the new settings (ccm-after-settings).' }));
       await startChat(ctx, folders.main, 'Session settings check ccm:session');
@@ -842,21 +882,52 @@ export const SCENARIOS = [
         ctx.note('after-settings-request', { model: request.model, effort: request.effort });
         assert.match(request.model, /sonnet/i);
       });
-      await check('rename', async () => {
-        await ui.waitStatus('idle', 30_000);
-        const id = await ui.activeSessionId();
-        const row = page.locator(sel.row(id));
-        await row.hover();
+      const rename = async (id, name) => {
+        await page.locator(sel.row(id)).hover();
         await page.locator(`.session-row-wrap:has(${sel.row(id)}) .session-rename`).click();
         const dialog = page.locator('dialog.session-rename-dialog');
-        await dialog.locator('input').fill('Matrix renamed session');
+        await dialog.locator('input').fill(name);
         await dialog.locator('button[type="submit"]').click();
         await dialog.waitFor({ state: 'hidden', timeout: 40_000 });
-        await page.waitForFunction(([selector]) => document.querySelector(selector)?.textContent.includes('Matrix renamed session'), [`${sel.row(id)} .session-title`], { timeout: 30_000 });
+        await page.waitForFunction(([selector, name]) => document.querySelector(selector)?.textContent.includes(name), [`${sel.row(id)} .session-title`, name], { timeout: 30_000 });
         const jsonl = (await sandbox.projectFiles()).find(file => file.includes(id));
         const records = await readJsonl(jsonl);
-        assert.ok(records.some(r => r.type === 'custom-title' && r.customTitle === 'Matrix renamed session'), 'Claude Code saved the name');
+        assert.ok(records.some(r => r.type === 'custom-title' && r.customTitle === name), 'Claude Code saved the name');
+      };
+      await check('rename', async () => {
+        await ui.waitStatus('idle', 30_000);
+        await rename(await ui.activeSessionId(), 'Matrix renamed session');
       });
+      await check('rewind-renamed', async () => {
+        // The chat above: Lectern switched model and effort in one step after its first prompt
+        // (session-settings) and switches effort again now, the last thing before the rewind.
+        // Claude Code lists each switch as a rewind point between the prompts; Lectern's own list
+        // has to line up with its list row by row to choose the second prompt.
+        await pickSetting(ctx, 'effort', [/^\s*high\b/i, /^\s*medium\b/i]);
+        await page.waitForFunction(selector => /high|medium/i.test(document.querySelector(selector)?.textContent ?? ''), '.session-settings:not(.draft-settings) [data-setting-kind="effort"]', { timeout: 30_000 });
+        await ui.waitStatus('idle', 30_000);
+        const id = await ui.activeSessionId();
+        // Wider than the input box's upper border can hold: cut there with an ellipsis. Claude Code
+        // writes the rename's records some 250 ms after its title, so the rewind chosen right away
+        // can be refused for a changed transcript: Lectern then reads it again and rewinds anyway.
+        await rename(id, '矩阵回退测试 ' + '很长的会话名称'.repeat(12));
+        const jsonl = (await sandbox.projectFiles()).find(file => file.includes(id));
+        const commands = (await readJsonl(jsonl)).filter(r => r.type === 'user' && !r.isMeta && /^<command-name>/.test(textOf(r.message?.content).trim()))
+          .map(r => textOf(r.message.content).replace(/\s+/g, ' ').replace(/<command-name>(\S+)<\/command-name>.*<command-args>(.*)<\/command-args>/, '$1 $2').trim());
+        ctx.note('rewind-renamed-commands', commands);
+        assert.ok(commands.some(c => c.startsWith('/model')) && commands.filter(c => c.startsWith('/effort')).length >= 2, 'the switches are command records Claude Code lists');
+        await page.locator('.rewind-launch').click();
+        const picker = page.locator('dialog.rewind-picker');
+        await picker.locator('.rewind-choices button', { hasText: 'Next turn ccm:after-settings' }).click();
+        // The native menu opened (the typed /rewind was recognized and submitted) and reached its confirmation.
+        await page.locator('section.rewind-panel:not([data-leaving]) .rewind-confirm').click({ timeout: 45_000 });
+        await page.waitForFunction(([selector, text]) => document.querySelector(selector)?.value === text, [sel.composer, 'Next turn ccm:after-settings'], { timeout: 30_000 });
+        await page.waitForFunction(selector => ![...document.querySelectorAll(selector)].some(node => node.textContent.includes('Next turn ccm:after-settings')), sel.user, { timeout: 30_000 });
+        assert.ok([...await page.locator(sel.user).allTextContents()].some(text => text.includes('Session settings check')), 'the first prompt stays');
+        // The restored prompt is back in the input box, under the cut name.
+        ctx.note('rewind-renamed-border', (await ui.screen()).split('\n').filter(line => / ─\s*$/u.test(line)).map(line => line.trimEnd()));
+      });
+      await rm(skill, { recursive: true, force: true });
     },
   },
   {
@@ -947,7 +1018,7 @@ export const SCENARIOS = [
             .observe(document.body, { childList: true, subtree: true });
         });
         await ui.closeChat();
-        await page.locator('.resume-bar').waitFor({ timeout: 30_000 });
+        await page.locator('.resume-bar:not([data-leaving])').waitFor({ timeout: 30_000 });
         assert.equal(await shown.evaluate(node => node.isConnected), true, 'closing reloaded the transcript');
         assert.equal(await page.evaluate(() => window.ccmTranscriptEmptied), false, 'closing blanked the transcript');
       });
@@ -971,7 +1042,7 @@ export const SCENARIOS = [
         await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes('Matrix closed session'), `${sel.row(id)} .session-title`, { timeout: 30_000 });
       });
       await check('resume', async () => {
-        await page.locator('.resume-bar button').first().click();
+        await page.locator('.resume-bar:not([data-leaving]) button').first().click();
         await ui.ready(60_000);
         const argv = await ui.claudeArgv();
         assert.equal(argv[argv.indexOf('--resume') + 1], id, 'claude --resume <session>');
@@ -993,15 +1064,22 @@ export const SCENARIOS = [
         const file = path.join(folders.main.cwd, 'swatch.png');
         await writeFile(file, pngSwatch());
         await ui.openDraft(folders.main.name);
-        await page.locator('form.composer input.composer-file-input').setInputFiles(file);
-        // The file shows as a card above the text; the text box keeps only the user's words.
-        await page.waitForFunction(() => {
+        // As a user does: the "+" button's file dialog, then typing the question.
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('form.composer button.composer-attach').click()]);
+        await chooser.setFiles(file);
+        // The file shows as a card above the text and as a chip in it; the path stays out of the text box.
+        const attached = () => page.waitForFunction(() => {
           const cards = [...document.querySelectorAll('.composer-attachments [data-attachment-card]')];
           return cards.some(card => card.textContent.includes('swatch.png') || card.dataset.tip?.includes('swatch.png'))
+            && document.querySelectorAll('form.composer .composer-chip-face').length === 1
             && !document.querySelector('.composer-attachments [data-state="uploading"]');
         }, null, { timeout: 20_000 });
+        await attached();
         assert.ok(!(await page.locator(sel.composer).inputValue()).includes('swatch.png'), 'the path stays out of the text box');
-        await page.locator(sel.composer).fill('What is in this picture? ccm:image');
+        // The chip is part of the text: fill() would replace it too, so type after it with keys.
+        await page.locator(sel.composer).pressSequentially('What is in this picture? ccm:image');
+        assert.ok((await page.locator(sel.composer).inputValue()).endsWith('What is in this picture? ccm:image'), 'the words follow the chip');
+        await attached();
         await page.locator(sel.send).click();
         await ui.waitReply('ccm-image-done', { timeout: 90_000 });
         const request = api.requests.find(r => r.script === 'image');

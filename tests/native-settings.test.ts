@@ -91,7 +91,7 @@ test('one-page settings use bounded round trips and protect external drafts and 
     }
     const transport = (backend as any).transport, run = transport.run.bind(transport);
     const calls: string[] = [];
-    let intervention: 'draft' | 'edited-command' | 'permission' | 'navigation-redraw' | undefined, enterCalls = 0, pasteCalls = 0;
+    let intervention: 'draft' | 'edited-command' | 'permission' | 'navigation-redraw' | undefined, enterCalls = 0, pasteCalls = 0, eraseCalls = 0;
     transport.run = async (target: Workspace, script: string, options: { tag?: string } = {}) => {
       calls.push(options.tag ?? '');
       if (intervention === 'navigation-redraw' && script.includes("'Escape'") && script.includes('LECTERN_MENU_KEY_NOT_SENT_')) {
@@ -104,6 +104,7 @@ test('one-page settings use bounded round trips and protect external drafts and 
         return refused;
       }
       if (script.includes("'paste-buffer'")) pasteCalls++;
+      if (script.includes("'C-u'")) eraseCalls++;
       if (script.includes("'send-keys'") && script.includes("'Enter'")) {
         enterCalls++;
         if (intervention === 'edited-command') {
@@ -163,8 +164,10 @@ test('one-page settings use bounded round trips and protect external drafts and 
     await runCommand(workspace, tmux('send-keys', '-t', session.paneId!, '-N', String('keep my draft'.length), 'BSpace'));
     intervention = 'permission';
     enterCalls = 0;
-    await assert.rejects(readFixtureSetting(backend, workspace, session.id, 'effort'), /未发送 Enter/);
+    // Neither Enter nor the Ctrl+U that would take the typed command out goes to the dialog.
+    await assert.rejects(readFixtureSetting(backend, workspace, session.id, 'effort'), /\/effort 命令，没有执行；Lectern 输入的 \/effort 也没能清除/);
     assert.equal(enterCalls, 0);
+    assert.equal(eraseCalls, 0);
     assert.ok((await runCommand(workspace, tmux('capture-pane', '-p', '-t', session.paneId!))).stdout.includes('Permission required'));
   } finally {
     await backend.dispose();

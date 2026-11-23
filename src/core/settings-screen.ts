@@ -2,6 +2,8 @@ import { inTranscriptExample } from './dialog-boundary';
 import { parseExecutionMode } from './session-telemetry';
 import { classifySessionScreen, stripTerminalEscapes, withoutRightNotice } from './screen';
 import { trailingTaskRows, withoutTaskRows } from './native-task-screen';
+import { completionBlocks } from './slash-completions';
+import { namedEditorBorder } from './editor-border';
 import { parseCacheConfirmationLines, type ModelSwitchConfirmation } from './model-switch-confirmation';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 export type { ModelSwitchConfirmation } from './model-switch-confirmation';
@@ -47,8 +49,9 @@ export type SettingScreen = SettingMenuScreen
   | { state: 'idle'; emptyInput: boolean }
   | { state: 'unrecognized'; reason?: string };
 
-// Named sessions put their title into the editor's upper border.
+// Named sessions put their title into the editor's upper border, any width of it (editor-border.ts).
 const separator = /^\s*[─━═▔╌┄-]{5,}(?: \S(?:.*\S)? [─━═▔╌┄-]+)?\s*$/u;
+const isSeparator = (line: string) => separator.test(line) || namedEditorBorder.test(line);
 export const TMUX_FOCUS_HINT = "tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking";
 const footerPattern = /\b(?:Enter to (?:set as default|confirm)|Esc to cancel)\b/i;
 // Claude Code 2.1.329+ lists background agents and workflows below the input box's
@@ -227,7 +230,7 @@ function parseEffort(lines: string[], bounds: { start: number; end: number }): S
 export function priorComposerHistory(viewport: string): string[] {
   const lines = linesOf(viewport);
   const prompt = lastIndex(lines, line => /^\s*[❯>]/u.test(line));
-  if (prompt < 1 || !separator.test(lines[prompt - 1])) return [];
+  if (prompt < 1 || !isSeparator(lines[prompt - 1])) return [];
   return historyAbove(lines, prompt - 1);
 }
 
@@ -275,7 +278,7 @@ export function isIdleEmptyComposer(viewport: string): boolean {
   if (index < 0 || index < lines.length - 12) return false;
   if (/^\s*[❯>]\s*$/.test(lines[index])) return status === 'idle' || status === 'error';
   const boxed = index > 0 && index + 1 < lines.length
-    && separator.test(lines[index - 1]) && separator.test(lines[index + 1]);
+    && isSeparator(lines[index - 1]) && isSeparator(lines[index + 1]);
   if (!boxed) return false;
   if (/^\s*❯\s+Try ["“].+["”]\s*$/.test(lines[index])) return status === 'idle';
   if (!/^\s*❯\s+Once fixed, resend your message\s*$/.test(lines[index])) return false;
@@ -287,7 +290,7 @@ type SettingCommand = '/model' | '/effort' | `/model ${string}` | `/effort ${str
 
 function lastBoxedPrompt(lines: string[]) {
   return lastIndex(lines, (line, i) => /^\s*[❯>]/u.test(line) && i > 0
-    && separator.test(lines[i - 1]) && separator.test(lines[i + 1] ?? ''));
+    && isSeparator(lines[i - 1]) && isSeparator(lines[i + 1] ?? ''));
 }
 
 /** The optional tmux advisory has a dedicated row immediately above the idle
@@ -296,35 +299,6 @@ export function idleComposerAdvisoryRow(viewport: string): number | undefined {
   if (!isIdleEmptyComposer(viewport)) return;
   const lines = linesOf(viewport), prompt = lastBoxedPrompt(lines);
   if (prompt >= 2 && prompt === lastIndex(lines, line => /^\s*[❯>]/u.test(line))) return prompt - 2;
-}
-
-interface CompletionBlock {
-  start: number;
-  end: number;
-  focused: { command: string; hasDescription: boolean }[];
-}
-
-/** Completion descriptions can span multiple terminal rows. Claude aligns
- * those continuations under the description, including when they start with /. */
-function completionBlocks(lines: string[]): CompletionBlock[] {
-  const blocks: CompletionBlock[] = [];
-  let active: CompletionBlock | undefined, descriptionColumn = -1;
-  for (const [i, line] of lines.entries()) {
-    if (active && descriptionColumn >= 0 && line.search(/\S/u) >= descriptionColumn) {
-      active.end = i + 1;
-      continue;
-    }
-    const row = /^(\s*)([❯>]\s*)?(\/\S+)(?:([ \t]+)(\S.*))?$/u.exec(line.trimEnd());
-    if (!row) { active = undefined; continue; }
-    if (!active) {
-      active = { start: i, end: i + 1, focused: [] };
-      blocks.push(active);
-    }
-    active.end = i + 1;
-    descriptionColumn = row[5] ? row[1].length + (row[2]?.length ?? 0) + row[3].length + row[4].length : -1;
-    if (row[2]) active.focused.push({ command: row[3], hasDescription: !!row[5] });
-  }
-  return blocks;
 }
 
 /** The footer rows under a boxed editor (and its completion list): task rows listed below

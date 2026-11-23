@@ -17,6 +17,8 @@ export interface TranscriptRow {
   order: number;
   kind: Kind;
   timestamp?: string;
+  /** Claude Code's working directory when it wrote the record. */
+  cwd?: string;
   text?: string;
   attachments?: TranscriptAttachment[];
   responseId?: string;
@@ -24,7 +26,7 @@ export interface TranscriptRow {
   realRequest?: boolean;
   usage?: ContextUsageObservation;
   tools?: ToolBlock[];
-  results?: (Pick<ToolBlock, 'id' | 'editPatch' | 'cellEdit'> & { result: string; isError: boolean })[];
+  results?: (Pick<ToolBlock, 'id' | 'editPatch' | 'cellEdit' | 'resultCwd'> & { result: string; isError: boolean })[];
   preservation?: Preservation;
   taskList?: ConversationTask[];
   peers?: PeerMessage[];
@@ -97,6 +99,8 @@ function commandText(text: string): string | undefined {
 
 function normalize(record: JsonRecord, key: string, order: number, parent: string | null, bodies: boolean): TranscriptRow {
   const row: TranscriptRow = { key, order, parent, kind: 'hidden', timestamp: string(record.timestamp) };
+  const cwd = bodies ? string(record.cwd) : undefined;
+  if (cwd) row.cwd = cwd;
   if (record.type === 'system') {
     if (record.subtype === 'compact_boundary') {
       row.kind = 'compact';
@@ -198,10 +202,10 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
       const thought = foldedThought(block, record, key, index, text.length, bodies, !thoughts);
       if (thought) {
         thoughts++;
-        row.tools.push(thought);
+        row.tools.push(cwd ? { ...thought, cwd } : thought);
       } else if (block.type === 'tool_use') {
         row.tools.push({ id: string(block.id) ?? `${key}:tool:${index}`, name: string(block.name) ?? 'Tool',
-          input: bodies ? string(block.input) ?? JSON.stringify(block.input ?? {}, null, 2) : '', textOffset: text.length });
+          input: bodies ? string(block.input) ?? JSON.stringify(block.input ?? {}, null, 2) : '', textOffset: text.length, ...(cwd && { cwd }) });
       } else if (bodies) {
         const paragraph = blockText(block, !!row.attachments, true);
         if (paragraph) text += (text ? '\n\n' : '') + paragraph;
@@ -219,7 +223,7 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
       const cell = typeof detail.notebook_path === 'string' && typeof detail.old_source === 'string' && typeof detail.new_source === 'string'
         ? { before: detail.old_source, after: detail.new_source } : undefined;
       row.results = results.flatMap(block => typeof block.tool_use_id === 'string'
-        ? [{ id: block.tool_use_id, result: bodies ? contentText(block.content, !!row.attachments) : '', isError: block.is_error === true, ...(patch && { editPatch: patch }), ...(cell && { cellEdit: cell }) }] : []);
+        ? [{ id: block.tool_use_id, result: bodies ? contentText(block.content, !!row.attachments) : '', isError: block.is_error === true, ...(patch && { editPatch: patch }), ...(cell && { cellEdit: cell }), ...(cwd && { resultCwd: cwd }) }] : []);
     } else {
       const text = contentText(content, !!row.attachments);
       const command = commandText(text);
@@ -320,6 +324,15 @@ export class TranscriptStore {
     return [...this.nodes.values()].filter(row => !shown.has(row.key));
   }
 
+  /** The selected branch since the compaction that holds it, oldest first: the rows
+   * Claude Code draws its /rewind list from. Only reads: the projection state stays as the
+   * last change left it. */
+  activeRows(): TranscriptRow[] {
+    const { preserved, anchor, incomplete } = this;
+    try { return this.branch(); }
+    finally { this.preserved = preserved; this.anchor = anchor; this.incomplete = incomplete; }
+  }
+
   /** A native restore can redraw immediately and persist its new branch on the next send. */
   rewindBefore(key: string): TranscriptChange | undefined {
     const row = this.nodes.get(key);
@@ -414,6 +427,10 @@ export class TranscriptStore {
         if (row.kind === 'compact') this.rememberCompaction(row);
         else if (!direct && row.parent === null) this.rememberCompaction(undefined);
       }
+      // Claude Code 2.1.300 and 2.1.310 can write a new session's first response (a tool call
+      // waiting for permission, say) before its prompt and attachments, parents intact: the
+      // prompt takes the leaf, and the chain reaching the response must carry it on there.
+      if (fillsGap && this.leaf === key) this.leaf = this.newestDescendant(key);
       if (old && this.boundary?.key === key) this.rememberCompaction(row.kind === 'compact' ? row : undefined);
       if (old || fillsGap || !direct || this.compactionKeys.has(key) || this.preserved.has(key) || this.anchor && row.parent === this.anchor) replace = true;
       added.push(row);
@@ -432,6 +449,26 @@ export class TranscriptStore {
     if (!leaf) return;
     for (let i = this.boundaries.length - 1; i >= 0; i--) {
       if (this.boundaries[i].order <= leaf.order) return this.boundaries[i];
+    }
+  }
+
+  /** The tip below `key` that rows written ahead of their parents left: at each step the
+   * newest child not cut off by a rewind. */
+  private newestDescendant(key: string): string {
+    const children = new Map<string, TranscriptRow[]>();
+    for (const row of this.nodes.values()) {
+      if (!row.parent) continue;
+      const list = children.get(row.parent);
+      if (list) list.push(row); else children.set(row.parent, [row]);
+    }
+    const seen = new Set([key]);
+    for (let tip = key; ;) {
+      const next = (children.get(tip) ?? []).filter(row => !seen.has(row.key) && !this.isDiscarded(row.key))
+        .reduce<TranscriptRow | undefined>((best, row) => !best || row.order > best.order ? row : best, undefined);
+      if (!next) return tip;
+      if (next.kind === 'compact') this.rememberCompaction(next);
+      seen.add(next.key);
+      tip = next.key;
     }
   }
 

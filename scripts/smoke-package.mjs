@@ -1,24 +1,15 @@
 import assert from 'node:assert/strict';
 import { _electron } from 'playwright';
-import { mkdtemp, rm, mkdir, readdir, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { packagedExecutable } from './package-executable.mjs';
 
 // The argument is the packaged executable, or electron-builder's output directory
 // (e.g. test-results/package) in which the unpacked app for this platform is found.
-async function executableIn(directory) {
-  const { name, productName } = JSON.parse(await readFile('package.json', 'utf8'));
-  const entries = await readdir(directory);
-  if (process.platform === 'linux') return path.join(directory, 'linux-unpacked', name);
-  if (process.platform === 'win32') return path.join(directory, 'win-unpacked', `${productName}.exe`);
-  const mac = entries.find(entry => /^mac(?:-arm64|-universal)?$/.test(entry) && (process.arch !== 'arm64' || entry !== 'mac'))
-    ?? entries.find(entry => entry.startsWith('mac'));
-  if (!mac) throw new Error(`No mac app directory in ${directory}`);
-  return path.join(directory, mac, `${productName}.app`, 'Contents', 'MacOS', productName);
-}
 const argument = process.argv[2];
 if (!argument) throw new Error('Usage: node scripts/smoke-package.mjs <app-executable | electron-builder output directory>');
-const executablePath = (await stat(argument)).isDirectory() ? await executableIn(path.resolve(argument)) : argument;
+const executablePath = await packagedExecutable(argument);
 console.log(`Smoke test: ${executablePath}`);
 // Windows connects only over SSH: its first-run screen has no local-folder actions.
 const sshOnly = process.platform === 'win32';

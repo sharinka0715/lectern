@@ -154,5 +154,7 @@ const api: DesktopAPI = {
   answerQuit: (id, answer, remember) => ipcRenderer.invoke('lectern:answerQuit', id, answer, remember === true),
   quitPreferences: () => ipcRenderer.invoke('lectern:quitPreferences'),
   setQuitPreferences: preferences => ipcRenderer.invoke('lectern:setQuitPreferences', preferences),
+  sshConnectionPreferences: () => ipcRenderer.invoke('lectern:sshConnectionPreferences'),
+  setSshConnectionPreferences: preferences => ipcRenderer.invoke('lectern:setSshConnectionPreferences', preferences),
 };
 contextBridge.exposeInMainWorld('desktop', Object.freeze(api));

@@ -38,13 +38,17 @@ npm run diagnostics:replay -- /absolute/path/to/saved-diagnostics --session SESS
 | 轮询 | `workspaceId`、`sessionId`、`watchId`、`pollId`、pane、游标、文件大小、重置、后续片段和前台进程状态 |
 | 原文 | `capture.jsonl` 保存本次实际读取的字节；`capture.screen` 保存含滚屏的原屏；`capture.viewport` 保存当前视口用于状态判定；input / messages 保存输入与消息状态 |
 | 解析与合并 | 解码字节、半行缓冲、记录类型、跳过或重复原因、屏幕锚点、候选预览、权威正文接管及消息摘要 |
+| 权限卡 | `controller.permission.card`：新卡片或卡片换了归属时记录 `cardId`、所属调用 `toolUseId`（会话记录还没有这次调用、只凭原屏出卡时为空）、`adopted`（会话记录跟上后原卡片认领调用）和原生的 `nativeWaitingFor` |
+| 问答卡 | `controller.question.card`：同上，`cardId` 是问答卡的 `interactionId`；会话记录还没有这次 AskUserQuestion、只凭原屏和原生的「input needed」出卡时 `toolUseId` 为空 |
+| 卡片被拒后重读 | `controller.card.reread`：问答卡或权限卡的点击恰在 Claude Code 往会话记录追加内容（只凭原屏出卡后写入的调用，或调用前后的请求、标题、模式等记录）时被版本守卫拒绝（未发送按键），重读一次后记录：`same` 为真表示重读仍是同一张卡（令牌不变，绑定到新位置，没有调用的卡认领了调用时 `toolUseId` 即该调用），同一个回答再发一次；为假时照旧报错 |
+| SSH 会话名额 | `transport.session.queued`（排队超过 1 秒）、`transport.session.channel_yielded`、`transport.session.unconfirmed`、`transport.ssh.connection_setting`，见下文「SSH 会话名额」 |
 | 展示与故障 | `controller.snapshot`、renderer 应用状态、渲染错误、未处理异常/拒绝、进程退出和 `incident.mark` |
 
 实际送入对话解析器的 JSONL 字节使用 base64 保存，避免中文/emoji 恰好在读取边界分片后失真。每页按原始字节读取，包含该页内嵌图片的 base64。原文件游标仍按目标 JSONL 的物理字节计数。抓屏只在哈希变化时写原文；未变化的轮询引用之前的 `captureId`。每次非空 JSONL 增量都会记录，即使其字节和上次完全相同，防止重放时遗漏重复出现但合法的记录。
 
 当前视口与滚屏在同一 shell / SSH 调用中读取。导航状态使用当前视口，防止旧生成/错误提示影响当前状态；消息预览仍可使用滚屏做匹配。未选中会话的导航刷新只记录状态元数据，不保存这些会话的原屏正文。选中会话的 `viewportCaptureId` 和 `viewportApplied` 会进入离线重放，旧版本日志没有这两个字段时保持旧格式兼容。
 
-只有 `controller.poll.apply` 引用的数据才是实际送入 MessageDisplay 的输入。单独的原始 capture 可能来自随后被取消或丢弃的读取，不能见到 capture 就直接重放。乐观输入、打断和失败分别有对应事件。
+只有 `controller.poll.apply` 引用的数据才是实际送入 MessageDisplay 的输入。单独的原始 capture 可能来自随后被取消或丢弃的读取，不能见到 capture 就直接重放。乐观输入、打断和失败分别有对应事件；一直没被会话记录认领、在后发的消息被认领时去掉的乐观输入记为 `display.pending.retired`（含当时的预览摘要和是否已标为中断）。
 
 ## 文件上限与失败处理
 
@@ -81,6 +85,15 @@ npm run test:native
 测试会检查 JSONL 正文、单一气泡、若观察到预览则 ID 保持不变、无日志丢弃或写盘失败。结束只清理自己创建并核对 UUID 的 tmux 会话；保留 `test-results/native-时间/` 内的报告、截图、工作目录和诊断日志。单条短回复可能在第一次轮询前就落盘，不能仅凭它证明所有慢流式场景；相应逐段、延迟落盘和断线场景由离线 E2E / 单元测试覆盖。
 
 开发时可用 `LECTERN_USER_DATA` 隔离 GUI 配置、`LECTERN_LOG_DIR` 指定本机日志目录、`LECTERN_DIAGNOSTIC_CONTENT=0|1` 覆盖本次启动的原文开关。并行测试必须使用各自独立的配置和日志目录。
+
+## SSH 会话名额
+
+目标 sshd 每条连接最多同时开 `MaxSessions` 个会话（默认 10），超出时跳板报「open failed」。Lectern 按主机计数自己开着的会话：常驻命令通道、终端接管的常驻流和一次性会话（可取消的扫描、上传下载、通道全忙时的命令），一个会话从启动 ssh 客户端算到客户端退出。复用用户自己的 master 时（`mode: "shared"`）每台主机最多 4 个、其中通道最多 2 条；走 Lectern 自己的连接时（`mode: "exclusive"`，设置里关掉「复用已有的 SSH 连接」，或这台机器没有用户的 master）最多 8 个、通道最多 3 条。
+
+- `transport.session.queued`：一次排队超过 1 秒时在排到时记一条（超过 10 秒为 warn）。`host`、`port`、`mode`、`limit`、排队的用途 `use`（`command` / `terminal`）、结果 `outcome`（`place` 拿到名额，`channel` 改走变空闲的通道，`aborted` 被取消）、`waitedMs`，以及当时的占用 `channels`、`terminals`、`commands` 和仍在排队的 `waiting`。
+- `transport.session.channel_yielded`：名额已满且有请求在排队，一条空闲通道被关掉把名额让出来（随后在有空余时重开）。
+- `transport.session.unconfirmed`：超时或取消后，ssh 客户端在关闭输入 5 秒后仍未退出、只能杀掉，远端会话可能还在；这个名额再多占 `holdMs`（30 秒）才归还。正常情况下关闭输入后远端包装立即结束整个进程组，客户端随即退出，不会出现这一条。
+- `transport.ssh.connection_setting`：切换了「复用已有的 SSH 连接」（`reuseUserMasters`）；`transport.ssh.private_master_stopped` 是重新开启复用时，对已有用户 master 的主机，Lectern 自己的 master 收到 `-O stop`（不再接新会话，现有终端接管结束后退出）。`transport.ssh.connection`（debug）逐条记录走用户 master 还是私有 master，`transport.channel.opened` 带当时的 `mode`。
 
 ## 模型与 effort 操作
 

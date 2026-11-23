@@ -44,7 +44,7 @@ try {
   // Seeing a row through sidebar polling is not proof of a completed operation.
   // Wait until the original of this second fork has a distinct resumed pane.
   await page.waitForFunction(async ({ws,id,oldPane})=>{const current=(await window.desktop.discover(ws)).sessions.find(s=>s.id===id);return !!current?.paneId && current.paneId!==oldPane;},{ws:ws.id,id:firstFork,oldPane:sourcePane},{timeout:35000,polling:600});
-  await page.waitForFunction(()=>!document.querySelector('.desk-pane[data-view="secondary"] textarea')?.disabled);
+  await page.waitForFunction(()=>!document.querySelector('.desk-pane[data-view="secondary"] textarea')?.matches(':disabled, [aria-disabled="true"]'));
   await shows('secondary',originalId); await shows('primary',originalId);
   stage='choose earlier duplicate'; await row(secondFork).click(); await ready(secondFork); await send('secondary','/rewind');
   const picker=page.getByRole('dialog',{name:'选择回退位置'}); await picker.waitFor();

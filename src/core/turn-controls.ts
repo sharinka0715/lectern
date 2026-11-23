@@ -1,5 +1,7 @@
 import { classifySessionScreen, stripTerminalEscapes, withoutEditorNotices, withoutTaskRows } from './screen';
 import { nativeTaskPanel } from './native-task-screen';
+import { namedEditorBorder } from './editor-border';
+import { completionBlocks } from './slash-completions';
 import type { RewindMenu } from '../shared/turn-controls';
 
 const effortBadge = /^\s*[◐◉○◌●]\s+\S+\s*·\s*\/effort\s*$/u;
@@ -24,9 +26,10 @@ export function rowAboveEditor(lines: string[], top: number): number {
   return end;
 }
 
-// Named sessions put their title into the editor border. The menu may also
-// show a tmux mouse/focus advisory in its upper rule.
-const rule = /^\s*(?:[─━▔]{5,}|[─━▔]{5,} [^\n]+ [─━▔]+)\s*$/u;
+// Named sessions put their title into the editor border, any width of it (editor-border.ts).
+// The menu may also show a tmux mouse/focus advisory in its upper rule.
+const plainRule = /^\s*(?:[─━▔]{5,}|[─━▔]{5,} [^\n]+ [─━▔]+)\s*$/u;
+const isRule = (line: string) => plainRule.test(line) || namedEditorBorder.test(line);
 const linesOf = (view: string) => stripTerminalEscapes(view).replace(/\u00a0/g, ' ').split('\n').map(line => line.trimEnd());
 /** The rows every reader of the input box parses (`turnComposer`, turn progress): task
  * rows below the footer dropped, notices on top of the box blanked. Rows above the task
@@ -47,10 +50,10 @@ export function turnComposer(view: string) {
   let end = lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
   let bottom = end;
-  while (bottom >= 0 && !rule.test(lines[bottom])) bottom--;
+  while (bottom >= 0 && !isRule(lines[bottom])) bottom--;
   if (bottom < 2 || end - bottom > 5) return;
   let top = bottom - 1;
-  while (top >= 0 && !rule.test(lines[top])) top--;
+  while (top >= 0 && !isRule(lines[top])) top--;
   const first = lines[top + 1]?.match(/^❯(?: (.*))?$/u);
   if (top < 0 || !first || bottom <= top + 1) return;
   const continuation = lines.slice(top + 2, bottom);
@@ -87,18 +90,22 @@ export function turnComposer(view: string) {
   return { text, empty: !text || placeholder.test(text), running, queued, top, tailLines: linesOf(view).length - top };
 }
 
+/** The description of the focused slash completion right beside the boxed draft `command`:
+ * the block of completion rows right above the box's upper border, or right below its lower
+ * one. A description wrapped onto further rows (a skill's long one, 2.1.330) is joined.
+ * Rows printed earlier in the viewport, by an assistant or a tool, do not count. */
 export function focusedTurnCommandDescription(view: string, command: '/rewind' | '/branch' | '/fork') {
-  if (turnComposer(view)?.text !== command) return;
-  const lines = linesOf(view);
-  const box = lines.lastIndexOf('❯ ' + command);
-  if (box < 2) return;
-  const row = /^\s+(?:(❯) )?(\/\S+)\s{2,}(.+)$/u;
-  const upper = [], lower = [];
-  for (let i = box - 2; row.test(lines[i] ?? ''); i--) upper.push(lines[i].match(row)!);
-  for (let i = box + 2; row.test(lines[i] ?? ''); i++) lower.push(lines[i].match(row)!);
-  const focused = [...upper, ...lower].filter(match => match[1]);
-  if (upper.length && lower.length || focused.length !== 1 || focused[0][2] !== command) return;
-  return focused[0][3];
+  const editor = turnComposer(view);
+  if (editor?.text !== command) return;
+  // Not composerLines: a wrapped description row can reach the right edge like a notice does.
+  const lines = linesOf(view), box = editor.top + 1;
+  if (lines[box] !== '❯ ' + command) return;
+  const above = lines.slice(0, editor.top), below = lines.slice(box + 2);
+  const upper = completionBlocks(above).find(block => block.end === above.length);
+  const lower = completionBlocks(below).find(block => block.start === 0);
+  const focused = (upper ?? lower)?.focused;
+  if (upper && lower || focused?.length !== 1 || focused[0].command !== command) return;
+  return focused[0].description;
 }
 
 /** 中断只需要确认当前回合正在运行。排队或粘贴才需要空输入框。 */
@@ -120,13 +127,13 @@ export function canInterruptTurn(viewport: string, nativeStatus?: string, editor
 export function rewindGuardLines(view: string) {
   if (!readRewind(view)) return;
   const lines = linesOf(view);
-  const start = lastMatch(lines, (line, i) => line.trim() === 'Rewind' && i > 0 && rule.test(lines[i-1]));
+  const start = lastMatch(lines, (line, i) => line.trim() === 'Rewind' && i > 0 && isRule(lines[i-1]));
   return start < 0 ? undefined : lines.length - start - 1;
 }
 
 export function readRewind(view: string): RewindMenu | undefined {
   const lines = linesOf(view);
-  const title = lastMatch(lines, (line, i) => line.trim() === 'Rewind' && i > 0 && rule.test(lines[i-1]));
+  const title = lastMatch(lines, (line, i) => line.trim() === 'Rewind' && i > 0 && isRule(lines[i-1]));
   if (title < 0) return;
   const body = lines.slice(title + 1).join('\n').trim();
   const blocks = body.split(/\n\s*\n/u);
@@ -149,7 +156,8 @@ export function readRewind(view: string): RewindMenu | undefined {
       if (match[1]) { if (focused >= 0) return; focused = rows.length; }
       rows.push({ label: match[2].trim(), detail: detail.map(line => line.trim()).join(' ') || undefined });
     }
-  } else if (/^Restore (?:the conversation )?to the point before you sent this message:$/.test(blocks[0])) {
+  } else if (/^(?:Restore|Confirm you want to restore) (?:the conversation )?to the point before you sent this message:$/.test(blocks[0])) {
+    // 2.1.300–2.1.321 ask "Confirm you want to restore …" and add notes before the choices.
     stage = 'confirm';
     const quote = blocks[1]?.split('\n').map(line => /^\s*│ ?(.*)$/u.exec(line)?.[1]);
     if (!quote?.length || quote.some(line => line === undefined)) return;

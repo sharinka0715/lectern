@@ -1,6 +1,14 @@
 import type { NativeQuestionScreen } from './native-question';
 
-export type QuestionSnapshot = NativeQuestionScreen & { token: string; interactionId: string };
+export type QuestionSnapshot = NativeQuestionScreen & {
+  token: string;
+  /** The same card while one question set is answered (each new frame issues a new token) and when
+   * the transcript catches up with a dialog first read off the screen alone (main/session-question.ts). */
+  interactionId: string;
+  /** The pending AskUserQuestion call it answers; undefined while the dialog is on screen before the
+   * session's transcript has that call. */
+  toolUseId?: string;
+};
 
 /** Literal, single-line native input. Empty text explicitly clears the current field. */
 export const isQuestionText = (v: unknown): v is string => typeof v === 'string' && v.trim() === v

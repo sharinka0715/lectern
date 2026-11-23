@@ -32,6 +32,60 @@ function redPage() {
     `trailer << /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
 }
 
+/** Claude Code records each line with its working directory: after `cd sub`, a reply's relative paths are from there. */
+async function verifyReplyCwd(page, row, appendRows, cwd) {
+  const sub = path.join(cwd, 'sub');
+  await mkdir(sub, { recursive: true });
+  const gif = data => Buffer.from(data, 'base64');
+  await Promise.all([
+    writeFile(path.join(cwd, 'notes.md'), '根目录的笔记'), writeFile(path.join(sub, 'notes.md'), '子目录的笔记'),
+    writeFile(path.join(cwd, 'pic.gif'), gif('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==')),
+    writeFile(path.join(sub, 'pic.gif'), gif('R0lGODlhAgABAPABAP8AAP///yH5BAAAAAAALAAAAAACAAEAAAICBAoAOw==')),
+  ]);
+  const text = value => ({ type: 'text', text: value }), inSub = { cwd: sub };
+  await appendRows([
+    row('user', { role: 'user', content: '对比两个目录的笔记。' }),
+    row('assistant', { id: randomUUID(), role: 'assistant', stop_reason: 'tool_use', content: [text('启动目录里的 notes.md。'),
+      { type: 'tool_use', id: 'cd-sub', name: 'Bash', input: { command: 'cd sub && ls' } }] }),
+    // The call is written in the old directory, its result and everything after in the new one.
+    row('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'cd-sub', content: 'notes.md\npic.gif' }] }, inSub),
+    row('assistant', { id: randomUUID(), role: 'assistant', stop_reason: 'end_turn', content: [text('进入 sub 后的 notes.md。')] }, inSub),
+    row('user', { role: 'user', content: '再看一次。' }, inSub),
+    row('assistant', { id: randomUUID(), role: 'assistant', stop_reason: 'tool_use', content: [text('第二条回复：notes.md 与 ../notes.md\n\n![子目录图片](pic.gif)'),
+      { type: 'tool_use', id: 'read-sub', name: 'Read', input: { file_path: 'notes.md' } }] }, inSub),
+    row('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'read-sub', content: '子目录的笔记' }] }, inSub),
+    row('assistant', { id: randomUUID(), role: 'assistant', stop_reason: 'end_turn', content: [text('两份笔记都看过了。')] }, inSub),
+  ]);
+  const first = page.locator('.message-assistant').filter({ hasText: '启动目录里的 notes.md' });
+  const second = page.locator('.message-assistant').filter({ hasText: '第二条回复' });
+  await second.getByText('两份笔记都看过了。').waitFor();
+  const link = (reply, text) => reply.locator('.markdown').filter({ hasText: text }).getByRole('button', { name: 'notes.md', exact: true });
+  assert.equal(await link(first, '启动目录里').getAttribute('data-file-path'), 'notes.md');
+  assert.equal(await link(first, '进入 sub 后').getAttribute('data-file-path'), 'sub/notes.md');
+  assert.equal(await link(second, '第二条回复').getAttribute('data-file-path'), 'sub/notes.md');
+  assert.equal(await second.getByRole('button', { name: '../notes.md', exact: true }).getAttribute('data-file-path'), 'notes.md');
+  assert.equal(await second.locator('[data-tool-id="read-sub"] summary [data-file-path]').getAttribute('data-file-path'), 'sub/notes.md');
+  // `cd sub && ls` lists files where the command left it.
+  const cd = first.locator('[data-tool-id="cd-sub"]');
+  await cd.locator('summary').click();
+  assert.equal(await cd.locator('.tool-output').getByRole('button', { name: 'notes.md', exact: true }).getAttribute('data-file-path'), 'sub/notes.md');
+  await cd.locator('summary').click();
+  const drawer = page.getByRole('complementary', { name: '文件预览' });
+  for (const [reply, text, body, file] of [[first, '启动目录里', '根目录的笔记', 'notes.md'], [first, '进入 sub 后', '子目录的笔记', 'sub/notes.md'], [second, '第二条回复', '子目录的笔记', 'sub/notes.md']]) {
+    await link(reply, text).click();
+    await drawer.getByText(body, { exact: true }).waitFor();
+    assert.equal(await drawer.getAttribute('data-artifact-path'), file);
+    await drawer.getByRole('button', { name: '关闭文件预览' }).click();
+    await drawer.waitFor({ state: 'detached' });
+  }
+  // The picture is sub's (2×1), not the root's (1×1), in the thumbnail's dialog too.
+  await second.getByRole('button', { name: '放大 子目录图片', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '图片预览 · 子目录图片' });
+  assert.equal(await dialog.getByRole('img', { name: '子目录图片', exact: true }).evaluate(async img => { await img.decode(); return img.naturalWidth; }), 2);
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached' });
+}
+
 async function verifyToolGroups(page, row, appendRows) {
   const use = (id, name, input) => ({ type: 'tool_use', id, name, input });
   const result = (id, content, is_error = false) => ({ type: 'tool_result', tool_use_id: id, content, is_error });
@@ -252,10 +306,12 @@ try {
   const panelPath = 'src/panels/ProxyPanel.tsx';
   await userText.locator(`[data-file-path="${panelPath}"]`).waitFor();
   for (const source of [reply, userText]) {
-    for (const term of [...noise.split(' '), 'index.ts', 'missing.txt', '失效']) {
+    for (const term of [...noise.split(' '), ...source === userText ? ['index.ts'] : [], 'missing.txt', '失效']) {
       assert.equal(await source.getByRole('button', { name: term, exact: true }).count(), 0, `Unverified text must not link: ${term}`);
     }
   }
+  // index.ts is in two places; the reply was written at the root (its records' cwd), so it names the root's.
+  assert.deepEqual(new Set(await reply.getByRole('button', { name: 'index.ts', exact: true }).evaluateAll(nodes => nodes.map(node => node.dataset.filePath))), new Set(['index.ts']));
   // An existing file outside the folder, named explicitly, links and opens without a consent dialog.
   const outsideReal = await realpath(outside); // macOS: /var is /private/var
   assert.equal(await reply.locator(`[data-file-path="${outsideReal}"]`).count(), 2, 'the Markdown link and the bare absolute path');
@@ -425,6 +481,7 @@ try {
   assert.equal(await drawer.locator('.artifact-entry').count(), 251);
   await page.keyboard.press('Escape');
   await drawer.waitFor({ state: 'detached' });
+  await verifyReplyCwd(page, row, appendRows, cwd);
   // Control response order after the filesystem round trips to make late responses deterministic.
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler('lectern:previewArtifact');
@@ -453,7 +510,7 @@ try {
   await verifyToolGroups(page, row, appendRows);
   assert.deepEqual(remoteRequests, [], 'Transcript and Markdown links never fetch external resources');
   assert.deepEqual(browserErrors, []);
-  console.log('PASS: offline Electron mixed tool and peer groups, delivery order, recorded line counts, collapsed Edit diffs, delayed results, persisted reply detail and reset, file links, Markdown navigation, directory pagination, GIF, PDF pixels, embedded attachment and binary save.');
+  console.log('PASS: offline Electron replies resolved from their records\' working directories, mixed tool and peer groups, delivery order, recorded line counts, collapsed Edit diffs, delayed results, persisted reply detail and reset, file links, Markdown navigation, directory pagination, GIF, PDF pixels, embedded attachment and binary save.');
 } finally {
   await app?.close();
   await rm(profile, { recursive: true, force: true });

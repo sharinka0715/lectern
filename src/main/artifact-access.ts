@@ -1,4 +1,4 @@
-import type { Workspace } from '../shared/types';
+import type { ArtifactReference, Workspace } from '../shared/types';
 import type { WorkspaceArtifacts } from '../backend/artifacts';
 import { t } from '../shared/i18n';
 
@@ -44,7 +44,7 @@ export class ArtifactAccess {
     };
     return { workspace, authorize, remember, check };
   }
-  async resolve(id: string, references: string[]) {
+  async resolve(id: string, references: ArtifactReference[]) {
     const request = this.context(id);
     const matches = await this.artifacts.resolveReferences(request.workspace, references);
     request.check();

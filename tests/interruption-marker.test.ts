@@ -36,3 +36,24 @@ test('Esc during a reply marks it interrupted; a typed look-alike stays a prompt
   assert.deepEqual(messages.filter(m => m.role === 'user').map(m => m.text), ['讲个故事', '[Request interrupted by user]'], 'what the user typed is shown');
   assert.equal(messages.filter(m => m.interrupted).length, 1);
 });
+
+test('a reply stopped at a dialog (Esc) is over, whatever its live preview still holds', async () => {
+  // Claude Code 2.1.330 under a streamed reply: the billing notice is up before its call is in the
+  // transcript; Esc then writes the reply, the refused call and the marker at once. The preview
+  // read meanwhile ("… report back." and the call's heading) used to keep the chat "replying".
+  const { readFileSync } = await import('node:fs');
+  const screen = (name: string) => readFileSync(new URL(`./fixtures/auto-mode-billing-2.1.330/${name}.txt`, import.meta.url), 'utf8');
+  const display = new MessageDisplay('S');
+  display.ingestJsonl(prompt('u1', null, 'Run the probe ccm:probe'));
+  display.ingestScreen(screen('streamed'), screen('streamed'));
+  assert.equal(display.status, 'waiting');
+  display.ingestJsonl(row({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', message: { id: 'm1', role: 'assistant', stop_reason: null, content: [{ type: 'text', text: 'I will search the docs first, then report back.' }] } })
+    + row({ type: 'assistant', uuid: 'a2', parentUuid: 'a1', message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: "seq -w 1 3 | sed 's/$/ ccm-unchecked/' | tee unchecked-0.txt" } }] } })
+    + rejected('r1', 'a2', 't1') + marker('i1', 'r1', '[Request interrupted by user for tool use]'));
+  display.ingestScreen(screen('cancelled'), screen('cancelled'));
+  assert.equal(display.status, 'idle');
+  const reply = display.getMessages().find(m => m.role === 'assistant')!;
+  assert.equal(reply.interrupted, true);
+  assert.equal(reply.status, 'complete');
+  assert.equal(reply.text, 'I will search the docs first, then report back.');
+});

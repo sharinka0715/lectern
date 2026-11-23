@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { BellOff, CircleHelp, Clock, FilePen, Hand, ListChecks, RotateCw, ShieldOff, Zap, type LucideIcon } from "lucide-react";
 import type { EndpointBilling, NativeStatusLineObservation, SessionSnapshot, SubscriptionWindow } from "../shared/types";
-import { fullResetTime, quotaCountdown, zonedReset } from "./quota-time";
+import { fullResetTime, quotaCountdown, zonedAsOf, zonedReset } from "./quota-time";
 import { tip } from "./Tooltip";
 import { formatNumber, t, type MessageKey } from "../shared/i18n";
 import { rich } from "./i18n";
@@ -119,17 +119,20 @@ function resetTime(label: string, seconds: number, now: number, zone?: string) {
   return label === "5h" ? quotaCountdown(seconds - now) : zonedReset(seconds, now, zone);
 }
 
-function quotaMeter(label: string, window: SubscriptionWindow, now: number, zone?: string) {
+/** `asOf`: the figures are at least this recent (seconds); absent: not known, and the card says so. */
+function quotaMeter(label: string, window: SubscriptionWindow, now: number, zone?: string, asOf?: number) {
   const expired = window.resetsAt !== undefined && now >= window.resetsAt;
   const percent = Math.min(100, Math.max(0, window.usedPercentage));
   const used = `${number.format(percent)}%`, remaining = `${number.format(100 - percent)}%`;
   const detail = [
     expired ? t('telemetry.resetPassed') : t('telemetry.windowUsage', { label, used, remaining }),
     !expired && (window.resetsAt === undefined ? t('telemetry.resetUnknown') : t('telemetry.resetsAt', { time: fullResetTime(window.resetsAt, zone), left: countdown(window.resetsAt - now) })),
+    asOf === undefined ? t('telemetry.asOfUnknown') : t('telemetry.asOf', { time: zonedAsOf(asOf, now, zone) }),
+    t('telemetry.asOfHelp'),
     t(label === '5h' ? 'telemetry.fiveHourHelp' : 'telemetry.sevenDayHelp'),
     t('telemetry.ringHelp'),
   ].filter(Boolean).join('\n');
-  return <span key={label} className="telemetry-item session-quota-usage" data-quota-window={label}
+  return <span key={label} className="telemetry-item session-quota-usage" data-quota-window={label} data-quota-as-of={asOf ?? ""}
     {...tip(t('telemetry.quotaTitle', { hours: label === '5h' ? 5 : 7 }), detail)}>
     <span>{label}</span>
     <UsageRing percent={expired ? undefined : percent} tone={expired ? undefined : usageLevel(percent)} />
@@ -199,8 +202,8 @@ export function SessionTelemetryDisplay({
       {showSubscriptionQuota && <span className="telemetry-group telemetry-quota">
       <span className="telemetry-chip telemetry-billing" data-billing-source={billing}
         {...tip(t('telemetry.billingTitle', { source: billingText }), `${sourceTitle}\n${t('telemetry.billingHelp')}`)}>{billingText}</span>
-      {showLimits && line?.fiveHour && quotaMeter('5h', line.fiveHour, now, timeZone)}
-      {showLimits && line?.sevenDay && quotaMeter('7d', line.sevenDay, now, timeZone)}
+      {showLimits && line?.fiveHour && quotaMeter('5h', line.fiveHour, now, timeZone, line.quotaAsOf)}
+      {showLimits && line?.sevenDay && quotaMeter('7d', line.sevenDay, now, timeZone, line.quotaAsOf)}
       {showLimits && !line?.fiveHour && !line?.sevenDay && <span className="telemetry-item telemetry-chip" {...tip(t('telemetry.quotaMissing'), t('telemetry.quotaMissingHelp'))}>{t('telemetry.quotaMissing')}</span>}
       </span>}
     </div>

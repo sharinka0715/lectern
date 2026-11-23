@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Backend, projectSlug } from '../src/backend';
-import { metadataFromPrefix, missingCwdNotice, missingCwdReason, scanHistoryProjects } from '../src/backend/history';
+import { historyMetadata, metadataFromPrefix, missingCwdNotice, missingCwdReason, scanHistoryProjects } from '../src/backend/history';
 import { Transport } from '../src/backend/transport';
 
 test('metadata parsing keeps the original root cwd and ignores nested fields/corrupt complete lines', () => {
@@ -15,6 +15,19 @@ test('metadata parsing keeps the original root cwd and ignores nested fields/cor
   assert.equal(metadataFromPrefix('{"message":{"cwd":"/tmp/nested"},"text":"unfinished').cwd, undefined);
   assert.equal(metadataFromPrefix('{"cwd":"/tmp/corrupt"}\0\n').cwd, undefined);
   assert.equal(metadataFromPrefix('{"cwd":"relative"}\n').cwd, undefined);
+});
+
+test("a file whose head has no cwd belongs to the directory its project folder is named after, not a subdirectory it ended in", () => {
+  const root = '/work/my.project', file = `/config/projects/${projectSlug(root)}/${randomUUID()}.jsonl`;
+  const head = JSON.stringify({ type: 'file-history-snapshot', snapshot: {} }) + '\n';
+  const tail = (cwd: string) => JSON.stringify({ type: 'assistant', cwd, timestamp: '2026-01-02T00:00:00.000Z' }) + '\n';
+  assert.deepEqual(historyMetadata({ path: file, head, tail: tail(root + '/sub/deeper') }), { cwd: root, cwdSource: 'tail', latestAt: '2026-01-02T00:00:00.000Z' });
+  assert.equal(historyMetadata({ path: file, head, tail: tail(root) }).cwd, root);
+  // Older Claude Code named the folder with only / and . replaced.
+  assert.equal(historyMetadata({ path: `/config/projects/${root.replace(/[/.]/g, '-')}/x.jsonl`, head, tail: tail(root + '/sub') }).cwd, root);
+  // The head's cwd still comes first; a directory outside the project (an added one) is kept as before.
+  assert.equal(historyMetadata({ path: file, head: tail(root), tail: tail('/elsewhere') }).cwd, root);
+  assert.equal(historyMetadata({ path: file, head, tail: tail('/elsewhere/sub') }).cwd, '/elsewhere/sub');
 });
 
 test('缺少 cwd 的提示区分完整文件与采样窗口，输出只含文件短 ID 与原因', () => {
@@ -82,6 +95,11 @@ test('history project discovery handles deleted cwd, aliases, large prefixes, co
     assert.equal(limited.truncated, true);
     const budgetLimited = await scanHistoryProjects({ kind: 'local', claudeDir: config }, transport, { expansionBytes: 0 });
     assert.equal(budgetLimited.truncated, true);
+    // Only the tail has a cwd, a subdirectory Claude Code went to: the session is still the project's.
+    await historyFile(cwd, JSON.stringify({ type: 'file-history-snapshot', data: 'x'.repeat(20_000) }) + '\n' + record(path.join(cwd, 'sub')));
+    const subdirectory = await scanHistoryProjects({ kind: 'local', claudeDir: config }, transport, { expansionBytes: 0 });
+    assert.equal(subdirectory.projects.some(p => p.cwd === path.join(cwd, 'sub')), false);
+    assert.equal(subdirectory.projects.find(p => p.cwd === cwd)?.sessionCount, budgetLimited.projects.find(p => p.cwd === cwd)!.sessionCount + 1);
     assert.match(budgetLimited.diagnostic!, /预算/);
     const symlinkRoot = path.join(root, 'linked-config'); await mkdir(symlinkRoot); await symlink(path.join(config, 'projects'), path.join(symlinkRoot, 'projects'));
     assert.equal((await backend.discoverHistoryProjects({ kind: 'local', claudeDir: symlinkRoot })).scannedFiles, 0);

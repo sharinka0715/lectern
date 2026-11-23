@@ -10,6 +10,9 @@
 .chat-image-open { display: flex; align-items: center; justify-content: center; height: 2lh; width: 2lh; max-width: 100%; overflow: hidden; padding: 0; font: inherit; background: var(--surface-muted); border: 1px solid var(--line); border-radius: 7px; color: var(--muted); cursor: zoom-in; }
 .chat-image-open:has(> img) { width: auto; background: transparent; }
 .chat-image-status { margin: auto; padding: 12px; color: var(--secondary-text); }
+/* An original that could not be shown: a broken-image mark over the reason and "View file". */
+.chat-image-failed { display: grid; justify-items: center; gap: 10px; max-width: 560px; text-align: center; }
+.chat-image-failed > svg { color: var(--muted); }
 .chat-image-open img { display: block; width: auto; height: 100%; max-width: 100%; min-height: 0; object-fit: contain; }
 .chat-image-menu { position: fixed; inset: auto; margin: 0; padding: 5px; border: 1px solid var(--line); background: var(--surface-raised); color: var(--text); border-radius: 10px; box-shadow: var(--shadow-pop); }
 .chat-image-menu button { display: flex; align-items: center; gap: 9px; padding: 7px 12px; width: 100%; background: transparent; color: inherit; border-radius: 4px; font: inherit; font-size: var(--text-ui); }

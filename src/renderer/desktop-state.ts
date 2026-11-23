@@ -3,6 +3,7 @@ import type { ChatView } from "../shared/types";
 import { DEFAULT_HISTORY_PAGE_MIB, historyPageSizeMiB } from '../shared/history-paging';
 import { markNavigated } from "./ssh-machines";
 import { validTimeZone } from "./quota-time";
+import { promptCacheTtlPreset, promptCacheTtlPresetOf, type PromptCacheTtlPreset } from "../shared/prompt-cache";
 
 export interface ChatTarget {
   workspaceId: string;
@@ -72,6 +73,8 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   settingSwitch: "inline" | "menu";
   /** Lectern-launched sessions turn on dynamic workflows so /effort offers Ultracode. */
   enableWorkflows: boolean;
+  /** Prompt-cache lifetimes for the Claude processes Lectern starts; "default" sets nothing. */
+  promptCacheTtlPreset: PromptCacheTtlPreset;
   historyPageMiB: number;
   showCacheTtl: boolean;
   showSubscriptionQuota: boolean;
@@ -100,7 +103,7 @@ export const defaultAppearance = {
   showSubscriptionQuota: true,
   quotaTimeZone: "",
 } as const;
-export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true } as const;
+export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtlPreset: "default" } as const;
 const defaults: DesktopState = {
   ...defaultAppearance,
   ...defaultSessionOptions,
@@ -172,6 +175,9 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       replyDetail: p.replyDetail === "individual" ? "individual" : defaultAppearance.replyDetail,
       settingSwitch: p.settingSwitch === "menu" ? "menu" : defaultSessionOptions.settingSwitch,
       enableWorkflows: p.enableWorkflows !== false,
+      // Development builds of 0.2.2 stored two separate choices; a pair that is a preset carries over.
+      promptCacheTtlPreset: "promptCacheTtlPreset" in p ? promptCacheTtlPreset(p.promptCacheTtlPreset)
+        : promptCacheTtlPresetOf(p.promptCacheTtl, p.subagentPromptCacheTtl),
       historyPageMiB: historyPageSizeMiB(p.historyPageMiB),
       showCacheTtl: p.showCacheTtl !== false,
       showSubscriptionQuota: p.showSubscriptionQuota !== false,
@@ -290,6 +296,16 @@ export function shownIn(layout: Pick<DesktopState, "split" | "panes">, chat: Cha
   if (sameChat(layout.panes.primary, chat)) return "primary";
   if (layout.split && sameChat(layout.panes.secondary, chat)) return "secondary";
   return undefined;
+}
+/**
+ * What the pane without the focus shows while the screen is split (a conversation or
+ * a new-chat draft); the sidebar marks it apart from the focused one. Null when not
+ * split, when that pane is empty, or when it holds the focused pane's conversation.
+ */
+export function unfocusedChat(layout: Pick<DesktopState, "split" | "panes" | "active">): ChatTarget | null {
+  if (!layout.split) return null;
+  const other = layout.panes[layout.active === "primary" ? "secondary" : "primary"];
+  return other && !sameChat(other, layout.panes[layout.active]) ? other : null;
 }
 /** What dropping a dragged conversation on an edge of the workspace does. */
 export type ChatDropPlan =

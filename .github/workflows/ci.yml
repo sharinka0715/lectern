@@ -2,7 +2,8 @@
 # the private-information guard, a production dependency audit and the whole
 # offline suite through `npm run test:all` (typecheck, unit tests, build, every
 # desktop e2e); optionally a packaging smoke test of the unpacked app on every
-# platform. Nothing here talks to a real model or SSH host.
+# platform (on macOS and Linux also the SSH login's askpass relay in the packaged
+# app). Nothing here talks to a real model or SSH host.
 #
 # It runs when release.yml calls it for a pushed v* tag (the release only
 # publishes if it passes) or by hand from the Actions tab. Pushes and pull
@@ -156,6 +157,20 @@ jobs:
             xvfb-run -a -s '-screen 0 1600x1000x24' node scripts/smoke-package.mjs test-results/package
           else
             node scripts/smoke-package.mjs test-results/package
+          fi
+      # SSH login prompts go through an askpass relay run as Node: on macOS in the app's
+      # LSUIElement helper (the app's own executable would flash a second Dock icon).
+      - name: Askpass relay in the packaged app (macOS helper, no Dock icon)
+        if: runner.os != 'Windows'
+        run: node scripts/smoke-askpass-helper.mjs test-results/package
+      - name: In-app SSH login through the packaged app (scripted ssh, no real host)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s '-screen 0 1600x1000x24' node scripts/ssh-login-ui-e2e.mjs test-results/package
+          else
+            node scripts/ssh-login-ui-e2e.mjs test-results/package
           fi
       - name: Upload smoke screenshots
         if: always()

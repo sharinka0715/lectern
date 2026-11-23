@@ -100,7 +100,7 @@ export function QuestionCard({ question: q, busy, unconfirmed, onAction, onViewT
     </div>
   </div>;
 
-  return <section ref={root} className="question-card" aria-label={t('cards.question')} aria-busy={blocked} data-question-token={q.token}
+  return <section ref={root} className="question-card" aria-label={t('cards.question')} aria-busy={blocked} data-question-token={q.token} data-question-call={q.toolUseId}
     onKeyDownCapture={e => { if (e.repeat && (e.key === 'Enter' || (e.key === ' ' && e.target instanceof HTMLButtonElement))) e.preventDefault(); }}
     onClickCapture={e => { if (e.detail > 1 && e.target instanceof Element && e.target.closest('button')) { e.preventDefault(); e.stopPropagation(); } }}>
     <header className="question-header">

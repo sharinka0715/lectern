@@ -10,8 +10,9 @@ import { TranscriptUsage } from './session-telemetry';
 import { alignPreview, extractPreview, matchText } from './screen';
 import { diagnostic, getDiagnosticsInfo, summarize } from '../diagnostics';
 import { joinList, t } from '../shared/i18n';
+import { samePrompt } from '../shared/native-prompt';
 
-interface Part { text: string; tools: ToolBlock[] }
+interface Part { text: string; tools: ToolBlock[]; cwd?: string }
 interface Turn {
   index: number;
   user?: ChatMessage;
@@ -22,7 +23,7 @@ interface Turn {
   peerMessages?: ChatMessage['peerMessages'];
   optimistic: boolean;
   parts: Map<string, Part>;
-  results: Map<string, Pick<ToolBlock, 'result' | 'isError' | 'editPatch' | 'cellEdit'>>;
+  results: Map<string, Pick<ToolBlock, 'result' | 'isError' | 'editPatch' | 'cellEdit' | 'resultCwd'>>;
   preview: string;
   finished: boolean;
   responseId?: string;
@@ -113,6 +114,13 @@ export class MessageDisplay {
   /** The Claude Code version that wrote this session's latest record. */
   get cliVersion() { return this.version; }
   private version?: string;
+  /** The newest model reply of this conversation in the records read (ms, its `timestamp`):
+   * any branch, not synthetic or API error records (main/quota-as-of.ts). */
+  get lastReplyAt() { return this.lastReply; }
+  private lastReply?: number;
+  /** Claude Code's working directory as of the newest record read (it changes after a `cd`). */
+  get workingDirectory() { return this.cwd; }
+  private cwd?: string;
 
   private get foreground() { return this.pendingCount ? this.turns.at(-1) : this.current; }
 
@@ -133,7 +141,9 @@ export class MessageDisplay {
     const turn = this.foreground;
     if (!turn) return this.terminalStatus ?? 'idle';
     if (turn.interrupted) return 'idle';
-    if (turn.finished) return this.terminalStatus === 'working' ? 'working' : 'idle';
+    // Claude Code recorded that the user stopped it (Esc, a refused call): over, even with a live
+    // preview left that the transcript never matched (a reply stopped at a dialog before its call was written).
+    if (turn.finished || turn.stopped) return this.terminalStatus === 'working' ? 'working' : 'idle';
     if (turn.optimistic || turn.preview || this.terminalStatus === 'working') return 'working';
     return this.terminalStatus ?? 'idle';
   }
@@ -185,6 +195,8 @@ export class MessageDisplay {
     this.seenPeerMessages.clear();
     this.usage.reset();
     this.decoder.reset();
+    this.lastReply = undefined;
+    this.cwd = undefined;
     this.command = undefined;
     this.restoring = false;
     this.turns = [];
@@ -221,6 +233,9 @@ export class MessageDisplay {
     }
     if (!chunk.length) return;
     const records = this.adopt(this.decoder.push(chunk));
+    for (const record of records) {
+      if (!record.isSidechain && (!record.sessionId || record.sessionId === this.sessionId) && typeof record.cwd === 'string' && record.cwd.startsWith('/')) this.cwd = record.cwd;
+    }
     this.rememberTipUsers(records);
     if (records.length) this.pages?.push(records);
     this.ingestActivity(records);
@@ -291,6 +306,11 @@ export class MessageDisplay {
     this.activity.ingest(records);
     for (const record of records) {
       if (!record.isSidechain && record.sessionId === this.sessionId && typeof record.version === 'string' && /^\d+\.\d+\.\d+[\w.+-]{0,24}$/.test(record.version)) this.version = record.version;
+      if (record.type === 'assistant' && !record.isSidechain && record.sessionId === this.sessionId && !record.isApiErrorMessage && record.isUnmetered !== true
+        && (record.message as JsonRecord | undefined)?.model !== '<synthetic>' && typeof record.timestamp === 'string') {
+        const at = Date.parse(record.timestamp);
+        if (Number.isFinite(at) && at > (this.lastReply ?? 0)) this.lastReply = at;
+      }
       if (record.type !== 'queue-operation' || record.isSidechain || record.sessionId !== this.sessionId) continue;
       if (record.operation === 'enqueue' && typeof record.content === 'string') {
         this.queuedInputs.push(record.content);
@@ -414,6 +434,31 @@ export class MessageDisplay {
     return confirmed.length ? confirmed : visible.slice(-1);
   }
 
+  /**
+   * Claude Code's /rewind list for the current branch, oldest first: every prompt Lectern
+   * offers to rewind to, and between them the local commands it lists too, for which Lectern
+   * shows no message. A one-step `/model sonnet` or `/effort low` (how Lectern switches) and an
+   * `/effort` slider closed with Esc write a `<command-name>` user record that no reply follows;
+   * Claude Code lists it as "/model sonnet", "/effort low", "/effort" (2.1.300–2.1.330), while
+   * /rename, /context and a /model picker closed with Esc write system records it does not list.
+   * Their texts are the labels the native list shows. Undefined when a rewindable prompt is not
+   * on the branch read, so the list cannot be vouched for.
+   */
+  rewindPoints(): { uuid: string; text: string }[] | undefined {
+    const prompts = new Map(this.turns.filter(turn => turn.user && this.rewindable(turn)).map(turn => [turn.userUuid!, turn.user!.text]));
+    const turnUsers = new Set(this.turns.map(turn => turn.userUuid));
+    const points: { uuid: string; text: string }[] = [];
+    for (const row of this.transcript.activeRows()) {
+      const prompt = prompts.get(row.key);
+      if (prompt !== undefined) {
+        points.push({ uuid: row.key, text: prompt });
+        prompts.delete(row.key);
+      } else if (row.kind === 'command' && !turnUsers.has(row.key) && (!this.tipUsers || this.tipUsers.has(row.key))) {
+        points.push({ uuid: row.key, text: row.text ?? '' });
+      }
+    }
+    return prompts.size ? undefined : points;
+  }
   checkpointUuid(menu: RewindMenu, index: number) {
     const users = this.turns.filter(turn => turn.user && this.rewindable(turn));
     const rows = menu.rows.filter(row => row.label !== '(current)');
@@ -517,6 +562,7 @@ export class MessageDisplay {
       const tools = this.toolsInOrder(turn);
       if (!text && !tools.length && !turn.attachments?.length && !turn.taskNotifications?.length && !turn.peerMessages?.length && !(isLast && turn.user && !turn.finished && !turn.stopped)) continue;
       const provisional = !turn.finished && !turn.stopped && (text !== canonical || (!canonical && !tools.length && !turn.peerMessages?.length && !turn.taskNotifications?.length));
+      const cwds = this.textCwds(turn);
       messages.push({
         id: `${this.idBase}:turn:${turn.index}:assistant`,
         role: 'assistant',
@@ -526,6 +572,7 @@ export class MessageDisplay {
         ...(turn.stopped ? { interrupted: true } : {}),
         text,
         tools,
+        ...(cwds && { cwds }),
         source: provisional ? 'preview' : 'jsonl',
         status: this.status !== 'error' && !turn.finished && !turn.interrupted && !turn.stopped && isLast && (provisional || this.status === 'working' || this.status === 'waiting') ? 'streaming' : 'complete',
         timestamp: turn.timestamp,
@@ -567,6 +614,20 @@ export class MessageDisplay {
       }
     }
     return tools.concat([...calls.values()]);
+  }
+
+  /** Where each record's text starts in canonicalText (at the separator before it, where a call
+   * between the two records sits), with the directory it was written in. The live preview's text
+   * past the records continues in the last one. */
+  private textCwds(turn: Turn): ChatMessage['cwds'] {
+    const cwds: NonNullable<ChatMessage['cwds']> = [];
+    let length = 0;
+    for (const part of turn.parts.values()) {
+      if (!part.text) continue;
+      if (part.cwd && part.cwd !== cwds.at(-1)?.cwd) cwds.push({ textOffset: length, cwd: part.cwd });
+      length += (length ? '\n\n'.length : 0) + part.text.length;
+    }
+    return cwds.length ? cwds : undefined;
   }
 
   private canonicalText(turn: Turn): string {
@@ -677,7 +738,7 @@ export class MessageDisplay {
     }
     if (row.kind === 'result') {
       if (!this.current && this.transcript.partialStart) this.current = this.newTurn(undefined, false, undefined, row.timestamp);
-      for (const item of row.results ?? []) this.current?.results.set(item.id, { result: item.result, isError: item.isError, ...(item.editPatch && { editPatch: item.editPatch }), ...(item.cellEdit && { cellEdit: item.cellEdit }) });
+      for (const item of row.results ?? []) this.current?.results.set(item.id, { result: item.result, isError: item.isError, ...(item.editPatch && { editPatch: item.editPatch }), ...(item.cellEdit && { cellEdit: item.cellEdit }), ...(item.resultCwd && { resultCwd: item.resultCwd }) });
       if (refs && this.current) this.appendReplyAttachments(this.current, refs);
       return;
     }
@@ -685,7 +746,7 @@ export class MessageDisplay {
     const turn = this.current ??= this.newTurn();
     if (refs) this.appendReplyAttachments(turn, refs, row.text);
     const sameResponse = !!row.responseId && turn.responseId === row.responseId;
-    turn.parts.set(row.key, { text: row.text ?? '', tools: row.tools ?? [] });
+    turn.parts.set(row.key, { text: row.text ?? '', tools: row.tools ?? [], ...(row.cwd && { cwd: row.cwd }) });
     turn.timestamp ??= row.timestamp;
     turn.responseId = row.responseId;
     turn.responseComplete = !!row.responseComplete || (sameResponse && !!turn.responseComplete);
@@ -703,12 +764,27 @@ export class MessageDisplay {
     }
   }
 
+  /**
+   * Claude Code saves prompts in the order it receives them. Once a later send
+   * is saved, earlier sends still unmatched were saved under a text the match
+   * does not know, or never submitted. Kept, such a bubble stays below every
+   * later turn, takes the live screen as its preview and can never settle.
+   */
+  private retireUnmatched(stale: Turn[], matchedBy: string) {
+    if (!stale.length) return;
+    this.turns = this.turns.filter(turn => !stale.includes(turn));
+    this.pendingCount -= stale.length;
+    diagnostic.event('display.pending.retired', { matchedBy, turns: stale.map(turn => ({ turn: turn.index,
+      text: summarize(turn.user?.text ?? ''), preview: summarize(turn.preview), interrupted: turn.interrupted })) });
+  }
+
   private applyUser(row: TranscriptRow, existingUsers: Set<string | undefined> | undefined, allowPending: boolean): void {
     const text = row.text ?? '';
-    const pending = allowPending && this.pendingCount && !existingUsers?.has(row.key)
-      ? this.turns.slice(-this.pendingCount).find(turn => (turn.user?.text ?? '').trim() === text.trim()) : undefined;
+    const sent = allowPending && this.pendingCount && !existingUsers?.has(row.key) ? this.turns.slice(-this.pendingCount) : [];
+    const pending = sent.find(turn => samePrompt(turn.user?.text ?? '', text));
     const turn = pending ?? this.newTurn(text, false, row.key, row.timestamp);
     if (pending) {
+      this.retireUnmatched(sent.slice(0, sent.indexOf(pending)), row.key);
       this.turns.splice(this.turns.indexOf(pending), 1);
       this.pendingCount--;
       this.turns.splice(this.turns.length - this.pendingCount, 0, pending);
@@ -716,7 +792,11 @@ export class MessageDisplay {
     turn.optimistic = false;
     turn.userUuid = row.key;
     turn.timestamp ??= row.timestamp;
-    if (turn.user) { turn.user.source = 'jsonl'; turn.user.text = text; turn.user.timestamp = row.timestamp; }
+    if (turn.user) {
+      turn.user.source = 'jsonl'; turn.user.text = text; turn.user.timestamp = row.timestamp;
+      // Claude Code reads the prompt's @-mentions from this directory.
+      if (row.cwd) turn.user.cwds = [{ textOffset: 0, cwd: row.cwd }]; else delete turn.user.cwds;
+    }
     this.current = turn;
   }
 }

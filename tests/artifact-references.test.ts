@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { adjacentFileNames, artifactPath, findPathReferences, parentPath, relativeToFile } from '../src/renderer/artifact-paths';
+import { adjacentFileNames, artifactPath, findPathReferences, parentPath, pathFromCwd, relativeToFile } from '../src/renderer/artifact-paths';
 import { ArtifactMarkdown, LinkedToolText, LinkedUserText } from '../src/renderer/ArtifactLinks';
 import { MessageDisplay } from '../src/core/message-display';
+import { workingDirectory } from '../src/main/controller';
 import { attachmentPreview, attachmentBytes } from '../src/main/message-attachment';
 import { transcriptAttachments } from '../src/core/transcript-attachments';
 
@@ -117,4 +118,69 @@ test('nested tool results expose local MCP resource paths and inspect MIME from 
   ] }]);
   assert.equal(file.ref.path, '/root/data set.csv');
   assert.equal((await attachmentPreview(invalidPdf)).kind, 'binary');
+});
+
+test('a folder Claude Code attached for an @-mention is marked as one', () => {
+  const [folder, file] = transcriptAttachments('record', [{ type: 'directory', path: '/project/src' }, { type: 'file', filename: '/project/notes.md' }]);
+  assert.deepEqual(folder.ref, { id: 'record:attachment:0', name: 'src', path: '/project/src', directory: true });
+  assert.deepEqual(file.ref, { id: 'record:attachment:1', name: 'notes.md', path: '/project/notes.md' });
+});
+
+test("a reply carries the directory each record was written in, and its calls and results theirs", () => {
+  const display = new MessageDisplay('s');
+  const root = '/work/project', sub = '/work/project/sub';
+  const row = (type: string, uuid: string, parentUuid: string | null, cwd: string | undefined, content: unknown) =>
+    ({ type, uuid, parentUuid, sessionId: 's', ...(cwd && { cwd }), message: { role: type, id: uuid, content, ...(type === 'assistant' && { stop_reason: uuid === 'end' ? 'end_turn' : 'tool_use' }) } });
+  const text = (value: string) => ({ type: 'text', text: value });
+  display.ingestJsonl([
+    row('user', 'q', null, root, 'go'),
+    row('assistant', 'a1', 'q', root, [text('At the root: notes.md')]),
+    // Claude Code writes the call with the directory it starts in, its result with the one the command left.
+    row('assistant', 'a2', 'a1', root, [{ type: 'tool_use', id: 'cd', name: 'Bash', input: { command: 'cd sub && ls' } }]),
+    row('user', 'r', 'a2', sub, [{ type: 'tool_result', tool_use_id: 'cd', content: 'notes.md' }]),
+    row('assistant', 'a3', 'r', sub, [text('In sub: notes.md'), text('Still: ./notes.md')]),
+    row('assistant', 'a4', 'a3', undefined, [text('No directory recorded.')]),
+    row('assistant', 'end', 'a4', sub, [text('Done: ../notes.md')]),
+  ].map(record => JSON.stringify(record)).join('\n') + '\n');
+  const reply = display.getMessages().find(message => message.role === 'assistant')!;
+  // The new directory starts with the separator before its text, where the call sits: no empty part between them.
+  const second = reply.text.indexOf('\n\nIn sub');
+  assert.deepEqual(reply.cwds, [{ textOffset: 0, cwd: root }, { textOffset: second, cwd: sub }]);
+  assert.deepEqual(reply.tools.map(tool => [tool.id, tool.cwd, tool.resultCwd, tool.textOffset]), [['cd', root, sub, second]]);
+  const plain = new MessageDisplay('s');
+  plain.ingestJsonl([row('user', 'q', null, undefined, 'go'), row('assistant', 'end', 'q', undefined, [text('notes.md')])].map(record => JSON.stringify(record)).join('\n') + '\n');
+  assert.equal(plain.getMessages()[1].text, 'notes.md');
+  assert.equal(plain.getMessages()[1].cwds, undefined, 'records without a cwd add nothing');
+});
+
+test('a relative path written in a directory becomes an absolute path there', () => {
+  assert.equal(pathFromCwd('/work/project/sub', 'notes.md'), '/work/project/sub/notes.md');
+  assert.equal(pathFromCwd('/work/project/sub', './a/../b/./c.md'), '/work/project/sub/b/c.md');
+  assert.equal(pathFromCwd('/work/project/sub', '../notes.md'), '/work/project/notes.md');
+  assert.equal(pathFromCwd('/work/', '../../../x'), '/x');
+  for (const kept of ['/etc/hosts', '~/x.md', 'C:/x.md']) assert.equal(pathFromCwd('/work', kept), kept);
+});
+
+test('a prompt carries where Claude Code read its @-mentions; the newest record says where it works now', () => {
+  const display = new MessageDisplay('s');
+  const root = '/work/project', sub = '/work/project/sub';
+  const lines = (...records: object[]) => records.map(record => JSON.stringify({ sessionId: 's', ...record })).join('\n') + '\n';
+  display.ingestJsonl(lines(
+    { type: 'user', uuid: 'q1', parentUuid: null, cwd: root, message: { role: 'user', content: 'first @notes.md' } },
+    { type: 'assistant', uuid: 'a1', parentUuid: 'q1', cwd: root, message: { role: 'assistant', id: 'm1', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' } },
+  ));
+  assert.equal(display.workingDirectory, root);
+  display.ingestJsonl(lines(
+    { type: 'user', uuid: 'q2', parentUuid: 'a1', cwd: sub, message: { role: 'user', content: 'second @notes.md' } },
+    { type: 'attachment', uuid: 'f2', parentUuid: 'q2', cwd: sub, attachment: { type: 'file', filename: `${sub}/notes.md`, displayPath: 'notes.md' } },
+    { type: 'assistant', uuid: 'x', parentUuid: 'f2', cwd: '/elsewhere', isSidechain: true, message: { role: 'assistant', id: 'm2', content: [] } },
+  ));
+  assert.deepEqual(display.getMessages().filter(message => message.role === 'user').map(message => message.cwds), [[{ textOffset: 0, cwd: root }], [{ textOffset: 0, cwd: sub }]]);
+  assert.equal(display.workingDirectory, sub, 'a subagent record elsewhere does not move the conversation');
+  // Shown only while it differs from where the conversation started (the folder, as written or resolved).
+  assert.deepEqual(workingDirectory(sub, ['/real/project', root]), { current: sub, launch: '/real/project' });
+  assert.equal(workingDirectory(root, ['/real/project', root]), undefined);
+  assert.equal(workingDirectory(root + '/', [root]), undefined);
+  assert.equal(workingDirectory(undefined, [root]), undefined);
+  assert.equal(workingDirectory(sub, undefined), undefined);
 });

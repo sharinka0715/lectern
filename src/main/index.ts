@@ -24,10 +24,12 @@ import { createUpdates } from './updates';
 import { routeExternalLinks } from './external-links';
 import { knownUnreachable, QuitFlow, summarizeRunning, quitPromptEnabled, withDeadline, type FolderCheck, type QuitReason } from './quit-guard';
 import { QuitSettings } from './quit-settings';
+import { SshSettings } from './ssh-settings';
 import { quitActivityText, quitAnswers, quitGroups, quitTitle, type QuitAnswer, type QuitPrompt } from '../shared/quit';
 import type { MenuAction, RendererDiagnostic, SessionSnapshot, Workspace } from '../shared/types';
 import { maxAttachmentBytes } from '../shared/attachments';
 import { sshOnly, sshOnlyMessage } from '../shared/supported-targets';
+import { launchPreferences } from '../shared/prompt-cache';
 import { configureDiagnostics, diagnostic, errorDetails, getDiagnosticsInfo, setDiagnosticContent, flushDiagnostics, closeDiagnostics } from '../diagnostics';
 
 process.setSourceMapsEnabled?.(true);
@@ -57,6 +59,7 @@ let stopUpdates: (() => Promise<void>) | undefined;
 // Quitting: the dialog flow (quit-guard.ts), then cleanup. "done" lets the final app.quit() through.
 let quitFlow: QuitFlow | undefined;
 let quitSettings: QuitSettings | undefined;
+let sshSettings: SshSettings | undefined;
 let shutdownState: 'running' | 'cleaning' | 'done' = 'running';
 // Logging out or shutting down: never ask, never hold a window open.
 let systemEnding = false;
@@ -272,7 +275,7 @@ function shutDown() {
   for (const timer of quitTimers.values()) clearTimeout(timer);
   void (async () => {
     diagnostic.event('app.stopping', {}, 'info');
-    await stopUpdates?.(); await controllers?.dispose(); await cleanup?.(); await settingsWrite; await quitSettings?.flush();
+    await stopUpdates?.(); await controllers?.dispose(); await cleanup?.(); await settingsWrite; await quitSettings?.flush(); await sshSettings?.flush();
     diagnostic.event('app.stopped', {}, 'info');
     await closeDiagnostics();
   })().catch(error => { diagnostic.event('app.shutdown_failed', { error: errorDetails(error) }, 'error'); return flushDiagnostics(); })
@@ -309,6 +312,9 @@ async function boot() {
     const allowed = inlineMedia || pdfViewer || appAsset || details.url.startsWith('devtools:');
     callback({ cancel: !allowed });
   });
+  // Read before the backend's first SSH connection: it decides which master commands use.
+  sshSettings = new SshSettings(path.join(app.getPath('userData'), 'ssh-settings.json'));
+  const sshPreferences = await sshSettings.get();
   if (demo) {
     const fixture = await setupDemo(app.isPackaged ? process.resourcesPath : app.getAppPath(), app.isPackaged ? 'demo/mock-claude.mjs' : undefined);
     controller = new Controller(fixture.store, fixture.backend);
@@ -317,7 +323,7 @@ async function boot() {
     const store = new WorkspaceStore(app.getPath('userData'));
     await store.load();
     const cache = new SessionSettingsCache(new SessionSettingsDiskStore(app.getPath('userData')));
-    controller = new Controller(store, new Backend({ historyIndexStore: new HistoryIndexDiskStore(app.getPath('userData')) }), cache);
+    controller = new Controller(store, new Backend({ historyIndexStore: new HistoryIndexDiskStore(app.getPath('userData')), reuseSshConnections: sshPreferences.reuseConnections }), cache);
   }
   controller.warmModelCatalogs();
   // An open `@` list asks again when a background scan of its folder lands.
@@ -519,11 +525,11 @@ async function boot() {
     },
     listSshConfigHosts: () => readSshConfigHosts(process.env.LECTERN_SSH_CONFIG_HOME || undefined),
     setLaunchPreferences: preferences => {
-      const enableWorkflows = preferences?.enableWorkflows !== false;
-      if (enableWorkflows === launchWorkflows) return;
-      launchWorkflows = enableWorkflows;
-      controller.backend.setLaunchPreferences({ enableWorkflows });
-      // Ultracode's availability in the model list depends on it.
+      const next = launchPreferences(preferences && typeof preferences === 'object' ? preferences : undefined);
+      controller.backend.setLaunchPreferences(next);
+      if (next.enableWorkflows === launchWorkflows) return;
+      launchWorkflows = next.enableWorkflows;
+      // Ultracode's availability in the model list depends on it (the cache lifetimes do not).
       controller.refreshModelCatalogs();
     },
     modelCatalog: (id, retry) => controller.modelCatalog(id, retry === true),
@@ -586,6 +592,12 @@ async function boot() {
     },
     quitPreferences: () => quitSettings!.get(),
     setQuitPreferences: preferences => quitSettings!.set(preferences),
+    sshConnectionPreferences: () => sshSettings!.get(),
+    setSshConnectionPreferences: async preferences => {
+      const saved = await sshSettings!.set(preferences);
+      await controller.backend.setSshConnectionPreferences(saved);
+      return saved;
+    },
   };
   for (const [name, handler] of Object.entries(methods)) {
     ipcMain.handle(`lectern:${name}`, (event, ...args) => {

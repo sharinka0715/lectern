@@ -142,6 +142,9 @@ jobs:
           else
             node scripts/smoke-package.mjs release-out
           fi
+      - name: Askpass relay in the packaged app (macOS helper, no Dock icon)
+        if: runner.os != 'Windows'
+        run: node scripts/smoke-askpass-helper.mjs release-out
       - uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.name }}

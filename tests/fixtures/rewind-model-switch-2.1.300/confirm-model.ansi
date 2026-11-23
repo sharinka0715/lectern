@@ -1,0 +1,40 @@
+
+
+[97m●[39m Fake answer.                                              
+
+[2m[37m✻[0m[39m[49m [2m[37mWorked for 0s · done 8:10 AM
+
+[0m[37m[40m❯[39m [97m/model sonnet[39m                                                                                                         
+[2m[37m[49m  ⎿  [0m[39m[49mSet model to [97mSonnet 5.5[39m and saved as your default for new sessions                                                 
+
+[37m[40m❯[39m [97m/effort low[39m                                                                                                           
+[2m[37m[49m  ⎿  [0m[39m[49mSet effort level to low (saved as your default for new sessions): Quick, straightforward implementation with       
+     minimal overhead         
+
+[37m[40m❯ [97mNow list the tests ccm:two[39m                                                                                            
+
+[97m[49m●[39m Fake answer.                
+
+[2m[37m✻[0m[39m[49m [2m[37mChurned for 0s · done 8:10 AM[0m[39m[49m                                                                                         
+
+[37m[40m❯[39m [97m/effort high[39m                                                                                                          
+[2m[37m[49m  ⎿  [0m[39m[49mSet effort level to high (saved as your default for new sessions): Comprehensive implementation with extensive     
+     testing and documentation                                                                                          
+
+[37m[40m❯[39m [97m/model haiku[39m                                                                                                          
+[2m[37m[49m  ⎿  [0m[39m[49mSet model to [97mHaiku 5.5[39m and saved as your default for new sessions                                                  
+[97m▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔[39m [2m[37m● high · /effort[0m[97m[49m ▔
+[39m   [1m[97mRewind[0m[39m[49m                     
+
+   Confirm you want to restore to the point before you sent this message:                                               
+
+   [2m│[0m[39m[49m [97m/model sonnet[39m                                                                                                      
+   [2m│[0m[39m[49m [2m[37m(21s ago)[0m[39m[49m                                              
+                                                            
+   [2m[37mThe conversation will be forked.[0m[39m[49m                         
+   [2m[37mThe code will be unchanged.[0m[39m[49m                              
+                                                                                                                        
+   [97m❯[39m [2m[37m1. [0m[97m[49mRestore conversation[39m  
+     [2m[37m2. [0m[39m[49mSummarize from here   
+     [2m[37m3. [0m[39m[49mSummarize up to here  
+     [2m[37m4. [0m[39m[49mNever mind                                                                                                      

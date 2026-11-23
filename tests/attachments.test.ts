@@ -5,30 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { attachmentName, uploadAttachment } from '../src/backend/attachment-upload';
 import { Transport } from '../src/backend/transport';
-import { addDraftFiles, attachmentKind, findMentions, isUploadedAttachment, joinDraft, mentionFor, messageAttachmentLayout, pasteAttaches, samePath, splitDraft } from '../src/shared/attachments';
+import { attachmentKind, confirmsMention, findMentions, generatedName, isUploadedAttachment, mentionFor, messageFileLayout, messageFileNames, needsName, pasteAttaches, samePath } from '../src/shared/attachments';
 import type { Workspace } from '../src/shared/types';
 
 test('a path becomes an @-mention, quoted when it has spaces or symbols', () => {
   assert.equal(mentionFor('/tmp/lectern-attachments-501/a1/截图.png'), '@/tmp/lectern-attachments-501/a1/截图.png');
   assert.equal(mentionFor('/Users/me/My Files/report (1).pdf'), '@"/Users/me/My Files/report (1).pdf"');
-});
-
-test('the draft keeps attached files as mentions after the text, exactly what is sent', () => {
-  const attached = (path: string) => path.startsWith('/up/');
-  assert.equal(joinDraft('看看这张图', ['/up/a.png', '/up/b c.txt']), '看看这张图 @/up/a.png @"/up/b c.txt" ');
-  assert.equal(joinDraft('', ['/up/a.png']), '@/up/a.png ');
-  assert.equal(joinDraft('只有文字', []), '只有文字');
-  // The input box shows the text alone, whatever it ends with; the files come back in order.
-  for (const text of ['', '看看', '看看 ', '第一行\n', '@src/app.ts 和 @other', '  ']) {
-    for (const files of [[], ['/up/a.png'], ['/up/a.png', '/up/b c.txt']]) {
-      assert.deepEqual(splitDraft(joinDraft(text, files), attached), { text, files }, JSON.stringify({ text, files }));
-    }
-  }
-  // Mentions typed elsewhere (a quote appended after the files, an older draft) still become files, each once.
-  assert.deepEqual(splitDraft('说明 @/up/a.png\n\n> 引用\n\n', attached), { text: '说明\n\n> 引用\n\n', files: ['/up/a.png'] });
-  assert.deepEqual(splitDraft('@/up/a.png 先看 @/up/a.png 再说', attached), { text: '先看 再说', files: ['/up/a.png'] });
-  assert.deepEqual(splitDraft('读 @src/app.ts', attached), { text: '读 @src/app.ts', files: [] });
-  assert.equal(addDraftFiles('先说明 @/up/a.png ', ['/up/a.png', '/up/b.png'], attached), '先说明 @/up/a.png @/up/b.png ');
 });
 
 test('mentions are found as Claude Code reads them: at the start or after whitespace, quoted when needed', () => {
@@ -45,29 +27,84 @@ test('mentions are found as Claude Code reads them: at the start or after whites
     ['image', 'pdf', 'code', 'text', 'sheet', 'slides', 'archive', 'video', 'audio', 'folder', 'file']);
 });
 
-test('a user message shows each attachment once: trailing mentions become cards, mentions inside the text chips', () => {
-  const shot = '/tmp/lectern-attachments-0/aB3dE6gH/image.png', notes = '/home/dev/project/notes.txt';
-  const files = [{ id: 'f1', name: 'image.png', path: shot, image: true as const }, { id: 'f2', name: 'notes.txt', path: notes },
+test('a user message keeps every known file in its place as a chip; the row above has its images and unnamed attachments', () => {
+  const shot = '/tmp/lectern-attachments-0/aB3dE6gH/image1.png', notes = '/home/dev/project/notes.txt';
+  const files = [{ id: 'f1', name: 'image1.png', path: shot, image: true as const }, { id: 'f2', name: 'notes.txt', path: notes },
     { id: 'f3', name: 'pasted.png', image: true as const }, { id: 'f4', name: 'report.pdf' }];
   const none = () => false;
-  // As the composer sends it: the files after the text leave it and become cards; embedded images keep their place.
-  let layout = messageAttachmentLayout(`看看这两个\n @${shot} @notes.txt `, files, none);
-  assert.equal(layout.text, '看看这两个');
-  assert.deepEqual(layout.chips, []);
-  assert.deepEqual(layout.cards.map(card => card.key), ['f1', 'f2', 'f4']);
-  // Named inside a sentence: a chip there, and no second card for the same file.
-  layout = messageAttachmentLayout(`界面没兼容： @${shot} ，只能在终端操作。`, files.slice(0, 1), none);
-  assert.equal(layout.text, `界面没兼容： @${shot} ，只能在终端操作。`);
-  assert.deepEqual(layout.chips.map(chip => [chip.start, chip.attachment?.id]), [[7, 'f1']]);
-  assert.deepEqual(layout.cards, []);
-  // Before the transcript records the files (a message being sent), known paths count too.
-  layout = messageAttachmentLayout(`看图 @${shot} `, [], isUploadedAttachment);
-  assert.deepEqual([layout.text, layout.cards], ['看图', [{ key: 'path:' + shot, path: shot, attachment: undefined }]]);
+  // As the composer sends it: the files after the text stay there as chips; the image (once) and the
+  // attachment no mention names go in the row; embedded images keep their place in the text.
+  let layout = messageFileLayout(`看看这两个\n @${shot} @notes.txt @${shot}`, files, none);
+  assert.deepEqual(layout.chips.map(chip => [chip.mention, chip.attachment?.id]), [[`@${shot}`, 'f1'], ['@notes.txt', 'f2'], [`@${shot}`, 'f1']]);
+  assert.deepEqual(layout.row.map(item => item.key), ['f1', 'f4']);
+  // Named inside a sentence: a chip there, the image in the row.
+  const text = `界面没兼容： @${shot} ，只能在终端操作。`;
+  layout = messageFileLayout(text, files.slice(0, 1), none);
+  assert.deepEqual(layout.chips.map(chip => [chip.start, chip.end, text.slice(chip.start, chip.end) === chip.mention]), [[7, 7 + shot.length + 1, true]]);
+  assert.deepEqual(layout.row.map(item => item.key), ['f1']);
+  // Before the transcript records the files (a message being sent), known paths count too; quoted ones copy with their quotes.
+  layout = messageFileLayout(`看图 @${shot} 和 @"src/my notes.md"`, [], path => isUploadedAttachment(path) || path === 'src/my notes.md');
+  assert.deepEqual(layout.chips.map(chip => [chip.path, chip.mention]), [[shot, `@${shot}`], ['src/my notes.md', '@"src/my notes.md"']]);
+  assert.deepEqual(layout.row, [{ key: 'path:' + shot, path: shot, attachment: undefined }]);
   // Other mentions are ordinary text, and a message with no attachment is unchanged.
-  layout = messageAttachmentLayout('读一下 @src/app.ts ', files.slice(0, 1), none);
-  assert.deepEqual([layout.text, layout.chips.length, layout.cards.map(card => card.key)], ['读一下 @src/app.ts ', 0, ['f1']]);
-  // Only files: no text left.
-  assert.equal(messageAttachmentLayout(`@${shot}`, files.slice(0, 1), none).text, '');
+  layout = messageFileLayout('读一下 @src/app.ts ', files.slice(0, 1), none);
+  assert.deepEqual([layout.chips.length, layout.row.map(item => item.key)], [0, ['f1']]);
+  assert.deepEqual(messageFileLayout('只有文字', [], none), { chips: [], row: [] });
+});
+
+test("a user message's mentions are the files Claude Code read from its directory then", () => {
+  const sub = '/home/dev/project/sub', root = '/home/dev/project';
+  const located = (path: string) => path.startsWith('/') ? undefined : `${sub}/${path}`.replace(/\/[^/]+\/\.\.\//, '/');
+  // Claude Code recorded both: the file at the prompt's directory is the mention's, not the first that ends the same way.
+  const files = [{ id: 'root', name: 'notes.md', path: `${root}/notes.md` }, { id: 'sub', name: 'notes.md', path: `${sub}/notes.md` }];
+  let layout = messageFileLayout('@notes.md 和 @../notes.md', files, () => false, located);
+  assert.deepEqual(layout.chips.map(chip => [chip.mention, chip.attachment?.id]), [['@notes.md', 'sub'], ['@../notes.md', 'root']]);
+  // Not recorded: found from the directory (the chip opens that path), else as before.
+  layout = messageFileLayout('@a.png @b.md @c.md', [], path => path === 'a.png' ? `${sub}/a.png` : path === 'b.md', located);
+  assert.deepEqual(layout.chips.map(chip => [chip.mention, chip.path]), [['@a.png', `${sub}/a.png`], ['@b.md', 'b.md']]);
+  assert.deepEqual(layout.row, [{ key: `path:${sub}/a.png`, path: `${sub}/a.png`, attachment: undefined }]);
+  // Sent after a cd as an absolute path, a mention put back in the box is still confirmed by the check.
+  assert.ok(confirmsMention(`${sub}/notes.md`, { path: 'sub/notes.md' }));
+});
+
+test('a reference check confirms the very file a mention names, not one found elsewhere', () => {
+  assert.ok(confirmsMention('src/app.ts', { path: 'src/app.ts' }));
+  assert.ok(confirmsMention('./src/app.ts', { path: 'src/app.ts' }));
+  assert.ok(confirmsMention('notes.md', { path: 'notes.md' }));
+  // A bare name or a relative path found below the folder is not what Claude Code reads.
+  assert.ok(!confirmsMention('app.ts', { path: 'src/app.ts' }));
+  assert.ok(!confirmsMention('src/app.ts', { path: 'packages/web/src/app.ts' }));
+  // Absolute and home paths inside the folder come back relative; outside, as the real path.
+  assert.ok(confirmsMention('/home/dev/project/src/app.ts', { path: 'src/app.ts' }));
+  assert.ok(confirmsMention('~/project/src/app.ts', { path: 'src/app.ts' }));
+  assert.ok(confirmsMention('/tmp/lectern-attachments-0/aB3dE6gH/image1.png', { path: '/private/tmp/lectern-attachments-0/aB3dE6gH/image1.png' }));
+  assert.ok(confirmsMention('~/notes.txt', { path: '/home/dev/notes.txt' }));
+  assert.ok(confirmsMention('../other/x.ts', { path: '/home/dev/other/x.ts' }));
+  // Not found, not checked, or a folder written as one.
+  for (const found of [null, 'missing', 'outside', undefined] as const) assert.ok(!confirmsMention('src/app.ts', found));
+  assert.ok(!confirmsMention('src/', { path: 'src' }));
+});
+
+test('clipboard data without a name is named image1, image2… or file1…, after every number the chat already uses', () => {
+  assert.equal(needsName('image.png', false), true, "Chromium's name for pasted pixels");
+  assert.equal(needsName('', false), true);
+  assert.equal(needsName('image.png', true), false, 'a file from disk keeps its name');
+  assert.equal(needsName('截图 2026-11-23.png', false), false);
+  assert.deepEqual(generatedName('image/png', 'image.png', []), { name: 'image1.png', number: 1, kind: 'image' });
+  assert.equal(generatedName('image/jpeg', 'image.png', []).name, 'image1.jpg');
+  // Numbers in the text and messages (any extension, any case) and the last one given all count.
+  assert.equal(generatedName('image/png', 'image.png', ['image1.png', 'IMAGE3.jpg', 'notes.md', 'file7.txt']).name, 'image4.png');
+  assert.equal(generatedName('image/png', 'image.png', ['image1.png'], { image: 5, file: 9 }).name, 'image6.png');
+  assert.equal(generatedName('image/png', 'image.png', ['image2.png/x', 'myimage9.png', 'image.png']).name, 'image1.png');
+  // Other data: file1 with the extension its type or its own name suggests.
+  assert.equal(generatedName('text/plain', '', ['file1.txt']).name, 'file2.txt');
+  assert.equal(generatedName('application/octet-stream', '', [], { image: 3 }).name, 'file1');
+  assert.equal(generatedName('', 'data.CSV', []).name, 'file1.csv');
+  assert.equal(generatedName('application/pdf', '', []).kind, 'file');
+  // What a conversation already uses: the files its user messages name and their attachments.
+  assert.deepEqual(messageFileNames([
+    { role: 'user', text: '看 @/tmp/lectern-attachments-0/aB3dE6gH/image2.png 和 @"a b/file1.txt"', attachments: [{ name: 'image3.png' }] },
+    { role: 'assistant', text: '@image9.png' }]), ['image2.png', 'file1.txt', 'image3.png']);
 });
 
 test('copied cells with a picture of themselves paste as text', () => {

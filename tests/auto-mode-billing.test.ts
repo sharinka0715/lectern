@@ -100,3 +100,35 @@ test('after continue the turn finishes; after cancel it is interrupted; either w
   }
   assert.match(fixture('2.1.300', 'billing-cancelled'), /Interrupted · What should Claude do instead\?/);
 });
+
+// Claude Code 2.1.330 shows the notice too, with its newer wording, when the default level of
+// telemetry lets it fall back to its own check (scripts/cc-matrix/probe-classifier-failure.mjs with
+// CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1): before the first checked action, and under a
+// streamed reply ("streamed": a reply text, the unmarked heading of the waiting call), the layout of
+// the screen a user behind a gateway saw only as a "dialog open" banner.
+const billing330 = (name: string) => readFileSync(new URL(`./fixtures/auto-mode-billing-2.1.330/${name}.txt`, import.meta.url), 'utf8');
+
+test('Claude Code 2.1.330\'s notice is the same card, also under a streamed reply', () => {
+  for (const name of ['notice', 'streamed']) {
+    const text = billing330(name);
+    const screen = parsePermissionScreen(text)!;
+    assert.equal(screen?.kind, 'auto-mode-billing', name);
+    assert.equal(screen.title, TITLE);
+    assert.match(screen.subtitle[0], /^However, this session isn't eligible because your requests go through 127\.0\.0\.1:\d+, which isn't compatible with this update\.$/);
+    assert.equal(screen.subtitle[1], 'Auto mode works for now, and its classifier requests are billed as before. An upcoming release removes this fallback. In sessions like this one, each checked action will then be asked about or denied.');
+    assert.match(screen.subtitle[2], / https:\/\/code\.claude\.com\/docs\/en\/auto-mode-classifier-billing$/);
+    assert.deepEqual(screen.options.map(o => [o.number, o.key, o.label]), [[1, 'Enter', 'continue']]);
+    assert.equal(classifySessionScreen(text).status, 'waiting', name);
+    assert.equal(isIdleEmptyComposer(text), false, name);
+  }
+  assert.match(billing330('streamed'), /● I will search the docs first, then report back\.\n\n {2}Searching docs for findings\n/);
+  // Esc interrupts the turn (the call is refused); Enter runs it after Claude Code's own check.
+  for (const name of ['cancelled', 'continued']) {
+    const text = billing330(name);
+    assert.equal(parsePermissionScreen(text), undefined, name);
+    assert.equal(parsePermissionScreen(text, { generic: true }), undefined, name);
+    assert.equal(isIdleEmptyComposer(text), true, name);
+  }
+  assert.match(billing330('cancelled'), /Interrupted · What should Claude do instead\?/);
+  assert.match(billing330('continued'), /Ran 1 shell command[\s\S]*Probe finished \(ccm-probe-done\)\./);
+});

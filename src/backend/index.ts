@@ -19,6 +19,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename, posix } from 'node:path';
 import type { SettingSwitchMode, DirectoryTrustDecision, DirectoryTrustResult, DirectoryTrustSnapshot, HistoryScan, HistoryTarget, ReplyBaselines, TranscriptPosition, NativeStatusLineObservation, PaneInfo, SessionInfo, SessionSettingKind, SessionSettingSnapshot, TerminalFrame, TerminalInput, TerminalKey, Workspace, WorkspaceDirectoryPage, WorkspaceDiscovery, WorkspaceEndpoint } from '../shared/types';
 import { TERMINAL_KEYS } from '../shared/types';
+import type { SshConnectionPreferences } from '../shared/ssh-connections';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import { Transport, quoteShell as q, validateWorkspace, type TransportOptions } from './transport';
 import { uploadAttachment } from './attachment-upload';
@@ -26,7 +27,7 @@ import { gitChanges, privacyGuarded } from './git-changes';
 import type { AnswerPrompt } from './ssh-login';
 import { linkScript, startTerminalLink, type TerminalLink } from './terminal-link';
 import { diagnostic, errorDetails, getDiagnosticsInfo, summarize } from '../diagnostics';
-import { missingCwdNotice, scanHistoryProjects } from './history';
+import { missingCwdNotice, projectSlug, scanHistoryProjects } from './history';
 import { normalizeSessionTitle } from '../shared/session-title';
 import { readRecentCustomTitle } from './session-title';
 import { renameInactiveSession } from './history-rename';
@@ -39,7 +40,7 @@ import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './mo
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
 import { composerFrameGuard, animatedLabelText, guardWindow } from './composer-frame-guard';
-import { performTurnAction, type TurnDriver, type RewindTarget } from './native-turn-controls';
+import { notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
 import type { NativePermissionScreen, PermissionAction } from '../shared/native-permission';
@@ -55,6 +56,7 @@ import { NativeDirectoryTrust, DirectoryTrustError, TrustKeyNotSent, type TrustD
 import { t } from '../shared/i18n';
 import { hostProbeScript, HostToolsError, parseHostProbe } from './host-probe';
 import { missingTools, missingToolsMessage, type HostCheck, type HostTool } from '../shared/host-tools';
+import { launchPreferences, type LaunchPreferences } from '../shared/prompt-cache';
 export { quoteShell, validateWorkspace, runCommand, commandInvocation } from './transport';
 export { HostToolsError } from './host-probe';
 
@@ -78,12 +80,16 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
       location.cwd, location.claudeDir, pane.serverInstance, pane.pid, pane.native.registrationId])).digest('hex');
   }
 }
-export interface LaunchPreferences { enableWorkflows: boolean }
-export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'] }
+export type { LaunchPreferences } from '../shared/prompt-cache';
+export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'];
+  /** Reach a machine over the master its ssh_config already runs (default), or only over Lectern's own connections. */
+  reuseSshConnections?: boolean }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
 export interface ReadResult { /** Asked for with `listSubagents`: every subagent of the session (subagent-files.ts). */ subagents?: SubagentListing;
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
-  sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean }; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
+  sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean };
+  /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
+  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
@@ -93,13 +99,7 @@ export class SessionGoneError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionGoneError'; }
 }
 
-export function projectSlug(cwd: string): string {
-  const slug = cwd.replace(/[^A-Za-z0-9]/g, '-');
-  if (slug.length <= 200) return slug;
-  let hash = 0;
-  for (let i = 0; i < cwd.length; i++) hash = (Math.imul(hash, 31) + cwd.charCodeAt(i)) | 0;
-  return slug.slice(0, 200) + '-' + Math.abs(hash).toString(36);
-}
+export { projectSlug };
 function assertSessionId(value: string): void { if (!UUID.test(value)) throw new Error('Invalid Claude session UUID'); }
 function assertPaneId(value: string): void { if (!/^%\d+$/.test(value)) throw new Error('Invalid tmux pane ID'); }
 function expandPath(value: string): string { return value === '~' ? '"$HOME"' : value.startsWith('~/') ? `"$HOME"/${q(value.slice(2))}` : q(value); }
@@ -193,16 +193,16 @@ export class Backend {
   // instead of waiting on the machine again (knownRunning).
   private readonly discoveries = new Map<string, { okAt?: number; failedAt?: number; error?: string }>();
   constructor(private readonly options: BackendOptions = {}) {
-    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal });
+    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal, reuseUserMasters: options.reuseSshConnections });
     if (!options.claudeCommand) this.endpointBilling = new EndpointBillingCache(this.transport);
     this.artifacts = new WorkspaceArtifacts(this.transport);
     this.completions = new ComposerCompletions(this.transport, this.artifacts);
     if (options.tmuxSocket && !/^[A-Za-z0-9_.-]{1,80}$/.test(options.tmuxSocket)) throw new Error('Invalid tmux socket name');
   }
   private tmux(...args: string[]): string { return ['tmux', ...(this.options.tmuxSocket ? ['-L', this.options.tmuxSocket] : []), ...args].map(q).join(' '); }
-  private launchPreferences: LaunchPreferences = { enableWorkflows: true };
+  private launchPreferences = launchPreferences(undefined);
   /** Applies to processes Lectern starts from now on; running ones keep theirs. */
-  setLaunchPreferences(preferences: LaunchPreferences): void { this.launchPreferences = { enableWorkflows: preferences.enableWorkflows !== false }; }
+  setLaunchPreferences(preferences: Partial<LaunchPreferences>): void { this.launchPreferences = launchPreferences(preferences); }
   private key(workspace: Workspace, sessionId: string): string { return `${workspace.id}:${sessionId}`; }
   private revision(workspaceId: string): number { return this.workspaceRevisions.get(workspaceId) ?? 0; }
   private configRevision(workspaceId: string): number { return this.workspaceConfigRevisions.get(workspaceId) ?? 0; }
@@ -371,6 +371,10 @@ ${presenceReadScript(location.claudeDir)}`;
       if (pane && !cached && viewports.get(pane.id)?.screen !== undefined) this.rememberNavigation(workspace, pane, observed, now);
     }
     diagnostic.event('backend.navigation_status.result', { workspaceId: workspace.id, sessionCount: sessions.length, states: sessions.map(session => ({ sessionId: session.id, paneId: session.paneId, status: session.status, statusDetail: session.statusDetail, background: session.background })) }, 'debug');
+  }
+  /** Applies to SSH connections made from now on; see Transport.setReuseUserMasters. */
+  setSshConnectionPreferences(preferences: SshConnectionPreferences): Promise<void> {
+    return this.transport.setReuseUserMasters(preferences.reuseConnections !== false);
   }
   /** Interactive SSH login that leaves a reusable master; see Transport.login. */
   sshLogin(target: { host?: string; port?: number }, answer: AnswerPrompt, signal?: AbortSignal) {
@@ -592,9 +596,11 @@ exit 0`;
     // named claude supports the same per-launch settings as the normal CLI.
     const nativeCli = !this.options.claudeCommand || basename(executable) === 'claude';
     const callback = statusLineFor && nativeCli ? statusLineLaunch(statusLineFor, randomUUID().replace(/-/g, ''), location.tmuxVersion) : undefined;
-    // Only this process's settings change (auto mode, no prompt suggestions,
-    // workflows unless the user opted out); the user's own settings files stay as they are.
-    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), enableWorkflows: this.launchPreferences.enableWorkflows })) : undefined;
+    // Only this process's settings change (auto mode, no prompt suggestions, workflows
+    // unless the user opted out, the prompt-cache lifetimes the user chose); the user's
+    // own settings files stay as they are. The model-list probe gets the same, though it
+    // makes no model request: the cache lifetimes do not change what it reports.
+    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), ...this.launchPreferences })) : undefined;
     // Merely setting the default directory can change how native Claude resolves
     // its global config/account state. Preserve the target's normal environment;
     // only an explicitly selected configuration directory is an override.
@@ -1239,7 +1245,7 @@ ${after}`;
     const runtimeInstanceId = runtimeIdentity(workspace, location, pane);
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
-    return { subagents, sessionProcess: elsewhere, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {
@@ -1444,7 +1450,8 @@ ${after}`;
       if (target && position) {
         const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
         const cursor = this.cursors.get(this.key(workspace,sessionId));
-        if (cursor?.inode !== position.inode || cursor?.offset !== position.offset) throw new Error(t('backend.rewindHistoryChanged'));
+        // Read on since the rewind was chosen (nothing sent yet): the caller reads again first.
+        if (cursor?.inode !== position.inode || cursor?.offset !== position.offset) throw new RewindRecordChanged();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       return performTurnAction(this.settingDriver(workspace, sessionId, {historyGuard}), paneId, panePid, action, target, assertCurrent);
@@ -1459,7 +1466,8 @@ ${after}`;
       if (position && position.inode !== 'missing') {
         const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
         const cursor = this.cursors.get(this.key(workspace, sessionId));
-        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new Error(t('backend.questionRecordChanged'));
+        // Read on since the card was offered (a read in flight): nothing sent, as when the target's guard refuses.
+        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new TranscriptChangedNoKeys();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
@@ -1475,7 +1483,7 @@ ${after}`;
       if (position && position.inode !== 'missing') {
         const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
         const cursor = this.cursors.get(this.key(workspace, sessionId));
-        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new Error(t('backend.permissionRecordChanged'));
+        if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new TranscriptChangedNoKeys();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
@@ -1585,7 +1593,7 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
     // Foreground discovery also rejects a second active pane claiming this
     // UUID. Check all panes before each input, then bind the dispatch itself to
     // both the observed target and the last parsed viewport on the target.
-    const input = async (paneId: string, key: string, contexts: Parameters<NativeKeybindings['guard']>[2], command: string, settle: boolean, tailLines?: number, settingPaste = false, switchSession = false) => {
+    const input = async (paneId: string, key: string, contexts: Parameters<NativeKeybindings['guard']>[2], command: string, settle: boolean, tailLines?: number, settingPaste = false, switchSession = false, recordBound = true) => {
       const { session, location, revision } = await (resolved ??= resolve());
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
       const [keymap, panes] = await Promise.all([bindings.guard(location.claudeDir, key, contexts), this.probe(workspace)]);
@@ -1595,13 +1603,17 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
       // send-keys. A transport error after dispatch never authorizes a retry.
       const guardedNavigation = (contexts.includes('ModelPicker') && ['Up', 'Down', 'Home', 'End', 'PageUp', 'PageDown', 'Escape'].includes(key))
         || (contexts.includes('EffortSlider') && ['Left', 'Right', 'Escape'].includes(key));
-      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent
+      const recordChecked = !!options.historyGuard && recordBound;
+      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent || recordChecked
         ? 'LECTERN_MENU_KEY_NOT_SENT_' + randomUUID() : undefined;
       const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort' : 'exact';
-      // The transcript revision guard runs first: for a question or permission answer its
-      // failure is printed as a receipt that nothing was sent (TranscriptChangedNoKeys).
-      const recordGuard = !options.historyGuard ? '' : options.assertCurrent && rejectedNavigation
-        ? receiptOnFailure(options.historyGuard, rejectedNavigation + RECORD_CHANGED) : options.historyGuard;
+      // The transcript revision guard runs first: its failure is printed as a receipt that
+      // nothing was sent (TranscriptChangedNoKeys), for a question or permission answer and for
+      // a rewind's keys alike (the rewind is then chosen again from a fresh read).
+      // Ctrl+U only takes out a command Lectern itself typed (withdrawCommand), and Esc closes the
+      // rewind menu Lectern opened (`close`): both are bound to the frame they act on, not to
+      // the transcript revision a rewind was chosen from.
+      const recordGuard = recordChecked ? receiptOnFailure(options.historyGuard!, rejectedNavigation + RECORD_CHANGED) : '';
       options.assertCurrent?.();
       return read(settle, recordGuard + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
     };
@@ -1633,13 +1645,13 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
         const keys: Record<typeof action, [string, string[]]> = {
           queue: ['ctrl+x enter', ['C-x','Enter']], steer: ['ctrl+x ctrl+s', ['C-x','C-s']],
           stop: ['Escape',['Escape']], up: ['Up',['Up']], down: ['Down',['Down']],
-          accept: ['Enter',['Enter']], cancel: ['Escape',['Escape']], submit: ['Enter',['Enter']], clear: ['ctrl+c',['C-c']],
+          accept: ['Enter',['Enter']], cancel: ['Escape',['Escape']], close: ['Escape',['Escape']], submit: ['Enter',['Enter']], clear: ['ctrl+c',['C-c']],
           erase: ['ctrl+u', ['C-u']], switchSession: ['Enter', ['Enter']],
         };
         const [binding, tmuxKeys] = keys[action];
-        const contexts: Parameters<NativeKeybindings['guard']>[2] = ['up','down','accept','cancel'].includes(action) ? ['Select','Confirmation'] : ['Chat'];
+        const contexts: Parameters<NativeKeybindings['guard']>[2] = ['up','down','accept','cancel','close'].includes(action) ? ['Select','Confirmation'] : ['Chat'];
         const tail = footerOnly && turnComposer(viewport)?.tailLines;
-        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession');
+        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession', action !== 'erase' && action !== 'close');
       },
       pasteForTurn: async (text, footerOnly) => {
         if (!last) throw new Error(t('backend.nativeInputUnchecked'));
@@ -1690,7 +1702,10 @@ sleep 0.1`, false, undefined, true);
         }
         if (!hasPendingSettingCommand(pasted.viewport, command as Parameters<typeof hasPendingSettingCommand>[1], idleViewport)) {
           diagnostic.capture('settings.viewport', pasted.viewport, { kind, phase: 'command-entry-rejected', paneId, sessionId });
-          throw new SessionSettingError(t('backend.commandNotShown'));
+          // Not left in the input box: Ctrl+U, bound to a frame that shows exactly this command.
+          const erase = async () => { await input(paneId, 'ctrl+u', ['Chat'], this.tmux('send-keys', '-t', paneId, 'C-u'), false); };
+          const cleared = await withdrawCommand({ keyForTurn: erase }, command, async () => (await read(false)).viewport);
+          throw new SessionSettingError(notRunError(command, cleared, false).message);
         }
         await submitCommand(command, paneId);
       },

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Transport } from '../src/backend/transport';
-import { classifyPrompt, type SshPrompt } from '../src/backend/ssh-login';
+import { askpassNeedsDisplay, askpassNode, classifyPrompt, runInteractiveLogin, type SshPrompt } from '../src/backend/ssh-login';
 import type { Workspace } from '../src/shared/types';
 
 const posix = { skip: process.platform === 'win32' ? 'POSIX ssh multiplexing only' : false };
@@ -65,6 +65,107 @@ test('prompts are classified for the dialog', () => {
   assert.equal(classifyPrompt('Confirm user presence for key', 'none'), 'info');
 });
 
+test('on macOS askpass runs as Node in the LSUIElement helper next to the executable; elsewhere in the executable itself', () => {
+  const only = (...files: string[]) => (file: string) => files.includes(file);
+  const app = '/Applications/Lectern.app/Contents/MacOS/Lectern';
+  const helper = '/Applications/Lectern.app/Contents/Frameworks/Lectern Helper.app/Contents/MacOS/Lectern Helper';
+  // Packaged: electron-builder names the helpers after the executable.
+  assert.equal(askpassNode({ platform: 'darwin', execPath: app, helperExecPath: undefined, isExecutable: only(helper) }), helper);
+  // Development: node_modules' Electron.app, whatever app.setName says.
+  const electron = '/home/dev/lectern/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron';
+  const electronHelper = '/home/dev/lectern/node_modules/electron/dist/Electron.app/Contents/Frameworks/Electron Helper.app/Contents/MacOS/Electron Helper';
+  assert.equal(askpassNode({ platform: 'darwin', execPath: electron, helperExecPath: undefined, isExecutable: only(electronHelper) }), electronHelper);
+  // A renamed bundle keeps the executable's name.
+  assert.equal(askpassNode({ platform: 'darwin', execPath: '/Applications/Lectern 2.app/Contents/MacOS/Lectern', helperExecPath: undefined,
+    isExecutable: only('/Applications/Lectern 2.app/Contents/Frameworks/Lectern Helper.app/Contents/MacOS/Lectern Helper') }),
+  '/Applications/Lectern 2.app/Contents/Frameworks/Lectern Helper.app/Contents/MacOS/Lectern Helper');
+  // Not where expected: Electron's own helper path, then the executable.
+  const elsewhere = '/opt/Other.app/Contents/MacOS/Other Helper';
+  assert.equal(askpassNode({ platform: 'darwin', execPath: app, helperExecPath: elsewhere, isExecutable: only(elsewhere) }), elsewhere);
+  assert.equal(askpassNode({ platform: 'darwin', execPath: app, helperExecPath: elsewhere, isExecutable: only(helper, elsewhere) }), helper);
+  assert.equal(askpassNode({ platform: 'darwin', execPath: app, helperExecPath: elsewhere, isExecutable: only() }), app);
+  assert.equal(askpassNode({ platform: 'darwin', execPath: '/opt/homebrew/bin/node', helperExecPath: undefined, isExecutable: () => true }), '/opt/homebrew/bin/node');
+  // Linux and Windows are unchanged: no Dock, and Electron's helper is the executable itself.
+  for (const platform of ['linux', 'win32'] as const) {
+    assert.equal(askpassNode({ platform, execPath: '/opt/Lectern/lectern', helperExecPath: '/opt/Lectern/other', isExecutable: () => true }), '/opt/Lectern/lectern');
+  }
+});
+
+test('the helper must be an executable file', posix, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'lectern-askpass-node-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const app = join(root, 'Lectern.app/Contents/MacOS/Lectern');
+  const helper = join(root, 'Lectern.app/Contents/Frameworks/Lectern Helper.app/Contents/MacOS/Lectern Helper');
+  const options = { platform: 'darwin' as const, execPath: app, helperExecPath: undefined };
+  assert.equal(askpassNode(options), app, 'no helper');
+  await mkdir(helper, { recursive: true });
+  assert.equal(askpassNode(options), app, 'a directory');
+  await rm(helper, { recursive: true });
+  await writeFile(helper, '#!/bin/sh\n', { mode: 0o644 });
+  assert.equal(askpassNode(options), app, 'not executable');
+  await rm(helper);
+  await writeFile(helper, '#!/bin/sh\n', { mode: 0o755 });
+  assert.equal(askpassNode(options), helper);
+});
+
+test('a DISPLAY is made up only for OpenSSH before 8.4', () => {
+  assert.equal(askpassNeedsDisplay('OpenSSH_9.8p1, LibreSSL 3.3.6\n'), false);
+  assert.equal(askpassNeedsDisplay('OpenSSH_8.6p1, LibreSSL 3.3.6\n'), false);
+  assert.equal(askpassNeedsDisplay('OpenSSH_8.4p1 Debian-5+deb11u3, OpenSSL 1.1.1w  11 Sep 2023\n'), false);
+  assert.equal(askpassNeedsDisplay('OpenSSH_10.0p2, OpenSSL 3.5.0\n'), false);
+  assert.equal(askpassNeedsDisplay('OpenSSH_8.2p1 Ubuntu-4ubuntu0.11, OpenSSL 1.1.1f  31 Mar 2020\n'), true);
+  assert.equal(askpassNeedsDisplay('OpenSSH_7.4p1, OpenSSL 1.0.2k-fips  26 Jan 2017\n'), true);
+  assert.equal(askpassNeedsDisplay(''), true, 'unknown counts as old');
+});
+
+test('ssh gets the askpass wrapper, which runs the macOS helper (a path with spaces) as Node; DISPLAY only where needed', posix, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'lectern-askpass-env-'));
+  const display = process.env.DISPLAY;
+  t.after(async () => {
+    if (display === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = display;
+    await rm(root, { recursive: true, force: true });
+  });
+  // The helper stands in for "Lectern Helper": it records how it was started, then is Node.
+  const helper = join(root, 'Lectern.app/Contents/Frameworks/Lectern Helper.app/Contents/MacOS/Lectern Helper');
+  await mkdir(join(helper, '..'), { recursive: true });
+  await writeFile(helper, `#!/bin/sh
+printf '%s %s\\n' "$ELECTRON_RUN_AS_NODE" "$(basename "$1")" >> ${JSON.stringify(join(root, 'helper-runs'))}
+exec ${JSON.stringify(process.execPath)} "$@"
+`, { mode: 0o755 });
+  const node = askpassNode({ platform: 'darwin', execPath: join(root, 'Lectern.app/Contents/MacOS/Lectern'), helperExecPath: undefined });
+  assert.equal(node, helper);
+  const ssh = join(root, 'ssh');
+  await writeFile(ssh, `#!/bin/sh
+state=${JSON.stringify(root)}
+case " $* " in (*" -V "*) cat "$state/version" >&2; exit 0;; esac
+{ printf 'DISPLAY=%s\\n' "\${DISPLAY-unset}"; printf 'SSH_ASKPASS_REQUIRE=%s\\n' "$SSH_ASKPASS_REQUIRE"; printf 'LECTERN_ASKPASS_NODE=%s\\n' "$LECTERN_ASKPASS_NODE"
+  printf 'SSH_ASKPASS=%s\\n' "$SSH_ASKPASS"; cat "$SSH_ASKPASS"; } > "$state/env"
+reply=$("$SSH_ASKPASS" "dev@lab's password: ") || exit 255
+[ "$reply" = 'pa ss"word' ] || exit 255
+`, { mode: 0o700 });
+  const login = async (version: string, userDisplay?: string) => {
+    await writeFile(join(root, 'version'), version);
+    if (userDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = userDisplay;
+    const prompts: string[] = [];
+    await runInteractiveLogin({ command: { file: ssh, args: ['-f', '-N', 'lab'] }, node, answer: async prompt => { prompts.push(prompt.text); return 'pa ss"word'; } });
+    assert.deepEqual(prompts, ["dev@lab's password: "]);
+    const env = await readFile(join(root, 'env'), 'utf8');
+    return { env, value: (key: string) => env.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1] };
+  };
+  const modern = await login('OpenSSH_9.8p1, LibreSSL 3.3.6\n');
+  assert.equal(modern.value('SSH_ASKPASS_REQUIRE'), 'force');
+  assert.equal(modern.value('LECTERN_ASKPASS_NODE'), helper);
+  assert.match(modern.value('SSH_ASKPASS') ?? '', /^\/tmp\/lectern-login-[^/]+\/askpass$/);
+  assert.match(modern.env, /ELECTRON_RUN_AS_NODE=1 exec "\$LECTERN_ASKPASS_NODE" "\$LECTERN_ASKPASS_HELPER" "\$@"/);
+  assert.equal(modern.value('DISPLAY'), 'unset', 'the backgrounded master would keep a made-up DISPLAY');
+  assert.equal((await readFile(join(root, 'helper-runs'), 'utf8')).trim(), '1 askpass.cjs', 'the helper ran the relay as Node');
+  const { access } = await import('node:fs/promises');
+  await assert.rejects(access(join(modern.value('SSH_ASKPASS')!, '..')), 'the wrapper and socket are gone after the login');
+  assert.equal((await login('OpenSSH_8.2p1 Ubuntu-4ubuntu0.11, OpenSSL 1.1.1f  31 Mar 2020\n')).value('DISPLAY'), ':0');
+  assert.equal((await login('')).value('DISPLAY'), ':0', 'an ssh that does not say its version');
+  assert.equal((await login('OpenSSH_8.2p1\n', 'workstation:3')).value('DISPLAY'), 'workstation:3', "the user's own DISPLAY is kept");
+});
+
 test('password and one-time code reach OpenSSH through askpass; with ControlPersist in ssh_config the user master is used as is', posix, async t => {
   const { transport, calls } = await fixture(t, { FAKE_CONTROL_PATH: '/tmp/ssh-mux-%C', FAKE_CONTROL_PERSIST: '86400' });
   const seen: SshPrompt[] = [];
@@ -91,7 +192,7 @@ test('without ControlPersist in ssh_config Lectern keeps its own master until it
   const { transport, calls } = await fixture(t, env);
   assert.equal(await transport.login(target, async prompt => prompt.kind === 'secret' ? 'pa ss"word' : '123456'), 'connected');
   const login = (await calls()).find(line => line.includes('BatchMode=no'))!;
-  assert.match(login, /^-f -N .*ControlMaster=yes/, 'a background master with no idle timeout');
+  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=yes /, 'a background master with no idle timeout, whatever ssh_config says');
   const path = login.match(/ControlPath=(\S+)/)?.[1];
   assert.ok(path?.startsWith('/tmp/lectern-ssh-') && path.endsWith('/%C'), login);
   await transport.run(workspace, 'printf ok');
@@ -99,6 +200,25 @@ test('without ControlPersist in ssh_config Lectern keeps its own master until it
   await transport.dispose();
   assert.match((await calls()).at(-1)!, /-O exit/, 'quitting closes the private master');
   }
+});
+
+test('using only its own connections, Lectern logs in to its own master even beside a running user master with ControlPersist', posix, async t => {
+  const { transport, state, calls } = await fixture(t, { FAKE_CONTROL_PATH: '/tmp/ssh-mux-%C', FAKE_CONTROL_PERSIST: '600' });
+  await writeFile(join(state, 'master-user'), '');
+  await transport.setReuseUserMasters(false);
+  const seen: string[] = [];
+  assert.equal(await transport.login(target, async prompt => { seen.push(prompt.kind); return prompt.kind === 'secret' ? 'pa ss"word' : '123456'; }), 'connected',
+    'the user\'s master does not count as an existing connection');
+  assert.deepEqual(seen, ['secret', 'text'], 'the same login dialog asks');
+  const all = await calls(), login = all.find(line => line.includes('BatchMode=no'))!;
+  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-[^ ]+\/%C lab$/,
+    'a private master; ControlPersist=yes overrides the 600 s from ssh_config');
+  assert.ok(!all.some(line => line.startsWith('-G ') || (line.includes('-O check') && !line.includes('ControlPath='))), 'ssh_config\'s master is not even looked for');
+  await transport.run(workspace, 'printf ok');
+  assert.match((await calls()).at(-1)!, /ControlMaster=auto -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-/, 'commands use it');
+  assert.equal(await transport.login(target, async () => { throw new Error('must not prompt'); }), 'existing');
+  await transport.dispose();
+  assert.match((await calls()).at(-1)!, /ControlPath=\/tmp\/lectern-ssh-.* -O exit lab$/, 'quitting closes only the private master');
 });
 
 test('a new host key needs an explicit yes; cancelling or a wrong code fails without a master', posix, async t => {

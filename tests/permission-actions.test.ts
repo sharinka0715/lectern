@@ -179,3 +179,47 @@ test('a transcript that changed after the card was read stops the answer as "not
   await assert.rejects(keyed(keyedNotice, { kind: 'choose', number: 1 }), TranscriptChangedNoKeys);
   assert.deepEqual(keyedNotice.attempts, ['Enter']);
 });
+
+// A dialog Lectern reads only by its common layout (Claude Code 2.1.330's MCP server approval;
+// its 2.1.330 billing notice reworded): the same verified keys, the same input grace.
+const mcp = readFileSync(new URL('./fixtures/native-dialog-2.1.330/mcp-server.txt', import.meta.url), 'utf8');
+const mcpOn = (n: number) => mcp.replace('  ❯ Continue without', '    Continue without').replace(['    Use this MCP server', '    Use this and all', '    Continue without'][n - 1], ['  ❯ Use this MCP server', '  ❯ Use this and all', '  ❯ Continue without'][n - 1]);
+const billing330 = readFileSync(new URL('./fixtures/auto-mode-billing-2.1.330/streamed.txt', import.meta.url), 'utf8');
+const billing330Done = readFileSync(new URL('./fixtures/auto-mode-billing-2.1.330/cancelled.txt', import.meta.url), 'utf8');
+const reworded = billing330.replace("We're changing auto mode to no longer charge for classifier requests in Claude Code.", 'Auto mode switched to its built-in safety check for this session');
+const generic = (d: ReturnType<typeof driver>, screen: string, action: PermissionAction) =>
+  performPermissionAction(d, '%3', 77, parsePermissionScreen(screen, { generic: true })!, action, () => {});
+
+test('a choice in a dialog read generically: verified arrows, then Enter, after its input grace', async () => {
+  assert.equal(parsePermissionScreen(mcp, { generic: true })?.kind, 'native-dialog');
+  const started = Date.now(), d = driver([mcp, mcp, mcpOn(2), mcpOn(2), mcpOn(1), mcpOn(1), billing330Done]);
+  await generic(d, mcp, { kind: 'choose', number: 1 });
+  assert.ok(Date.now() - started >= 1000);
+  assert.deepEqual(d.keys, ['Up', 'Up', 'Enter']);
+  const esc = driver([mcp, mcp, billing330Done]);
+  await generic(esc, mcp, { kind: 'cancel' });
+  assert.deepEqual(esc.keys, ['Escape']);
+});
+
+test('a keyed dialog read generically gets Enter or Esc only where its key hints offer them', async () => {
+  const enter = driver([reworded, reworded, billing330Done]);
+  await generic(enter, reworded, { kind: 'choose', number: 1 });
+  assert.deepEqual(enter.keys, ['Enter']);
+  const esc = driver([reworded, reworded, billing330Done]);
+  await generic(esc, reworded, { kind: 'cancel' });
+  assert.deepEqual(esc.keys, ['Escape']);
+  const noEsc = reworded.replace('Enter to continue · Esc to cancel', 'Enter to continue');
+  const refused = driver([noEsc]);
+  await assert.rejects(generic(refused, noEsc, { kind: 'cancel' }), /不接受这个选项/);
+  assert.deepEqual(refused.keys, []);
+});
+
+test('a dialog read generically that changed, or turned into another, gets no key', async () => {
+  const changed = driver([mcp.replace('demo-notes', 'other-server')]);
+  await assert.rejects(generic(changed, mcp, { kind: 'choose', number: 1 }), /已变化/);
+  const known = driver([billing330]);
+  await assert.rejects(generic(known, reworded, { kind: 'choose', number: 1 }), /已变化/, 'now the known billing card, not this one');
+  const moved = driver([mcp, mcpOn(2)]);
+  await assert.rejects(generic(moved, mcp, { kind: 'choose', number: 1 }), /已变化/, 'the focus moved during the input grace');
+  assert.deepEqual([...changed.keys, ...known.keys, ...moved.keys], []);
+});

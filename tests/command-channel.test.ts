@@ -139,7 +139,11 @@ test('the ready line is found after login-script output, and only our nonce coun
 test('a target that cannot start the loop falls back to one-off commands and backs off', posix, async () => {
   const transport = viaChannel();
   let attempts = 0;
-  (transport as any).stream = async () => { attempts++; return spawn('/bin/sh', ['-c', 'echo "sh: base64: not found" >&2; exit 1'], { stdio: ['pipe', 'pipe', 'pipe'] }); };
+  const spawnStream = (transport as any).spawnStream;
+  (transport as any).spawnStream = function (this: Transport, target: Workspace, _script: string, ...rest: unknown[]) {
+    attempts++;
+    return spawnStream.call(this, target, 'echo "sh: base64: not found" >&2; exit 1', ...rest);
+  };
   try {
     for (let i = 0; i < 5; i++) {
       assert.equal((await transport.run(workspace, 'printf %s "$PPID"')).stdout.toString(), String(process.pid));
@@ -173,8 +177,8 @@ test('idle channels are closed after the idle limit', posix, async () => {
     const loop = await warm(transport);
     await settle(500);
     (transport as any).closeIdleChannels();
-    const pools = [...(transport as any).pools.values()];
-    assert.equal(pools.reduce((n: number, pool: any) => n + pool.channels.size, 0), 0);
+    const hosts = [...(transport as any).hosts.values()];
+    assert.equal(hosts.reduce((n: number, host: any) => n + host.channels.size, 0), 0);
     assert.notEqual(await warm(transport), loop);
   } finally { await transport.dispose(); }
 });

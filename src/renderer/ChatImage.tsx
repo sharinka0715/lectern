@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, Download, Image as ImageIcon, X } from 'lucide-react';
+import { Copy, Download, Image as ImageIcon, ImageOff, X } from 'lucide-react';
 import { showContextMenu } from './ContextMenu';
 import type { ArtifactPreview, MessageAttachment } from '../shared/types';
 import { useArtifactResolution, useArtifactScope } from './ArtifactReferenceScope';
@@ -61,21 +61,93 @@ function imageUrl(preview: ArtifactPreview) {
   return URL.createObjectURL(new Blob([new Uint8Array(preview.data)], { type: preview.mime }));
 }
 
-export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline', title, preview }: {
+/** An error as the user should read it, without Electron's "Error invoking remote method" wrapper. */
+const readable = (error: unknown) => (error instanceof Error ? error.message : String(error))
+  .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+
+/** Copies the image shown (or, with none, the original read now) to the clipboard. */
+async function copyImage(shown: HTMLImageElement | null, readOriginal: () => Promise<ArtifactPreview>) {
+  const image = shown ?? new Image();
+  const temporary = shown ? undefined : imageUrl(await readOriginal());
+  try {
+    if (temporary) image.src = temporary;
+    await image.decode();
+    await copyPixels(image);
+  } finally { if (temporary) URL.revokeObjectURL(temporary); }
+}
+
+/**
+ * An image's original in a modal over the window: fitted to it (a click shows the
+ * actual size), with copy and download. Esc, the close button or a click beside the
+ * image closes it and focus goes back where it was. The thumbnail shows while the
+ * original loads; when it cannot be read or decoded the reason and "View file" show instead.
+ */
+export function ImagePreviewDialog({ name, thumbnail, readOriginal, download, onViewFile, onClose }: {
+  name: string; thumbnail?: string; readOriginal: () => Promise<ArtifactPreview>; download: () => Promise<unknown>;
+  onViewFile: () => void; onClose: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const fullImage = useRef<HTMLImageElement>(null);
+  const [original, setOriginal] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [actualSize, setActualSize] = useState(false);
+  useLayoutEffect(() => { if (dialog.current && !dialog.current.open) dialog.current.showModal(); }, []);
+  useEffect(() => {
+    let retired = false, url: string | undefined;
+    void readOriginal().then(preview => {
+      if (retired) return;
+      url = imageUrl(preview);
+      setOriginal(url);
+    }).catch(error => { if (!retired) setLoadError(readable(error)); });
+    return () => { retired = true; if (url) URL.revokeObjectURL(url); };
+  }, [readOriginal]);
+  async function act(action: ImageAction) {
+    setActionError('');
+    try {
+      if (action === 'download') await download();
+      else await copyImage(fullImage.current, readOriginal);
+    } catch (error) { setActionError(readable(error)); }
+  }
+  function contextMenu(event: MouseEvent) {
+    showContextMenu(event, [
+      { label: t('files.copyImage'), icon: <Copy size={14} />, onSelect: () => act('copy') },
+      { label: t('files.downloadImage'), icon: <Download size={14} />, onSelect: () => act('download') },
+    ], t('files.imageActions'));
+  }
+  return createPortal(<dialog className="chat-image-dialog" ref={dialog} aria-label={t('files.imagePreview', { name })}
+    onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}
+    onClose={onClose}>
+    <div className="chat-image-dialog-bar"><span>{name}</span>
+      <button type="button" className="icon-button" title={t('files.copyImage')} disabled={!original || !!loadError} onClick={() => void act('copy')}><Copy size={17} /></button>
+      <button type="button" className="icon-button" title={t('files.downloadImage')} onClick={() => void act('download')}><Download size={17} /></button>
+      <button type="button" className="icon-button" autoFocus aria-label={t('files.closeImage')} onClick={() => dialog.current?.close()}><X size={19} /></button>
+    </div>
+    <div className="chat-image-canvas" data-actual-size={actualSize}>
+      {loadError ? <span className="chat-image-status chat-image-failed" role="alert"><ImageOff size={40} aria-hidden="true" />
+        <span>{loadError} <button type="button" className="artifact-link" onClick={() => { dialog.current?.close(); onViewFile(); }}>{t('files.viewFile')}</button></span></span>
+        : original ? <button type="button" aria-label={t(actualSize ? 'files.fitWindow' : 'files.actualSize')} title={t(actualSize ? 'files.fitWindow' : 'files.actualSize')} onClick={() => setActualSize(!actualSize)} onContextMenu={contextMenu}>
+          <img ref={fullImage} src={original} alt={name} draggable={false} onError={() => setLoadError(t('files.decodeFailed'))} />
+        </button> : <span role="status" className="chat-image-status chat-image-loading">
+          {thumbnail && <img src={thumbnail} alt="" draggable={false} />}{t('files.loadingOriginal')}
+        </span>}
+    </div>
+    {actionError && <span role="alert" className="chat-image-error">{actionError}</span>}
+  </dialog>, document.body);
+}
+
+export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline', title, preview, mention }: {
   workspaceId: string; source: Source; name: string; onOpen: () => void;
   variant?: ImageVariant; title?: string;
   /** A thumbnail the caller already has (and owns), shown until this view reads its own. */
   preview?: string;
+  /** A chip's text: the @-mention it stands for, copied with the text around it (the name is drawn, not text). */
+  mention?: string;
 }) {
   const frame = useRef<HTMLSpanElement>(null);
-  const fullImage = useRef<HTMLImageElement>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
   const [thumbnail, setThumbnail] = useState('');
-  const [original, setOriginal] = useState('');
-  const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [expanded, setExpanded] = useState(false);
-  const [actualSize, setActualSize] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
   const path = source.path;
   const id = 'id' in source ? source.id : undefined;
@@ -85,6 +157,8 @@ export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline
   const readOriginal = useCallback(() => path !== undefined && explicit ? window.desktop.previewArtifact(workspaceId, path)
     : path !== undefined && id === undefined ? window.desktop.previewInlineImage(workspaceId, path)
     : window.desktop.previewMessageAttachment(workspaceId, sessionId!, id!), [workspaceId, path, sessionId, id, explicit]);
+  const download = useCallback(() => path === undefined && id !== undefined ? window.desktop.downloadMessageAttachment(workspaceId, sessionId!, id)
+    : window.desktop.downloadArtifact(workspaceId, path!), [workspaceId, path, sessionId, id]);
 
   useEffect(() => {
     let retired = false, url: string | undefined, cancel: (() => void) | undefined;
@@ -106,77 +180,41 @@ export function ImageView({ workspaceId, source, name, onOpen, variant = 'inline
     return () => { retired = true; cancel?.(); observer.disconnect(); if (url) URL.revokeObjectURL(url); };
   }, [workspaceId, path, sessionId, id]);
 
-  useLayoutEffect(() => { if (expanded) dialog.current?.showModal(); }, [expanded]);
-  useEffect(() => {
-    if (!expanded) return;
-    let retired = false, url: string | undefined;
-    void readOriginal().then(preview => {
-      if (retired) return;
-      url = imageUrl(preview);
-      setOriginal(url);
-    }).catch(error => { if (!retired) setLoadError(error instanceof Error ? error.message : String(error)); });
-    return () => { retired = true; if (url) URL.revokeObjectURL(url); };
-  }, [expanded, readOriginal]);
-
   function contextMenu(event: MouseEvent) {
     showContextMenu(event, [
       { label: t('files.copyImage'), icon: <Copy size={14} />, onSelect: () => act('copy') },
       { label: t('files.downloadImage'), icon: <Download size={14} />, onSelect: () => act('download') },
-      !expanded && { label: t('files.zoom'), icon: <ImageIcon size={14} />, onSelect: () => { setActualSize(false); setActionError(''); setExpanded(true); } },
+      !expanded && { label: t('files.zoom'), icon: <ImageIcon size={14} />, onSelect: () => { setActionError(''); setExpanded(true); } },
     ], t('files.imageActions'));
   }
   async function act(action: ImageAction) {
     setActionError('');
     try {
-      if (action === 'download') {
-        if ('id' in source && source.path === undefined) await window.desktop.downloadMessageAttachment(workspaceId, source.sessionId, source.id);
-        else await window.desktop.downloadArtifact(workspaceId, source.path!);
-        return;
-      }
-      const displayed = fullImage.current;
-      const image = displayed ?? new Image();
-      const temporary = displayed ? undefined : imageUrl(await readOriginal());
-      try {
-        if (temporary) image.src = temporary;
-        await image.decode();
-        await copyPixels(image);
-      } finally { if (temporary) URL.revokeObjectURL(temporary); }
+      if (action === 'download') await download();
+      else await copyImage(null, readOriginal);
     } catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
   }
   const errorNotice = actionError && <span role="alert" className="chat-image-error">{actionError}</span>;
   const shown = thumbnail || (!previewFailed && preview) || '';
-  const image = shown && <img alt={name} src={shown} draggable={false} onError={() => thumbnail ? setThumbnail('') : setPreviewFailed(true)} />;
+  // In a chip the picture is only its icon (the button names the file), and an alt text would be copied with the text.
+  const image = shown && <img alt={variant === 'chip' ? '' : name} src={shown} draggable={false} onError={() => thumbnail ? setThumbnail('') : setPreviewFailed(true)} />;
   const zoom = { 'aria-label': t('files.zoomName', { name }), title: title ?? name, onContextMenu: contextMenu,
-    onClick: () => { setActualSize(false); setActionError(''); setExpanded(true); } };
+    onClick: () => { setActionError(''); setExpanded(true); } };
   const frameProps = variant === 'card' ? { className: 'attachment-card attachment-card-image', 'data-attachment-card': 'image', 'data-thumbnail': shown ? 'image' : 'icon' }
-    : variant === 'chip' ? { className: 'attachment-chip-frame', 'data-attachment-chip': name, 'data-thumbnail': shown ? 'image' : 'icon' }
+    : variant === 'chip' ? { className: 'attachment-chip-frame', 'data-attachment-chip': name, 'data-thumbnail': shown ? 'image' : 'icon', 'data-mention': mention }
     : { className: 'chat-image', 'data-chat-image': name };
   return <span ref={frame} {...frameProps}>
     {variant === 'card' ? <button type="button" className="attachment-card-open" {...zoom}>
       {image || <span className="attachment-card-placeholder"><ImageIcon size={20} aria-hidden="true" /><span>{extensionLabel(name)}</span></span>}
     </button> : variant === 'chip' ? <button type="button" className="attachment-chip" {...zoom}>
-      <span className="attachment-chip-icon">{image || <ImageIcon size={13} aria-hidden="true" />}</span><span className="attachment-chip-name">{name}</span>
+      <span className="attachment-chip-icon">{image || <ImageIcon size={13} aria-hidden="true" />}</span>
+      {mention === undefined ? <span className="attachment-chip-name">{name}</span>
+        : <><span className="attachment-chip-name" data-label={name} /><span className="attachment-chip-source">{mention}</span></>}
     </button> : <button type="button" className="chat-image-open" {...zoom}>
       {image || <ImageIcon size={19} aria-hidden="true" />}
     </button>}
     {!expanded && errorNotice}
-    {expanded && createPortal(<dialog className="chat-image-dialog" ref={dialog} aria-label={t('files.imagePreview', { name })}
-      onClick={event => { if (event.target === event.currentTarget) dialog.current?.close(); }}
-      onClose={() => { setExpanded(false); setOriginal(''); setLoadError(''); }}>
-      <div className="chat-image-dialog-bar"><span>{name}</span>
-        <button type="button" className="icon-button" title={t('files.copyImage')} disabled={!original || !!loadError} onClick={() => void act('copy')}><Copy size={17} /></button>
-        <button type="button" className="icon-button" title={t('files.downloadImage')} onClick={() => void act('download')}><Download size={17} /></button>
-        <button type="button" className="icon-button" autoFocus aria-label={t('files.closeImage')} onClick={() => dialog.current?.close()}><X size={19} /></button>
-      </div>
-      <div className="chat-image-canvas" data-actual-size={actualSize}>
-        {loadError ? <span className="chat-image-status" role="alert">{loadError} <button type="button" className="artifact-link" onClick={() => { dialog.current?.close(); onOpen(); }}>{t('files.viewFile')}</button></span>
-          : original ? <button type="button" aria-label={t(actualSize ? 'files.fitWindow' : 'files.actualSize')} title={t(actualSize ? 'files.fitWindow' : 'files.actualSize')} onClick={() => setActualSize(!actualSize)} onContextMenu={contextMenu}>
-            <img ref={fullImage} src={original} alt={name} draggable={false} onError={() => setLoadError(t('files.decodeFailed'))} />
-          </button> : <span role="status" className="chat-image-status chat-image-loading">
-            {thumbnail && <img src={thumbnail} alt="" draggable={false} />}{t('files.loadingOriginal')}
-          </span>}
-      </div>
-      {errorNotice}
-    </dialog>, document.body)}
+    {expanded && <ImagePreviewDialog name={name} thumbnail={shown} readOriginal={readOriginal} download={download}
+      onViewFile={onOpen} onClose={() => setExpanded(false)} />}
   </span>;
 }

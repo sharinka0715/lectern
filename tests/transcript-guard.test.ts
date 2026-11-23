@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFile, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { decodeFileWindow, liveTranscriptScript, receiptOnFailure, transcriptVersionGuard } from '../src/backend/transcript-pages';
@@ -25,6 +25,28 @@ test('the rewind guard keeps its revision across appended auto mode notices only
     assert.equal(passes(), true, 'an informational notice was appended');
     await appendFile(file, notice.slice(0, 40));
     assert.equal(passes(), false, 'a partial line could be anything');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the rewind guard keeps its revision when only the modification time changed (2.1.330 /rewind)', { skip: process.platform === 'win32' }, async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-guard-')));
+  const file = join(root, 'session.jsonl');
+  try {
+    const prompt = line({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: 'Prompt 0' } });
+    await writeFile(file, prompt.repeat(20));
+    const window = decodeFileWindow(execFileSync('sh', ['-c', liveTranscriptScript([file], undefined, true)]));
+    const cursor = { inode: window.inode, offset: window.end, stamp: window.stamp, guard: window.guard };
+    const passes = (guarded = cursor) => { try { execFileSync('sh', ['-c', transcriptVersionGuard([file], guarded)], { stdio: 'pipe' }); return true; } catch { return false; } };
+    // Claude Code sets the time (utimes, no write) when /rewind first opens its menu.
+    const later = new Date(Date.now() + 5000);
+    await utimes(file, later, later);
+    assert.notEqual(decodeFileWindow(execFileSync('sh', ['-c', liveTranscriptScript([file], undefined, true)])).stamp, cursor.stamp);
+    assert.equal(passes(), true, 'touched, same bytes');
+    // Without a guard sample a new stamp is still a new revision.
+    assert.equal(passes({ ...cursor, guard: undefined }), false);
+    // The same size, rewritten right before the cursor.
+    await writeFile(file, prompt.repeat(19) + prompt.replace('Prompt 0', 'Prompt 9'));
+    assert.equal(passes(), false, 'rewritten in place');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

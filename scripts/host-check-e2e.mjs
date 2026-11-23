@@ -137,7 +137,7 @@ try {
   assert.equal(await local(page).locator('.machine-connection').count(), 0, 'the sidebar mark is gone');
   assert.equal(await resume.isDisabled(), false, 'resuming is allowed again');
   await page.locator('.new-chat-button').click();
-  await page.waitForFunction(() => !document.querySelector('textarea')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
   await composer(page).fill('不会发送');
   await outdated.getByRole('button', { name: '关闭提示' }).click();
   await outdated.waitFor({ state: 'detached' });

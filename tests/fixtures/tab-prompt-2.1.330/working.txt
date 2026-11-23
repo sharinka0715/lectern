@@ -1,0 +1,18 @@
+● The preview is running at http://127.0.0.1:8080/ and serves the latest code.
+
+✻ Sautéed for 1m 12s · done 3:57 PM
+
+❯ Add a row range from x to y, first 5 rows by default, and show name    size + date by default; I'll pick the other
+  columns myself
+
+● I'll read the current page first, then change it.
+
+  Read 1 file (ctrl+o to expand)
+
+· Meandering… (11s · ↓ 100 tokens)
+  ⎿  Tip: /loop runs a prompt on repeat, like checking a deploy or a PR
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────── preview work ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on · 1 shell · esc to interrupt · ↓ to manage

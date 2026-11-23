@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Backend } from '../src/backend';
@@ -14,7 +14,14 @@ import { nativeBranchFixture } from './helpers/native-branch-fixture';
 test('installed CLI: paged duplicate rewind, fork recovery and two independently writable panes', {
   skip: process.env.LECTERN_NATIVE_BRANCH_TEST !== '1', timeout: 120_000,
 }, async () => {
-  const {root,cwd,dir,env: fixture,ws,originalId,prompts,ids} = await nativeBranchFixture();
+  const {root,cwd,dir,config,env: fixture,ws,originalId,prompts,ids} = await nativeBranchFixture();
+  // User skills whose long CJK descriptions wrap in the slash completions offered for /fork
+  // and /rewind (2.1.330), beside the native command Lectern has to recognize there.
+  for (const [name,description] of [['fork-and-branch-guide','说明什么时候应该 fork 一个对话、什么时候应该新开对话，以及分支之后如何合并结论、如何避免重复劳动和上下文丢失。'],
+    ['review-reminder','读取最近一次代码评审的记录，简要告诉用户还有哪些评审意见没有处理、哪些讨论还没有结论，以及合并之前需要先确认的地方。用户说“评审提醒”时使用。']]) {
+    await mkdir(join(config,'skills',name),{recursive:true});
+    await writeFile(join(config,'skills',name,'SKILL.md'),`---\nname: ${name}\ndescription: ${description}\n---\n\nSay hello.\n`);
+  }
   const socket = 'lectern-branch-' + randomUUID().slice(0,8);
   const env = {...fixture, TMUX_TMPDIR: process.env.TMUX_TMPDIR};
   const tmux = (...args: string[]) => execFileSync('tmux',['-L',socket,'-f','/dev/null',...args],{env,encoding:'utf8'}).trim();
@@ -69,12 +76,15 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     assert.equal(backend.pendingFork(ws,originalId),undefined);
     const again=await backend.forkSession(ws,originalId,pane,pid);
     assert.equal(again.fork.id,pair.fork.id); assert.equal(again.original.paneId,pair.original.paneId); assert.equal(submissions,1);
-    for(const [s,name] of [[pair.original,'Source-only'],[pair.fork,'Branch-only']] as const) {
+    // The fork's name is too wide for the input box's upper border: cut there with an ellipsis.
+    const branchName = 'Branch-only ' + '分支回退测试'.repeat(12);
+    for(const [s,name] of [[pair.original,'源会话 Source-only'],[pair.fork,branchName]] as const) {
       await wait(async()=>{const r=await backend.readSession(ws,s.id,true);return r.nativeStatus==='idle' && !!turnComposer(r.viewport ?? '')?.empty;},'pane not ready');
       await backend.sendMessage(ws,s.id,'/rename '+name,s.paneId);
       await wait(async()=>(await readFile(join(dir,s.id+'.jsonl'),'utf8')).includes(`"customTitle":"${name}"`),'separate rename did not persist');
     }
     assert.ok(!(await readFile(join(dir,originalId+'.jsonl'),'utf8')).includes('Branch-only'));
+    assert.match(frame(pane), /^ Branch-only 分支回退测试\S*… ─\s*$/mu, 'the name is cut in the upper border, with no rule before it');
     await wait(async()=>(await readFile(join(dir,pair.fork.id+'.jsonl'),'utf8')).includes('This may indicate the session'), 'native rename metadata not flushed');
     const position = (await backend.readSession(ws,pair.fork.id,true)).transcriptPosition;
     await backend.turnAction(ws,pair.fork.id,pane,pid,{kind:'rewindTo',uuid:ids[1]}, {index:1,prompts}, undefined, position);

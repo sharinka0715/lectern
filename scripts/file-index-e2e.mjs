@@ -117,7 +117,7 @@ try {
 
   // A new chat in the big folder: its working directory is indexed in the background.
   await page.getByRole('button', { name: '在 大仓库 新建对话', exact: true }).click();
-  await page.waitForFunction(selector => !document.querySelector(selector)?.disabled, composer);
+  await page.waitForFunction(selector => !document.querySelector(selector)?.matches(':disabled, [aria-disabled="true"]'), composer);
   const opened = Date.now();
   if (!measureOnly) {
     const [root] = await until(async () => { const found = await scans('big'); return found.length && found; }, 'the new chat indexes its working directory');

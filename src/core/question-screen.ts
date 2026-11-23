@@ -1,6 +1,7 @@
 import type { NativeQuestionOption, NativeQuestionScreen } from '../shared/native-question';
 import { inTranscriptExample } from './dialog-boundary';
 import { stripTerminalEscapes, terminalCells } from './screen';
+import { namedEditorBorder } from './editor-border';
 
 const ruler = /^─{8,}$/u;
 // Claude Code wraps by terminal cells. A break between two wide (CJK) characters
@@ -12,8 +13,9 @@ const glued = (a = '', b = '') => wide(a) && wide(b) || cjkPunctuation.test(a) |
 function joinWrapped(parts: string[]) {
   return parts.reduce((text, part) => !text ? part : text + (glued(Array.from(text).at(-1), Array.from(part)[0]) ? '' : ' ') + part, '');
 }
-// A named session (2.1.329) closes the dialog with its name in a rule below the footer.
-const namedRule = /^─{3,} \S(?:.*\S)? ─+$/u;
+// A named session (2.1.329) closes the dialog with its name in a rule below the footer,
+// the input box's upper border: any width of name (editor-border.ts).
+const namedRule = namedEditorBorder;
 const numberRow = /^(❯ |  )([1-9]\d*)\. (.+)$/u;
 const footerPattern = /^Enter to select · (?:↑\/↓ to navigate|Tab\/Arrow keys to navigate)(?: · n to add notes)?(?: · Tab to switch questions)?(?: · ctrl\+g to edit in [^·]+)? · Esc to cancel$/u;
 const trimBlank = (lines: string[]) => {
@@ -135,7 +137,10 @@ function previewRows(lines:string[],chat:string,footer:string): Pick<NativeQuest
 /** Only recognize a complete native chooser at the bottom of a *current* viewport.
  * A text-only parse rejects a chooser copied into assistant output. To recognize a
  * genuine chooser after an assistant preamble, the caller must independently verify
- * a pending AskUserQuestion tool_use on the active branch and a waiting native pane.
+ * that Claude Code waits for it: a pending AskUserQuestion tool_use on the active branch
+ * and a waiting native pane, or, before the transcript has that call, the native record
+ * waiting for "input needed" (main/session-question.ts earlyQuestion). A chooser in a
+ * code block is never one.
  */
 export function parseQuestionScreen(viewport:string, evidence?:{pendingToolUse:true}): NativeQuestionScreen | undefined {
   let lines = trimBlank(stripTerminalEscapes(viewport).replace(/ /g,' ').split('\n').map(line=>line.trimEnd()));

@@ -182,6 +182,44 @@ test('a canonical user record arriving before send returns does not create an op
   } finally { releaseSend(); await cleanup(); }
 });
 
+test('a tabbed send is its saved record (tab as four spaces), before or after send returns', { timeout: 5000 }, async () => {
+  let records: unknown[] = [];
+  let releaseSend: () => void = () => {};
+  let observedCanonical: () => void = () => {};
+  let early = true;
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = readResult(id, records);
+    records = [];
+    return result;
+  }, async text => {
+    // Claude Code's paste handler saves each tab as four spaces.
+    const saved = { type: 'user', uuid: `user-${text.length}`, sessionId: 'chat', origin: { kind: 'human' }, promptSource: 'typed', message: { content: text.replace(/\t/g, '    ') } };
+    if (early) {
+      records = [saved];
+      await new Promise<void>(resolve => { releaseSend = resolve; });
+    } else setTimeout(() => { records = [saved]; }, 0);
+  });
+  let snapshot: SessionSnapshot | undefined;
+  controller.on('snapshot', (next: SessionSnapshot) => {
+    snapshot = next;
+    if (next.messages.some(message => message.role === 'user' && message.source === 'jsonl')) observedCanonical();
+  });
+  try {
+    await controller.watchSession('test', 'chat');
+    const observed = new Promise<void>(resolve => { observedCanonical = resolve; });
+    const sending = controller.sendMessage('test', 'chat', 'show name\tsize');
+    await observed;
+    releaseSend();
+    await sending;
+    assert.deepEqual(snapshot!.messages.filter(m => m.role === 'user').map(m => [m.text, m.source]), [['show name    size', 'jsonl']]);
+    early = false;
+    await controller.sendMessage('test', 'chat', 'then\tdate');
+    for (let i = 0; i < 50 && snapshot!.messages.some(m => m.source === 'pending'); i++) await pause(20);
+    assert.deepEqual(snapshot!.messages.filter(m => m.role === 'user').map(m => [m.text, m.source]),
+      [['show name    size', 'jsonl'], ['then    date', 'jsonl']]);
+  } finally { releaseSend(); await cleanup(); }
+});
+
 test('failed transport does not manufacture a user bubble or retry the send', async () => {
   let attempts = 0;
   const { controller, cleanup } = await fakeController(async id => readResult(id), async () => {
@@ -807,4 +845,176 @@ test('a tool permission dialog becomes a card only for the pending call, and eac
     await pollNow(controller);
     assert.equal(snapshots.at(-1)!.permission, undefined);
   } finally { await cleanup(); }
+});
+
+test('the billing notice behind a gateway, and a native dialog Lectern does not know, are cards before the transcript has the call', async () => {
+  // Claude Code 2.1.329–2.1.330 write a streamed reply's call only after its dialog is answered: a user
+  // behind a gateway saw the billing notice as a "dialog open" banner and had to take over the terminal.
+  const { readFileSync } = await import('node:fs');
+  const notice = readFileSync(new URL('./fixtures/auto-mode-billing-2.1.330/streamed.txt', import.meta.url), 'utf8');
+  const mcp = readFileSync(new URL('./fixtures/native-dialog-2.1.330/mcp-server.txt', import.meta.url), 'utf8');
+  const prompt = { type: 'user', uuid: 'u1', parentUuid: null, sessionId: 'chat', message: { role: 'user', content: 'Run the probe' } };
+  const call = { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 'chat', message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'toolu_probe', name: 'Bash', input: { command: "seq -w 1 3 | sed 's/$/ ccm-unchecked/' | tee unchecked-0.txt" } }] } };
+  let records: unknown[] = [prompt], screen = notice, nativeStatus: 'waiting' | 'busy' | undefined = 'waiting', waitingFor: string | undefined = 'dialog open', offset = 300;
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = { ...readResult(id, records), screen, viewport: screen, panePid: 77, nativeStatus, nativeWaitingFor: waitingFor, transcriptPosition: { inode: '42', offset },
+      session: { ...readResult(id).session, status: 'waiting' as const } };
+    records = [];
+    return result;
+  });
+  const answered: unknown[][] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => { answered.push(args); };
+  const snapshots: SessionSnapshot[] = []; controller.on('snapshot', value => snapshots.push(value));
+  try {
+    await controller.watchSession('test', 'chat');
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.equal(card.kind, 'auto-mode-billing');
+    assert.equal(card.toolUseId, undefined, 'no call known yet');
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission!.token, card.token, 'the same dialog keeps its token');
+    // Should the call be written while the notice is up, the same card takes it (token and identity kept).
+    records = [call]; offset = 900;
+    await pollNow(controller);
+    const adopted = snapshots.at(-1)!.permission!;
+    assert.deepEqual([adopted.token, adopted.cardId, adopted.toolUseId], [card.token, card.cardId, 'toolu_probe']);
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'cancel' });
+    assert.deepEqual(answered[0][5], { kind: 'cancel' });
+    assert.deepEqual(answered[0][7], { inode: '42', offset: 900 }, 'bound to the transcript as read');
+    // A dialog Lectern does not know becomes the generic card while Claude Code waits, whatever for.
+    records = [{ type: 'user', uuid: 'r1', parentUuid: 'a1', sessionId: 'chat', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_probe', content: 'refused', is_error: true }] } }];
+    screen = mcp;
+    for (const what of ['dialog open', 'sandbox request', undefined]) {
+      waitingFor = what;
+      await pollNow(controller);
+      const generic = snapshots.at(-1)!.permission!;
+      assert.equal(generic?.kind, 'native-dialog', String(what));
+      assert.equal(generic.title, 'New MCP server found in this project: demo-notes');
+      assert.equal(generic.escape, 'cancel');
+      assert.equal(generic.toolUseId, undefined);
+    }
+    nativeStatus = undefined;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined, 'without the status record the text proves nothing');
+    // Nor the billing notice's text without a call or Claude Code's "waiting".
+    screen = notice;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined);
+  } finally { await cleanup(); }
+});
+
+/** The Bash dialog on screen while the transcript has only `records` so far (more via `next`). */
+async function earlyDialog(native: { status?: 'waiting' | 'idle' | 'busy'; waitingFor?: string } = { status: 'waiting', waitingFor: 'permission prompt' }) {
+  const { readFileSync } = await import('node:fs');
+  const dialog = readFileSync(new URL('./fixtures/permission-2.1.328/bash.txt', import.meta.url), 'utf8');
+  const state = { records: [{ type: 'user', uuid: 'u1', parentUuid: null, sessionId: 'chat', message: { role: 'user', content: 'run the bash step' } }] as unknown[],
+    screen: dialog, offset: 400, native };
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = { ...readResult(id, state.records), screen: state.screen, viewport: state.screen, panePid: 77,
+      nativeStatus: state.native.status, nativeWaitingFor: state.native.waitingFor, transcriptPosition: { inode: '42', offset: state.offset },
+      session: { ...readResult(id).session, status: 'waiting' as const } };
+    state.records = [];
+    return result;
+  });
+  const answered: unknown[][] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => { answered.push(args); };
+  const snapshots: SessionSnapshot[] = []; controller.on('snapshot', value => snapshots.push(value));
+  const call = { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 'chat', message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'echo hello > greeting.txt && ls' } }] } };
+  const result = { type: 'user', uuid: 'r1', parentUuid: 'a1', sessionId: 'chat', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bash', content: 'ok' }] } };
+  await controller.watchSession('test', 'chat');
+  return { controller, cleanup, state, answered, snapshots, call, result, dialog };
+}
+
+test('a permission dialog on screen before its call is in the transcript is a card; the call then takes it over', async () => {
+  const { controller, cleanup, state, answered, snapshots, call, result, dialog } = await earlyDialog();
+  try {
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.ok(card, 'Claude Code waits for a permission prompt: the dialog is a card without its call');
+    assert.equal(card.toolUseId, undefined);
+    assert.equal(card.title, 'Bash command');
+    assert.deepEqual(card.content, ['echo hello > greeting.txt && ls']);
+    assert.deepEqual(card.options.map(option => option.label.split(',')[0]), ['Yes', 'Yes', 'No']);
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission!.token, card.token, 'the same dialog keeps its token');
+    // The transcript catches up: the same card (token and identity) now names its call, once.
+    state.records = [call]; state.offset = 1300;
+    await pollNow(controller);
+    const adopted = snapshots.at(-1)!.permission!;
+    assert.deepEqual([adopted.token, adopted.cardId, adopted.toolUseId], [card.token, card.cardId, 'toolu_bash']);
+    assert.equal(snapshots.at(-1)!.messages.filter(message => message.tools.some(tool => tool.id === 'toolu_bash')).length, 1);
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 1 });
+    assert.deepEqual(answered.map(args => [args[5], args[7]]), [[{ kind: 'choose', number: 1 }, { inode: '42', offset: 1300 }]], 'answered at the newer record');
+    // Answered: the result arrives while a late frame still shows the dialog. Not a question again.
+    state.records = [result]; state.offset = 1500;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined);
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined, 'still the dialog that had its call');
+    // Once the dialog has gone, a new one may again come before its call.
+    state.screen = '──────────\n❯ \n──────────';
+    await pollNow(controller);
+    state.screen = dialog;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission?.toolUseId, undefined);
+    assert.ok(snapshots.at(-1)!.permission, 'the next dialog before its call');
+  } finally { await cleanup(); }
+});
+
+test('a card read off the screen alone answers like any other, bound to the transcript as read', async () => {
+  const { controller, cleanup, answered, snapshots } = await earlyDialog();
+  try {
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 3 });
+    assert.equal(answered.length, 1);
+    assert.equal((answered[0][4] as { title: string }).title, 'Bash command', 'the driver checks the live screen against this dialog');
+    assert.deepEqual(answered[0][7], { inode: '42', offset: 400 }, 'and refuses if the transcript moved meanwhile');
+    await assert.rejects(controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'cancel' }), /已更新/, 'a token answers once');
+  } finally { await cleanup(); }
+});
+
+test('a card read off the screen alone, clicked while Claude Code writes its call, takes the call and sends the same answer once more', async () => {
+  const { TranscriptChangedNoKeys } = await import('../src/backend/native-settings');
+  const { controller, cleanup, state, snapshots, call, result } = await earlyDialog();
+  const positions: unknown[] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => {
+    positions.push([args[5], args[7]]);
+    if (positions.length === 1) { state.records = [call]; state.offset = 1300; throw new TranscriptChangedNoKeys(); }
+  };
+  try {
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.equal(card.toolUseId, undefined);
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 1 });
+    assert.deepEqual(positions, [[{ kind: 'choose', number: 1 }, { inode: '42', offset: 400 }], [{ kind: 'choose', number: 1 }, { inode: '42', offset: 1300 }]]);
+    // The call has its result while a late frame still shows the dialog: it was owned, so no card.
+    state.records = [result]; state.offset = 1500;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined);
+    // Refused on each try: sent again once, then reported (nothing was sent).
+    state.screen = '──────────\n❯ \n──────────';
+    await pollNow(controller);
+    state.screen = (await import('node:fs')).readFileSync(new URL('./fixtures/permission-2.1.328/bash.txt', import.meta.url), 'utf8');
+    await pollNow(controller);
+    const next = snapshots.at(-1)!.permission!;
+    let refused = 0;
+    (controller.backend as any).answerPermission = async () => { refused++; throw new TranscriptChangedNoKeys(); };
+    await assert.rejects(controller.answerPermission('test', 'chat', '%1', 77, next.token, { kind: 'cancel' }), TranscriptChangedNoKeys);
+    assert.equal(refused, 2);
+    assert.equal(snapshots.at(-1)!.permission?.token, next.token, 'the card stands for another try');
+  } finally { await cleanup(); }
+});
+
+test('without Claude Code waiting for a permission prompt, a dialog-like screen with no pending call is no card', async () => {
+  for (const native of [{}, { status: 'idle' as const }, { status: 'busy' as const }, { status: 'waiting' as const },
+    { status: 'waiting' as const, waitingFor: 'dialog open' }, { status: 'waiting' as const, waitingFor: 'input needed' }]) {
+    const { controller, cleanup, snapshots } = await earlyDialog(native);
+    try {
+      await pollNow(controller);
+      assert.equal(snapshots.at(-1)!.permission, undefined, JSON.stringify(native));
+    } finally { await cleanup(); }
+  }
 });

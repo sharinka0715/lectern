@@ -155,13 +155,13 @@ try {
   report.readingEarlier = await observeRefreshes(2, true);
 
   await row(liveId).click();
-  await page.waitForFunction(() => document.querySelector('textarea')?.disabled === false);
+  await page.waitForFunction(() => document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') === false);
   await resume.waitFor({ state: "hidden" });
   report.live = await observeRefreshes(1, false);
   await row(archiveId).click();
   await resume.click();
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.sessionLive === "true" &&
-    document.querySelector('textarea')?.disabled === false);
+    document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') === false);
   await resume.waitFor({ state: "hidden" });
   // Closing while reading earlier messages, on a slow machine: the transcript stays
   // mounted, never empty, and in place (only the input area changes below it).

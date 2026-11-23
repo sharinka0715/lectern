@@ -15,6 +15,10 @@
 //   client gives up) or { refuseMs } (the server stops listening for that long).
 // - Server-side checks are never run: an endpoint other than *.anthropic.com is a
 //   gateway to Claude Code, and this one does not pass auto mode's server check through.
+//   `refuseBeta(pattern)` also makes it refuse requests that carry a matching beta
+//   (HTTP 400, the API's wording for an unknown beta), like a gateway in front of a
+//   deployment that does not know it: Claude Code 2.1.330 sends the request again
+//   without auto mode's dangerous-tool-use beta.
 // - count_tokens, model listing and anything else the CLI asks for at startup are
 //   answered sanely and logged; unknown endpoints are recorded in `unknown`.
 // - The server is also the CLI's HTTP(S) proxy (HTTPS_PROXY): any attempt to reach
@@ -71,7 +75,7 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
   const scripts = new Map(), gates = new Map();
   const requests = [], unknown = [], external = [];
   const sockets = new Set();
-  let sequence = 0;
+  let sequence = 0, refusedBeta;
   const log = entry => { if (logFile) try { appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'); } catch {} };
   const gate = name => {
     if (!gates.has(name)) { let release; const promise = new Promise(resolve => { release = resolve; }); gates.set(name, { promise, release, waiting: 0 }); }
@@ -95,11 +99,17 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     const found = kind === 'main' || kind === 'agent' ? locate(messages) : undefined;
     const script = found && scripts.get(found.name);
     const entry = { id: ++sequence, kind, model: body.model, stream: !!body.stream, script: found?.name, step: found?.step, tools: (body.tools ?? []).map(tool => tool.name), maxTokens: body.max_tokens, thinking: body.thinking?.type, effort: body.output_config?.effort, beta: req.headers['anthropic-beta'],
-      images: imagesSinceReply(messages), at: Date.now() };
+      images: imagesSinceReply(messages), cacheTtl: cacheTtls(body), at: Date.now() };
     requests.push(entry);
     // CC_MATRIX_DUMP=<dir> keeps every request body, for writing new scenarios.
     if (process.env.CC_MATRIX_DUMP) try { appendFileSync(`${process.env.CC_MATRIX_DUMP}/request-${String(entry.id).padStart(4, '0')}-${kind}.json`, JSON.stringify(body, null, 1)); } catch {}
     log({ request: entry, system: systemOf(body).slice(0, 600), toolNames: (body.tools ?? []).map(tool => tool.name), lastUser: textOf([...messages].reverse().find(message => message.role === 'user')?.content).slice(-600) });
+    const refused = refusedBeta && String(entry.beta ?? '').split(',').map(beta => beta.trim()).find(beta => refusedBeta.test(beta));
+    if (refused) {
+      entry.failed = 400;
+      entry.refusedBeta = refused;
+      return json(res, { type: 'error', error: { type: 'invalid_request_error', message: `Unexpected value(s) \`${refused}\` for the \`anthropic-beta\` header. Please consult our documentation at docs.anthropic.com or try again without the header.` } }, 400);
+    }
     let plan;
     if (script) plan = await script({ step: found.step, body, messages, kind, last: messages.at(-1), toolResults: toolResults(messages) });
     // A test can hold or replace the compaction answer with the '@compact' script.
@@ -231,6 +241,8 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     url, requests, unknown, external,
     /** Register a script: (ctx) => response | Promise<response>. */
     script(name, fn) { scripts.set(name, fn); return name; },
+    /** Refuse /v1/messages requests carrying a beta that matches (undefined: none). */
+    refuseBeta(pattern) { refusedBeta = pattern; },
     release(name) { gate(name).release(); },
     waiting(name) { return gates.get(name)?.waiting ?? 0; },
     reset() { requests.length = 0; },
@@ -241,6 +253,20 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
       await new Promise(resolve => server.close(resolve));
     },
   };
+}
+
+/** The prompt-cache lifetimes a request asks for: the distinct `ttl` of its `cache_control`
+ * markers (system, tools, messages), sorted; a marker without one is the API's default '5m'. */
+export function cacheTtls(body) {
+  const found = new Set();
+  const visit = value => {
+    if (Array.isArray(value)) { for (const item of value) visit(item); return; }
+    if (!value || typeof value !== 'object') return;
+    if (value.cache_control && typeof value.cache_control === 'object') found.add(value.cache_control.ttl ?? '5m');
+    for (const [key, item] of Object.entries(value)) if (key !== 'cache_control' && item && typeof item === 'object') visit(item);
+  };
+  visit([body.system, body.tools, body.messages]);
+  return [...found].sort();
 }
 
 /** Images sent since the last assistant message (attached files arrive in their own user message). */

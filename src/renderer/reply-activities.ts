@@ -11,7 +11,8 @@ export type ToolActivity = {
   file?: string; subject?: string; changes?: LineChanges;
 };
 export type Activity = ToolActivity | { kind: 'peer'; key: string; peer: PeerMessage; category: 'received' };
-export type ReplyPart = { kind: 'text'; key: string; text: string } |
+/** `cwd`: the directory Claude Code was in when it wrote the text. */
+export type ReplyPart = { kind: 'text'; key: string; text: string; cwd?: string } |
   { kind: 'image'; key: string; attachment: MessageAttachment } |
   { kind: 'activities'; key: string; offset: number | null; rows: Activity[] };
 
@@ -103,13 +104,19 @@ export function toolActivity(tool: ToolBlock): ToolActivity {
 }
 
 /** Interleave using both recorded cursors: a delivery may sit between calls at the very same text offset. */
-export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'attachments'>, compact: boolean): ReplyPart[] {
+export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'attachments' | 'cwds'>, compact: boolean): ReplyPart[] {
   const parts: ReplyPart[] = [];
+  const cwds = message.cwds ?? [];
   let cursor = 0, nextTool = 0, textKey = 'start';
   function textUntil(end: number) {
-    if (end <= cursor) return;
-    parts.push({ kind: 'text', key: textKey, text: message.text.slice(cursor, end) });
-    cursor = end;
+    // Text written in another directory (after a `cd`, usually past a tool call) is a part of its own.
+    for (let key = textKey; cursor < end; key = `cwd:${cursor}`) {
+      const next = Math.min(end, cwds.find(item => item.textOffset > cursor)?.textOffset ?? end);
+      let cwd: string | undefined;
+      for (const item of cwds) if (item.textOffset <= cursor) cwd = item.cwd;
+      parts.push({ kind: 'text', key, text: message.text.slice(cursor, next), ...(cwd && { cwd }) });
+      cursor = next;
+    }
   }
   function add(row: Activity, offset: number | null | undefined, fallback: number) {
     // Unknown historical positions must not imply adjacency. Orphan results

@@ -35,7 +35,7 @@ export class HandoffReader {
       const tools = row.tools ?? row.results?.map(result => ({ ...result, name: t('main.toolResult'), input: '' })) ?? [];
       if (!row.text && !tools.length && !row.attachments?.length && !row.peers?.length) continue;
       messages.push({ id: `${this.scope}record:${row.key}`, role: ['user', 'command'].includes(row.kind) ? 'user' : 'assistant',
-        source: 'jsonl', status: 'complete', timestamp: row.timestamp, text: row.text ?? '', tools,
+        source: 'jsonl', status: 'complete', timestamp: row.timestamp, text: row.text ?? '', tools, ...(row.kind === 'assistant' && row.cwd && { cwds: [{ textOffset: 0, cwd: row.cwd }] }),
         attachments: row.attachments?.map(item => this.scopedAttachment(item)),
         peerMessages: row.peers?.map(peer => ({ ...peer, textOffset: 0, toolsBefore: 0 })) });
     }

@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { workspaceMachines, type WorkspaceMachine } from "./workspace-machines";
 import { Laptop, FolderPlus, LogIn } from "lucide-react";
 import "./machine-tree.css";
-import { archiveKey, beginChatDrag, endChatDrag, moveProject, orderProjects, setDesktop, useDesktopState, workspaceDragType, type SidebarSortMode } from "./desktop-state";
+import { archiveKey, beginChatDrag, endChatDrag, moveProject, orderProjects, setDesktop, useDesktopState, workspaceDragType, type ChatTarget, type SidebarSortMode } from "./desktop-state";
 import {
   ArrowDownWideNarrow,
   Check,
@@ -99,12 +99,14 @@ function repeatedTitles(sessions: readonly SessionInfo[]) {
   return duplicates;
 }
 
-function SessionRow({ workspace, session, state, duplicate, selected, origin, onSelect, onRename, menuActions }: {
+function SessionRow({ workspace, session, state, duplicate, selected, splitOpen, origin, onSelect, onRename, menuActions }: {
   workspace: Workspace;
   session: SessionInfo;
   state: SidebarSessionState;
   duplicate: boolean;
   selected: boolean;
+  /** The split pane without the focus shows it: pale blue, apart from the focused pane's. */
+  splitOpen?: boolean;
   origin?: string;
   onSelect(workspace: Workspace, id: string): void;
   onRename(target: { workspaceId: string; session: SessionInfo }): void;
@@ -117,10 +119,12 @@ function SessionRow({ workspace, session, state, duplicate, selected, origin, on
   const titleText = `${session.titleSource === "prompt" ? t('sidebar.firstMessage') : ""}${title}`;
   const branch = session.forkParentId && t('sidebar.branchFrom', { id: session.forkParentId });
   const waitingFirstRecord = session.paneId && !session.path && t('sidebar.waitingFirstRecord');
+  const inOtherPane = !selected && !!splitOpen;
+  const splitNote = inOtherPane && t('sidebar.splitOpen');
   return (
     <div className="session-row-wrap">
       <button
-        className={`session-row${selected ? " active" : ""}`}
+        className={`session-row${selected ? " active" : ""}${inOtherPane ? " split-open" : ""}`}
         draggable
         onDragStart={event => beginChatDrag(event.dataTransfer, { workspaceId: workspace.id, sessionId: session.id, title })}
         onDragEnd={endChatDrag}
@@ -138,9 +142,9 @@ function SessionRow({ workspace, session, state, duplicate, selected, origin, on
           }
         }}
         aria-current={selected ? "page" : undefined}
-        aria-label={[title, identity, origin, state.label, state.loading && t('sidebar.loading')].filter(Boolean).join(t('sidebar.ariaJoin'))}
+        aria-label={[title, identity, origin, state.label, state.loading && t('sidebar.loading'), splitNote].filter(Boolean).join(t('sidebar.ariaJoin'))}
         aria-busy={state.loading || undefined}
-        title={[titleText, origin, session.id, branch, state.detail, waitingFirstRecord].filter(Boolean).join("\n")}
+        title={[titleText, origin, splitNote, session.id, branch, state.detail, waitingFirstRecord].filter(Boolean).join("\n")}
         data-workspace-id={workspace.id}
         data-session-id={session.id}
         data-session-live={state.live}
@@ -149,6 +153,7 @@ function SessionRow({ workspace, session, state, duplicate, selected, origin, on
         data-session-state={state.kind}
         data-background={state.background || undefined}
         data-loading={state.loading || undefined}
+        data-split-open={inOtherPane || undefined}
       >
         {origin ? <span className="session-name-and-origin">
           <span className="session-title">{title}</span>
@@ -194,6 +199,7 @@ export function SidebarTree({
   onOpenMachine,
   onOpenDraft,
   draftWorkspaceId,
+  splitOpen,
   onScanHistory,
   menuActions,
   filter = "",
@@ -223,6 +229,9 @@ export function SidebarTree({
   onOpenDraft?(workspace: Workspace): void;
   /** The folder whose new chat the active split shows. */
   draftWorkspaceId?: string;
+  /** What the split pane without the focus shows (desktop-state's `unfocusedChat`):
+   * its row is marked pale blue, apart from the focused pane's. */
+  splitOpen?: ChatTarget | null;
   onScanHistory?(workspace: Workspace): void;
   /** Right-click menus for machines, folders and conversations. */
   menuActions?: SidebarMenuActions;
@@ -254,6 +263,9 @@ export function SidebarTree({
   const query = filter.trim().toLocaleLowerCase();
   const matches = (...values: (string | undefined)[]) => values.some(v => v?.toLocaleLowerCase().includes(query));
   const isSelected = (workspace: Workspace, session: SessionInfo) => workspace.id === workspaceId && session.id === sessionId;
+  // The other split pane's conversation; a draft there has no row of its own.
+  const isSplitOpen = (workspace: Workspace, session: SessionInfo) => !!splitOpen && !splitOpen.draft
+    && workspace.id === splitOpen.workspaceId && session.id === splitOpen.sessionId;
   const visibleSnapshots = [snapshot, otherSnapshot];
   const displayState = (workspace: Workspace, session: SessionInfo) => {
     const entry = states[workspace.id];
@@ -282,9 +294,11 @@ export function SidebarTree({
       state: displayState(workspace, session),
       duplicate: duplicates.has(session.title),
       selected: isSelected(workspace, session),
+      splitOpen: isSplitOpen(workspace, session),
     }));
   })).sort(priority ? compareActiveSidebarSessions : (a, b) => compareSidebarSessions(a.session, b.session)) : [];
-  const globalPage = globalRows.filter((row, index) => index < globalLimit || row.selected);
+  // The other split pane's conversation stays listed, like the focused one.
+  const globalPage = globalRows.filter((row, index) => index < globalLimit || row.selected || row.splitOpen);
   const globalHidden = globalRows.length - globalPage.length;
   const hasProgress = priority && !!globalPage[0] && isActiveSidebarSession(globalPage[0].state);
   const firstOther = hasProgress ? globalPage.findIndex(row => !isActiveSidebarSession(row.state)) : -1;
@@ -319,7 +333,15 @@ export function SidebarTree({
         const matching = allSessions.filter(chat=>!query || folderMatches || chat.title?.toLocaleLowerCase().includes(query))
           .sort(compareSidebarSessions);
         const limit = shown[workspace.id] ?? initialSessions;
-        const sessions = query ? matching : matching.filter((chat, index) => index < limit || isSelected(workspace, chat));
+        // The other split pane's conversation stays listed, like the focused one.
+        const splitHere = splitOpen?.workspaceId === workspace.id ? splitOpen : undefined;
+        const sessions = query ? matching : matching.filter((chat, index) => index < limit
+          || isSelected(workspace, chat) || isSplitOpen(workspace, chat));
+        // A draft there has no row of its own: its folder is marked like a row. A conversation
+        // whose row is not on show (folder collapsed, filtered out, not read yet) marks it faintly.
+        const splitMark = splitHere?.draft ? "draft"
+          : splitHere && !(open && sessions.some(chat => isSplitOpen(workspace, chat))) ? "inside" : undefined;
+        const splitNote = splitMark && t(splitMark === "draft" ? 'sidebar.splitOpenDraft' : 'sidebar.splitOpenInFolder');
         const hidden = matching.length - sessions.length;
         const collapsible = open && !query && limit > initialSessions;
         const collapseSessions = () => setShown(current => {
@@ -337,6 +359,7 @@ export function SidebarTree({
               className={`workspace-row${workspaceId === workspace.id ? " active" : ""}`}
               data-workspace-id={workspace.id}
               data-status={folderStatus}
+              data-split-open={splitMark}
               draggable
               data-drag-over={over === workspace.id || undefined}
               onDragStart={e=>{e.dataTransfer.setData(workspaceDragType,workspace.id);e.dataTransfer.effectAllowed="move";}}
@@ -365,7 +388,7 @@ export function SidebarTree({
                 className="workspace-select"
                 aria-label={workspace.name}
                 aria-current={draftWorkspaceId === workspace.id ? "page" : undefined}
-                aria-description={folderDetail}
+                aria-description={[folderDetail, splitNote].filter(Boolean).join(t('sidebar.ariaJoin')) || undefined}
                 onClick={() => onOpenDraft ? onOpenDraft(workspace) : onToggle(workspace)}
                 onKeyDown={(event) => {
                   if (
@@ -376,7 +399,7 @@ export function SidebarTree({
                     onToggle(workspace);
                   }
                 }}
-                title={`${workspace.name}\n${workspace.kind === "ssh" ? `${workspace.host}:` : ""}${workspace.cwd}${onOpenDraft ? "\n" + t('sidebar.clickToStart') : ""}`}
+                title={`${workspace.name}\n${workspace.kind === "ssh" ? `${workspace.host}:` : ""}${workspace.cwd}${splitNote ? "\n" + splitNote : ""}${onOpenDraft ? "\n" + t('sidebar.clickToStart') : ""}`}
               >
                 <Folder className="workspace-folder-icon" size={14} />
                 <span className="workspace-name">{workspace.name}</span>
@@ -421,6 +444,7 @@ export function SidebarTree({
                 {sessions.map(session => <SessionRow key={session.id}
                   workspace={workspace} session={session} state={displayStates.get(session.id)!}
                   duplicate={duplicateTitles.has(session.title)} selected={isSelected(workspace, session)}
+                  splitOpen={isSplitOpen(workspace, session)}
                   onSelect={onSelect} onRename={setRename} menuActions={menuActions} />)}
                 {(hidden > 0 || collapsible) && <div className="tree-more-row">
                   {hidden > 0 && (

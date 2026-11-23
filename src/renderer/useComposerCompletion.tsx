@@ -9,11 +9,13 @@ import './composer-completion.css';
 
 interface Options {
   workspaceId: string; sessionId: string; view: ChatView; enabled: boolean;
-  value: string; onValue(value: string): void; inputRef: RefObject<HTMLTextAreaElement | null>;
+  value: string; onValue(value: string, inputType?: string): void; inputRef: RefObject<HTMLTextAreaElement | null>;
+  /** A file picked from the @ list replaces the mention typed so far (`start`…`end`) itself (a chip); false to insert its text instead. */
+  onFile?(start: number, end: number, path: string): boolean;
 }
 const sources = { builtin: 'composer.sourceBuiltin', user: 'composer.sourceUser', project: 'composer.sourceProject', plugin: 'composer.sourcePlugin', workspace: 'composer.sourceWorkspace' } as const;
 
-export function useComposerCompletion({ workspaceId, sessionId, view, enabled, value, onValue, inputRef }: Options) {
+export function useComposerCompletion({ workspaceId, sessionId, view, enabled, value, onValue, inputRef, onFile }: Options) {
   const id = useId(), [focused, setFocused] = useState(false), [composing, setComposing] = useState(false);
   const [range, setRange] = useState([0, 0]), [dismissed, setDismissed] = useState('');
   const [loadingKey, setLoadingKey] = useState('');
@@ -73,6 +75,10 @@ export function useComposerCompletion({ workspaceId, sessionId, view, enabled, v
   function accept(item: CompletionItem) {
     const el = inputRef.current;
     if (!el || el.value !== value || !token || el.selectionStart !== range[0] || el.selectionEnd !== range[1]) return;
+    if (item.kind === 'file' && token.kind === 'mention' && onFile?.(token.start, token.end, item.value)) {
+      setResult(undefined); setDismissed(key);
+      return;
+    }
     const next = applyCompletion(value, token, item);
     restore.current = { ...next, workspaceId, sessionId };
     setResult(undefined); setDismissed(item.kind === 'directory' ? '' : key);
@@ -91,7 +97,7 @@ export function useComposerCompletion({ workspaceId, sessionId, view, enabled, v
   const inputProps = {
     'aria-autocomplete': 'list' as const, 'aria-controls': items.length ? id : undefined,
     'aria-activedescendant': items.length ? `${id}-option-${index}` : undefined,
-    onChange(event: ChangeEvent<HTMLTextAreaElement>) { setDismissed(''); updateRange(event); onValue(event.currentTarget.value); },
+    onChange(event: ChangeEvent<HTMLTextAreaElement>) { setDismissed(''); updateRange(event); onValue(event.currentTarget.value, (event.nativeEvent as InputEvent).inputType); },
     onSelect: updateRange,
     onFocus(event: SyntheticEvent<HTMLTextAreaElement>) { setFocused(true); setDismissed(''); updateRange(event); },
     onBlur() { setFocused(false); setComposing(false); setResult(undefined); },

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { _electron } from 'playwright';
 import { SESSION_PREFIX } from './sandbox.mjs';
 
+// Elements fading out stay a moment with data-leaving (inert, hidden from roles): never count or click them.
 export const sel = {
   workspace: name => `.workspace-select[aria-label="${name}"]`,
   composer: 'form.composer textarea',
@@ -15,13 +16,13 @@ export const sel = {
   turnAction: 'form.composer .composer-turn-action',
   activeRow: '.session-row.active',
   row: id => `.session-row[data-session-id="${id}"]`,
-  assistant: 'article.message-assistant',
-  user: 'article.message-user',
-  permission: 'section.permission-card',
-  question: 'section.question-card',
-  trust: '.directory-trust-card',
-  queue: 'section.turn-queue',
-  progress: '.turn-progress',
+  assistant: 'article.message-assistant:not([data-leaving])',
+  user: 'article.message-user:not([data-leaving])',
+  permission: 'section.permission-card:not([data-leaving])',
+  question: 'section.question-card:not([data-leaving])',
+  trust: '.directory-trust-card:not([data-leaving])',
+  queue: 'section.turn-queue:not([data-leaving])',
+  progress: '.turn-progress:not([data-leaving])',
   tool: name => `details.tool-block[data-tool-name="${name}"]`,
   thought: 'details.thought-row[data-thought]',
   activityPill: '.activity-float-pill',
@@ -63,10 +64,10 @@ export function ui(page, sandbox) {
     page, composer,
     async openDraft(workspaceName) {
       await page.locator(sel.workspace(workspaceName)).click();
-      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled; }, sel.composer, { timeout: 30_000 });
+      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled && el.getAttribute('aria-disabled') !== 'true'; }, sel.composer, { timeout: 30_000 });
     },
     async ready(timeout = 60_000) {
-      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled; }, sel.composer, { timeout });
+      await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.disabled && el.getAttribute('aria-disabled') !== 'true'; }, sel.composer, { timeout });
     },
     async type(text) { await composer.fill(text); },
     /** Send from an idle composer (the round send button). */

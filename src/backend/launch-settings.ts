@@ -1,8 +1,13 @@
+import { promptCacheTtls, type PromptCacheTtlPreset } from '../shared/prompt-cache';
+
 /** The per-process settings (`claude --settings <json>`) every Claude that Lectern
  * starts gets: new chats, resumes, the temporary resume behind a rename and the
  * model-list probe. They layer over the user's own settings files for this process
  * only; those files are never written. */
-export function launchSettings(options: { statusLine?: object; enableWorkflows: boolean }): Record<string, unknown> {
+export function launchSettings(options: {
+  statusLine?: object; enableWorkflows: boolean; promptCacheTtlPreset?: PromptCacheTtlPreset;
+}): Record<string, unknown> {
+  const env = promptCacheEnv(options.promptCacheTtlPreset);
   return {
     ...options.statusLine,
     // A prompt suggestion fills the empty composer with grey text, which reads
@@ -17,11 +22,29 @@ export function launchSettings(options: { statusLine?: object; enableWorkflows: 
     // with permissions.disableAutoMode in user, project or managed settings)
     // Claude Code starts in manual mode and tool permissions show as cards.
     permissions: { defaultMode: 'auto' },
-    // No `env`: auto mode's safety check stays where Claude Code puts it (on the
-    // server, free of charge, with a direct Anthropic connection). Through a gateway
-    // that does not pass it through, Claude Code says so in a dialog (the billing
-    // notice in 2.1.300–2.1.310, "Auto mode can't check actions" from 2.1.321), which
-    // Lectern shows as a card (core/auto-mode-screen.ts). A user who wants the local
-    // check sets CLAUDE_CODE_AUTO_MODE_SERVER=0 in their shell or settings themselves.
+    // `env` carries only the prompt-cache lifetimes the user chose in Lectern. Auto
+    // mode's safety check stays where Claude Code puts it (on the server, free of
+    // charge, with a direct Anthropic connection). Through a gateway that does not pass
+    // it through, Claude Code says so in a dialog (the billing notice in 2.1.300–2.1.310,
+    // "Auto mode can't check actions" from 2.1.321), which Lectern shows as a card
+    // (core/auto-mode-screen.ts). A user who wants the local check sets
+    // CLAUDE_CODE_AUTO_MODE_SERVER=0 in their shell or settings themselves.
+    ...(env && { env }),
   };
+}
+
+/** The variables for the prompt-cache lifetimes chosen in Settings → Session, or
+ * undefined for the default (and any value that is not one of the presets): then
+ * nothing is set and Claude Code decides, by subscription or API, as without Lectern.
+ * A preset always sets both, so the pair is exactly the one the page shows.
+ * The variables rather than the settings `promptCacheTtl`/`subagentPromptCacheTtl`:
+ * either variable, in the user's shell or in their settings' `env`, would override
+ * those settings, while this `env` overrides both (settings `env` objects merge,
+ * so the user's other variables stay). Only FORCE_PROMPT_CACHING_5M=1 still wins
+ * (and, presumably, managed settings). Claude Code 2.1.300–2.1.330 measured with
+ * scripts/cc-matrix/probe-cache-ttl.mjs. Like any settings variable, they reach the
+ * processes Claude Code starts (tool commands, hooks, a nested `claude`). */
+function promptCacheEnv(preset: unknown) {
+  const ttls = promptCacheTtls(preset);
+  return ttls && { CLAUDE_CODE_PROMPT_CACHE_TTL: ttls.main, CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: ttls.other };
 }
