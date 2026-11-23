@@ -76,11 +76,11 @@ async function launch(locale) {
   };
 }
 
-async function shoot(page, name, locale) {
+async function shoot(page, name, locale, scale) {
   await page.mouse.move(1430, 890); // no hover effects or tooltips
   await page.waitForTimeout(700); // messages and panels fade in
   const file = path.join(out, `${name}-${locale}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, scale });
   log(`wrote ${path.relative(process.cwd(), file)}`);
 }
 
@@ -416,6 +416,47 @@ async function chatShot(demo, s, locale) {
   await shoot(page, 'chat', locale);
 }
 
+// Add an isolated SSH example to the sidebar while the real demo chat stays selected.
+async function sortingShot({ app, page, workspace }, s, locale) {
+  const remote = {
+    id: 'readme-remote', name: tr(locale, '文档站', 'Docs site'), kind: 'ssh',
+    host: 'docs.example.com', cwd: '/srv/docs',
+  };
+  const reply = { id: randomUUID(), title: tr(locale, '检查文档导航', 'Check docs navigation'),
+    mapping: 'exact', paneId: '%93', status: 'working', updatedAt: at(30) };
+  const [discovery, localHost] = await page.evaluate(id => Promise.all([
+    window.desktop.discover(id), window.desktop.checkHost({ kind: 'local' }),
+  ]), workspace.id);
+  const remoteHost = { ok: true, tools: {
+    system: 'Linux', distro: ['ubuntu'], managers: ['apt-get'], root: false,
+    tmux: { path: '/usr/bin/tmux', version: 'tmux 3.4' },
+    claude: { path: '/usr/local/bin/claude', version: '2.1.329 (Claude Code)' },
+  } };
+  await app.evaluate(({ ipcMain }, { discovery, localHost, remote, remoteHost, reply }) => {
+    ipcMain.removeHandler('lectern:checkHost');
+    ipcMain.handle('lectern:checkHost', (_event, target) => target.kind === 'ssh' ? remoteHost : localHost);
+    ipcMain.removeHandler('lectern:listWorkspaces');
+    ipcMain.handle('lectern:listWorkspaces', () => [discovery.workspace, remote]);
+    ipcMain.removeHandler('lectern:discover');
+    ipcMain.handle('lectern:discover', (_event, id) => id === remote.id
+      ? { workspace: remote, sessions: [reply], panes: [] } : discovery);
+  }, { discovery, localHost, remote, remoteHost, reply });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('lectern-projects-updated')));
+
+  await page.getByRole('button', { name: tr(locale, '对话排序', 'Sort conversations'), exact: true }).click();
+  await page.getByRole('menuitem', { name: tr(locale, '进行中优先', 'In progress first'), exact: true }).click();
+  const list = page.locator('.sidebar-global');
+  await list.getByRole('heading', { name: tr(locale, '进行中', 'In progress'), exact: true }).waitFor();
+  await list.locator('.session-row[data-session-state=working]').filter({ hasText: reply.title }).waitFor();
+  await list.locator('.session-row.active').filter({ hasText: s.title }).waitFor();
+  // Give the example enough room to show full project and status labels.
+  const separator = page.locator('.sidebar-separator');
+  for (let i = 0; i < 6; i++) await separator.press('ArrowRight');
+  await separator.blur();
+  await settle(page);
+  await shoot(page, 'sidebar-sort', locale, 'css');
+}
+
 // Two conversations side by side: drag one from the sidebar onto the right edge.
 async function splitShot(demo, s, locale) {
   const { page } = demo;
@@ -509,6 +550,7 @@ for (const locale of locales) {
     await writeTaskTurn(demo, s, main);
     await tasksShot(demo, s, locale);
     await splitShot(demo, s, locale);
+    await sortingShot(demo, s, locale);
     if (demo.errors.length) throw new Error(`Renderer errors: ${demo.errors.join('; ')}`);
   } catch (error) {
     const failure = path.join(root, 'test-results', `readme-screenshots-failure-${locale}.png`);

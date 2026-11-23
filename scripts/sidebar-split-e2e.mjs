@@ -2,8 +2,9 @@
 // Split screen in the sidebar: the focused pane's conversation keeps the raised cream
 // highlight, the other pane's is pale blue (data-split-open); the two swap with the focus,
 // the blue one stays listed past the newest five, marks its collapsed folder faintly, a
-// draft there marks its folder, and one pane alone marks nothing. Screenshots (Chinese and
-// English, light; one dark) in test-results/sidebar-split/.
+// draft there marks its folder, and one pane alone marks nothing. The list across all
+// projects (sorted by recency) marks the two the same way and keeps the blue one past its
+// first page. Screenshots (Chinese and English, light; one dark) in test-results/sidebar-split/.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -21,21 +22,23 @@ const locales = {
     expand: name => `展开 ${name}`, collapse: name => `收起 ${name}`, group: name => `${name} 的会话`,
     showMore: name => `展开更多 ${name} 的对话`, more: count => `还有 ${count} 个`, openBeside: '在旁边分屏打开', closePane: '关闭此分屏',
     splitOpen: '在另一侧分屏中打开', inFolder: '另一侧分屏打开了此文件夹中的对话', draft: '另一侧分屏是此文件夹的新对话草稿',
+    logs: '日志', log: n => `日志 ${n}`, sort: '对话排序', recent: '最近更新', byProject: '按项目',
   },
   en: {
     designs: 'Designs', notes: 'Notes', chat: n => `Chat ${n}`, note: n => `Note ${n}`, reply: title => `Reply: ${title}`,
     expand: name => `Expand ${name}`, collapse: name => `Collapse ${name}`, group: name => `Conversations in ${name}`,
     showMore: name => `Show more conversations in ${name}`, more: count => `${count} more`, openBeside: 'Open in split view', closePane: 'Close this pane',
     splitOpen: 'Open in the other pane', inFolder: 'The other pane shows a conversation from this folder', draft: 'The other pane has a new conversation draft in this folder',
+    logs: 'Logs', log: n => `Log ${n}`, sort: 'Sort conversations', recent: 'Most recently updated', byProject: 'By project',
   },
 };
 
-/** One history file per title, the first the oldest; returns their session ids. */
-async function history(claudeDir, cwd, titles, reply) {
+/** One history file per title, the first the oldest (from 1 January, or `day`); returns their session ids. */
+async function history(claudeDir, cwd, titles, reply, day = 1) {
   const project = path.join(claudeDir, 'projects', cwd.replace(/[^a-z0-9-]/gi, '-'));
   await mkdir(project, { recursive: true }); await mkdir(cwd, { recursive: true });
   return Promise.all(titles.map(async (title, index) => {
-    const sessionId = randomUUID(), timestamp = new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString();
+    const sessionId = randomUUID(), timestamp = new Date(Date.UTC(2026, 0, day, 0, index)).toISOString();
     const rows = [
       { type: 'user', uuid: randomUUID(), sessionId, cwd, timestamp, message: { role: 'user', content: title } },
       { type: 'assistant', uuid: randomUUID(), sessionId, cwd, timestamp, message: { id: randomUUID(), role: 'assistant', content: [{ type: 'text', text: reply(title) }], stop_reason: 'end_turn' } },
@@ -77,10 +80,13 @@ async function run(locale) {
   const chats = ['01', '02', '03', '04', '05', '06', '07'].map(L.chat);
   const designs = await history(claudeDir, path.join(root, 'designs'), chats, L.reply);
   await history(claudeDir, path.join(root, 'notes'), [L.note(1), L.note(2)], L.reply);
+  // Twenty newer ones: the list across projects (25 a page) leaves the oldest designs off it.
+  await history(claudeDir, path.join(root, 'logs'), Array.from({ length: 20 }, (_, i) => L.log(i + 1)), L.reply, 2);
   await mkdir(profile, { recursive: true });
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([
     { id: 'designs', name: L.designs, kind: 'local', cwd: path.join(root, 'designs'), claudeDir },
     { id: 'notes', name: L.notes, kind: 'local', cwd: path.join(root, 'notes'), claudeDir },
+    { id: 'logs', name: L.logs, kind: 'local', cwd: path.join(root, 'logs'), claudeDir },
   ]));
   const [oldest, newest] = [designs[0], designs[6]];
   let app, page;
@@ -180,6 +186,29 @@ async function run(locale) {
     await focusedPane('secondary');
     await expectMarks(newest, oldest, 'clicked the blue row again');
 
+    // The list across all projects (most recent first) marks the two the same way. Its
+    // first page holds 25: the blue row, the oldest of 29, stays listed past it.
+    const sortBy = async label => {
+      await page.getByRole('button', { name: L.sort, exact: true }).click();
+      await page.getByRole('menuitem', { name: label, exact: true }).click();
+    };
+    await sortBy(L.recent);
+    await page.waitForFunction(() => document.querySelectorAll('.sidebar-global .session-row').length === 26);
+    const across = await page.locator('.sidebar-global .session-row').evaluateAll(rows => rows.map(row => row.dataset.sessionId));
+    assert.equal(across.at(-1), oldest, 'the blue row stays listed past the first page');
+    assert.ok(across.includes(newest) && !across.includes(designs[1]), `a page of 25 and the blue row: ${across}`);
+    await expectMarks(newest, oldest, 'the list across projects');
+    await row(oldest).click();
+    await focusedPane('primary');
+    await expectMarks(oldest, newest, 'clicked the blue row in the list across projects');
+    await moveAway();
+    await sidebarShot('across-projects');
+    await row(newest).click();
+    await focusedPane('secondary');
+    await sortBy(L.byProject);
+    await group(L.designs).waitFor();
+    await expectMarks(newest, oldest, 'back to the project tree');
+
     // A collapsed folder: the focused conversation keeps the folder's existing mark (its
     // icon), the other one adds a faint blue to the row.
     await page.getByRole('button', { name: L.collapse(L.designs), exact: true }).click();
@@ -225,7 +254,7 @@ async function run(locale) {
     await moveAway();
     assert.ok(bluish((await folder('notes').evaluate(rowColors)).background), 'the draft folder is blue like a row');
     await sidebarShot('draft');
-    console.log(`PASS ${locale}: focused row cream, the other pane's blue; swap with the focus; listed past five; collapsed folder; draft folder; none in one pane.`);
+    console.log(`PASS ${locale}: focused row cream, the other pane's blue; swap with the focus; listed past five; the list across projects; collapsed folder; draft folder; none in one pane.`);
   } catch (error) {
     await page?.screenshot({ path: path.join(output, `failure-${locale}.png`) }).catch(() => {});
     throw error;

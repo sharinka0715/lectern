@@ -14,6 +14,7 @@ export interface ChatTarget {
   draft?: true;
 }
 export type ReplyDetail = "compact" | "individual";
+export type SidebarSortMode = "projects" | "recent" | "priority";
 export type SplitDirection = "columns" | "rows";
 export type SplitEdge = "left" | "right" | "top" | "bottom";
 /** A conversation taken out of Lectern's sidebar. Its files on the target are untouched. */
@@ -81,6 +82,7 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   /** IANA zone for the 7d refill time ("Asia/Shanghai"); "" is this computer's zone. */
   quotaTimeZone: string;
   sidebarOpen: boolean;
+  sidebarSort: SidebarSortMode;
   split: boolean;
   direction: SplitDirection;
   ratio: number;
@@ -110,6 +112,7 @@ const defaults: DesktopState = {
   ...defaultPreview,
   historyPageMiB: DEFAULT_HISTORY_PAGE_MIB,
   sidebarOpen: true,
+  sidebarSort: "projects",
   split: false,
   direction: "columns",
   ratio: 0.5,
@@ -180,6 +183,7 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       showSubscriptionQuota: p.showSubscriptionQuota !== false,
       quotaTimeZone: typeof p.quotaTimeZone === "string" && validTimeZone(p.quotaTimeZone) ? p.quotaTimeZone : "",
       sidebarOpen: p.sidebarOpen !== false,
+      sidebarSort: p.sidebarSort === "recent" || p.sidebarSort === "priority" ? p.sidebarSort : defaults.sidebarSort,
       split: p.split === true,
       direction: p.direction === "rows" ? "rows" : "columns",
       ratio: bounded(p.ratio, 0.25, 0.75, 0.5),

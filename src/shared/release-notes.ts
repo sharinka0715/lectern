@@ -61,6 +61,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Settings → Session can set the prompt-cache lifetime for the main conversation and for subagents and other requests (Claude Code default, 5 minutes or 1 hour), for chats started afterwards.'],
       ['对话里新出现的内容平滑淡入，删除的内容在原处淡出再收起，不打乱正在读的位置。',
         'New messages, reply blocks, tool rows and cards fade in, and rewound turns, answered cards and the progress pill fade out without moving what you read (off with Reduce Motion).'],
+      ['侧栏可将所有本地和 SSH 项目的会话合在一起，按最近更新或进行中优先排序。',
+        'The sidebar can list conversations across local and SSH projects by recency or with active conversations first.'],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',
@@ -111,6 +113,12 @@ export const releaseNotes: ReleaseNote[] = [
         '@ mentions in your messages resolve from the folder Claude was in when you sent them, so each chip opens the file Claude actually read.'],
       ['在子目录里结束的对话仍归在它开始时的文件夹下，不再在历史里显示成那个子目录。',
         'Conversations that ended in a subfolder after a cd stay under the folder they started in, instead of showing up under that subfolder in your history.'],
+      ['切到其他会话后，侧栏会继续显示原会话的回复状态，并在回复完成后更新。',
+        'The sidebar keeps showing a reply in progress after you switch conversations and updates when the reply finishes.'],
+      ['续接进度和失败提示只随对应会话显示，切换分屏或同时续接其他会话时仍可独立重试。',
+        'Resume progress and failures stay with each conversation, so you can retry after moving between panes or resuming another chat.'],
+      ['重新打开会话时如果读取历史失败，会先显示读取错误，「重试」会重新读取历史。',
+        'If reopening a conversation fails to read its history, the banner shows that error and Retry reads the history again.'],
     ],
   },
   {
