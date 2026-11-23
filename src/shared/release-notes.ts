@@ -81,6 +81,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Rewinding right after a rename no longer fails with "The conversation history file has changed": Lectern reads the conversation again and retries once.'],
       ['带制表符的消息发送后，「发送中」的气泡不再一直压在对话最底部、重复显示实时预览并常驻「已中断」提示。',
         'A sent message with a tab no longer stays pinned below later turns, repeating the live preview with a lasting "Interrupted" banner.'],
+      ['Claude Code 已弹出问答但还没把调用写进会话记录时，聊天里也显示可以作答的问答卡，不必接管终端。',
+        'Questions now show as answerable cards even before Claude Code saves the call (common behind a gateway), not only a waiting banner; once saved it stays the same card.'],
     ],
   },
   {

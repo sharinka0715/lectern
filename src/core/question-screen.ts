@@ -137,7 +137,10 @@ function previewRows(lines:string[],chat:string,footer:string): Pick<NativeQuest
 /** Only recognize a complete native chooser at the bottom of a *current* viewport.
  * A text-only parse rejects a chooser copied into assistant output. To recognize a
  * genuine chooser after an assistant preamble, the caller must independently verify
- * a pending AskUserQuestion tool_use on the active branch and a waiting native pane.
+ * that Claude Code waits for it: a pending AskUserQuestion tool_use on the active branch
+ * and a waiting native pane, or, before the transcript has that call, the native record
+ * waiting for "input needed" (main/session-question.ts earlyQuestion). A chooser in a
+ * code block is never one.
  */
 export function parseQuestionScreen(viewport:string, evidence?:{pendingToolUse:true}): NativeQuestionScreen | undefined {
   let lines = trimBlank(stripTerminalEscapes(viewport).replace(/ /g,' ').split('\n').map(line=>line.trimEnd()));

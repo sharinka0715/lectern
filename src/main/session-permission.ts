@@ -52,7 +52,9 @@ export function earlyPermission(screen: NativePermissionScreen, status: NativeSt
 /** The dialog in place of the input box that a card can answer: a known one (a tool's permission,
  * the keyed auto mode dialogs); while Claude Code reports waiting, also any other in the common
  * layout (core/native-dialog-screen.ts), except those Lectern answers or drives itself (its
- * question card, the rewind menu, "Make auto mode your default permission mode?"). */
+ * question card, the rewind menu, "Make auto mode your default permission mode?"). A question
+ * dialog is the question card's alone (session-question.ts): where that card declines it (a late
+ * frame, Claude Code waiting for something other than an answer), it is no card here either. */
 export function permissionDialog(viewport: string, nativeStatus?: NativeStatus): NativePermissionScreen | undefined {
   const known = parsePermissionScreen(viewport);
   if (known || nativeStatus !== 'waiting') return known;

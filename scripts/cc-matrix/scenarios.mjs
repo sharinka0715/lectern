@@ -39,6 +39,7 @@ export const FEATURES = [
   { id: 'question-multi', title: 'AskUserQuestion: multi-question form with review' },
   { id: 'question-single-long', title: 'AskUserQuestion: one long wrapped CJK question after a long preamble, wrapped option descriptions, named session' },
   { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
+  { id: 'question-early', title: 'AskUserQuestion before the transcript has the call (the stream ends late): a card read off the screen, answered into its call' },
   { id: 'thinking', title: 'Thinking folded into a thought row' },
   { id: 'tasks', title: 'Task list tool (TodoWrite / TaskCreate)' },
   { id: 'queue', title: 'Queue a message during a reply' },
@@ -576,7 +577,7 @@ export const SCENARIOS = [
   },
   {
     id: 'question',
-    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long'],
+    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long', 'question-early'],
     timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
@@ -585,8 +586,8 @@ export const SCENARIOS = [
       const snacks = { header: 'Snacks', question: 'Which snacks should we pack?', multiSelect: true, options: [
         { label: 'Fruit', description: 'Fresh fruit.' }, { label: 'Bread', description: 'Fresh bread.' }] };
       const answers = {};
-      const ask = (name, questions, preamble = 'One question first.') => api.script(name, ({ step, toolResults }) => {
-        if (step === 0) return { blocks: [{ type: 'text', text: preamble }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions } }] };
+      const ask = (name, questions, preamble = 'One question first.', plan = {}) => api.script(name, ({ step, toolResults }) => {
+        if (step === 0) return { blocks: [{ type: 'text', text: preamble }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions } }], ...plan };
         answers[name] = toolResults.map(result => result.text).join('\n');
         return { text: `Thanks (ccm-${name}-done).` };
       });
@@ -601,6 +602,11 @@ export const SCENARIOS = [
         question: '处理完成之后还需要顺手做哪些收尾工作？这些都可以在同一批任务里完成，但每多选一项整体时间大约会增加半小时左右，请按实际需要勾选。',
         options: [{ label: '生成索引页', description: '列出全部相册。' }, { label: '清理临时文件', description: '删除中间产物。' }] };
       ask('ask-long', [cleanup, extras]);
+      // The stream ends a while after the call (a gateway's late end of stream): Claude Code
+      // 2.1.300–2.1.330 write the reply and the call only once the question is answered.
+      const coffee = { header: 'Coffee', question: 'How should the coffee be?', multiSelect: false, options: [
+        { label: 'Black', description: 'No milk.' }, { label: 'With milk', description: 'A splash of milk.' }] };
+      ask('ask-early', [coffee], 'Let me check first.', { tailMs: 1500 });
       ask('ask-long-cancel', [cleanup, extras]);
       // One question under a long reply: a wrapped CJK title, wrapped option descriptions.
       const album = { header: '方案', multiSelect: false,
@@ -711,6 +717,21 @@ export const SCENARIOS = [
           result = records.find(r => Array.isArray(r.message?.content) && r.message.content.some(b => b.type === 'tool_result' && b.tool_use_id === asked?.id));
         }
         assert.equal(result?.toolUseResult, 'User rejected tool use', 'the cancelled review rejected the question');
+      });
+      await check('question-early', async () => {
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('Ask me while the reply streams ccm:ask-early');
+        await card.waitFor({ timeout: 60_000 });
+        await heading(coffee.question);
+        const id = await ui.activeSessionId();
+        const records = await readJsonl((await sandbox.projectFiles()).find(file => file.includes(id)));
+        const written = records.some(r => Array.isArray(r.message?.content) && r.message.content.some(b => b.type === 'tool_use' && b.input?.questions?.[0]?.question === coffee.question));
+        ctx.note('question-early', { deferred: !written });
+        // Not in the transcript yet: the card is read off the screen alone and names no call.
+        if (!written) assert.equal(await card.getAttribute('data-question-call'), null);
+        await option(2).click();
+        await ui.waitReply('ccm-ask-early-done');
+        assert.match(answers['ask-early'], /With milk/);
       });
     },
   },

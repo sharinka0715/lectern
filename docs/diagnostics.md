@@ -39,6 +39,7 @@ npm run diagnostics:replay -- /absolute/path/to/saved-diagnostics --session SESS
 | 原文 | `capture.jsonl` 保存本次实际读取的字节；`capture.screen` 保存含滚屏的原屏；`capture.viewport` 保存当前视口用于状态判定；input / messages 保存输入与消息状态 |
 | 解析与合并 | 解码字节、半行缓冲、记录类型、跳过或重复原因、屏幕锚点、候选预览、权威正文接管及消息摘要 |
 | 权限卡 | `controller.permission.card`：新卡片或卡片换了归属时记录 `cardId`、所属调用 `toolUseId`（会话记录还没有这次调用、只凭原屏出卡时为空）、`adopted`（会话记录跟上后原卡片认领调用）和原生的 `nativeWaitingFor` |
+| 问答卡 | `controller.question.card`：同上，`cardId` 是问答卡的 `interactionId`；会话记录还没有这次 AskUserQuestion、只凭原屏和原生的「input needed」出卡时 `toolUseId` 为空 |
 | 展示与故障 | `controller.snapshot`、renderer 应用状态、渲染错误、未处理异常/拒绝、进程退出和 `incident.mark` |
 
 实际送入对话解析器的 JSONL 字节使用 base64 保存，避免中文/emoji 恰好在读取边界分片后失真。每页按原始字节读取，包含该页内嵌图片的 base64。原文件游标仍按目标 JSONL 的物理字节计数。抓屏只在哈希变化时写原文；未变化的轮询引用之前的 `captureId`。每次非空 JSONL 增量都会记录，即使其字节和上次完全相同，防止重放时遗漏重复出现但合法的记录。

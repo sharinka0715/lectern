@@ -27,7 +27,7 @@ import { PermissionInputUnconfirmed } from '../backend/native-permission-actions
 import type { PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
 import { QuestionInputUnconfirmed } from '../backend/native-question-actions';
-import { observeQuestion, pendingQuestionId, type WatchedQuestion } from './session-question';
+import { answeredQuestionId, earlyQuestion, observeQuestion, ownQuestion, pendingQuestionId, type OwnedQuestion, type WatchedQuestion } from './session-question';
 import { SessionSettingsCache, type SessionSettingsHandle } from './session-settings-cache';
 import { ModelCatalogs } from './model-catalogs';
 import { effortsFor, isEffortLevel, isModelValue, type LaunchChoices, type ModelCatalogState } from '../shared/model-catalog';
@@ -46,6 +46,10 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   settingsHandle?: SessionSettingsHandle;
   compactSamples: CompactSamples;
   question?: WatchedQuestion;
+  /** The question dialog last seen with its pending call or answered from a card, while it stays up (ownQuestion). */
+  questionOwned?: OwnedQuestion;
+  /** The current turn's newest answered AskUserQuestion as last read (answeredQuestionId). */
+  questionAnswered?: string;
   permission?: WatchedPermission;
   /** The permission dialog last seen with its pending call (permissionLayout), while it stays up. */
   permissionOwned?: string;
@@ -725,15 +729,30 @@ export class Controller extends EventEmitter {
       const messages = presentedMessages(watch);
       // 接管后的 JSONL-only 模式仍可识别新问题。跨越一次输入的旧轮询不能恢复已消费的按钮。
       const questionReadCurrent = settingRevisionAtRead === this.settingRevision && !this.turnBusy && !watch.snapshot.terminalControl;
-      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust) watch.question = undefined;
+      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust)
+        watch.question = watch.questionOwned = undefined;
       if (questionReadCurrent) {
         const waiting = result.nativeStatus === 'waiting' && (!result.nativeWaitingFor || result.nativeWaitingFor === 'input needed');
-        const owner = (questionScreen || waiting) && pendingQuestionId(messages);
-        const screen = questionScreen || (owner && waiting && result.active && !result.directoryTrust && !result.hasMore && result.viewport
+        const owner = (questionScreen || waiting) && pendingQuestionId(messages) || undefined;
+        // Before the transcript has the call, Claude Code's own record of waiting for an answer
+        // vouches for a complete question dialog in place of the input box (earlyQuestion).
+        const asking = result.nativeStatus === 'waiting' && result.nativeWaitingFor === 'input needed';
+        const screen = questionScreen || ((owner && waiting || asking) && result.active && !result.directoryTrust && !result.hasMore && result.viewport
           ? parseQuestionScreen(result.viewport, {pendingToolUse:true}) : undefined);
-        watch.question = screen && owner && handle?.panePid && !settingBusy && !trustBusy &&
-          (!result.nativeStatus || waiting) && result.session.status !== 'error'
+        // Claude Code writes a deferred call together with its result: a newly answered question
+        // means the card shown so far was answered; its frames still on screen are late (ownQuestion).
+        const answered = answeredQuestionId(messages), newlyAnswered = answered !== undefined && answered !== watch.questionAnswered;
+        watch.questionAnswered = answered;
+        const now = Date.now();
+        watch.questionOwned = ownQuestion(watch.questionOwned, screen, owner, newlyAnswered ? watch.question?.screen : undefined, now);
+        const early = !!screen && !owner && earlyQuestion(screen, result.nativeStatus, result.nativeWaitingFor, watch.questionOwned, now);
+        const before = watch.question, beforeOwner = before?.owner;
+        watch.question = screen && (owner && (!result.nativeStatus || waiting) || early) && handle?.panePid && !settingBusy && !trustBusy &&
+          result.session.status !== 'error'
           ? observeQuestion(watch.question, screen, handle, owner, result.transcriptPosition) : undefined;
+        if (watch.question && (watch.question.snapshot.interactionId !== before?.snapshot.interactionId || watch.question.owner !== beforeOwner))
+          diagnostic.event('controller.question.card', { cardId: watch.question.snapshot.interactionId, toolUseId: watch.question.owner,
+            adopted: watch.question === before, nativeWaitingFor: result.nativeWaitingFor });
       }
       const question = watch.question?.snapshot;
       if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = watch.permissionOwned = undefined;
