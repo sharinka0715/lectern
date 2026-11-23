@@ -1,7 +1,8 @@
 import { stripTerminalEscapes } from '../core/screen';
 import { isIdleEmptyComposer } from '../core/settings-screen';
 import { focusedTurnCommandDescription } from '../core/turn-controls';
-import { sendGuarded, type TurnDriver } from './native-turn-controls';
+import { notRunError, sendGuarded, withdrawCommand, type TurnDriver } from './native-turn-controls';
+import { NavigationKeyNotSent } from './native-settings';
 import { SESSION_UUID } from './native-presence';
 import { t } from '../shared/i18n';
 
@@ -16,6 +17,9 @@ export function forkCapability(view: string, command: '/branch' | '/fork'): 'bra
   return branchDescription.test(description) ? 'branch' : backgroundDescription.test(description) ? 'background' : undefined;
 }
 
+/** The awaited screen did not come (as opposed to a changed terminal or session). */
+class CommandUnclear extends Error { constructor() { super(t('backend.forkCommandUnclear')); } }
+
 export async function submitNativeFork(driver: TurnDriver, pane: string, pid: number) {
   const frame = async () => {
     const f = await driver.frame();
@@ -28,27 +32,36 @@ export async function submitNativeFork(driver: TurnDriver, pane: string, pid: nu
       const result = check(await frame());
       if (result !== undefined) return result;
     }
-    throw new Error(t('backend.forkCommandUnclear'));
+    throw new CommandUnclear();
   };
   // Each step is bound to the whole frame and repeats only after a refusal, on a fresh
   // frame with the same precondition (sendGuarded). A refusal that stands keeps its
   // type, so a refused Enter still drops the fork journal.
   const step = (send: () => Promise<void>, still: (view: string) => boolean) =>
     sendGuarded(send, () => wait(view => still(view) || undefined));
+  // A typed command that is not confirmed as such is taken out again, never left behind.
+  const withdrawn = async (command: '/fork' | '/branch', refused = false) => notRunError(command, await withdrawCommand(driver, command, frame), refused);
+  const confirm = (command: '/fork' | '/branch') => wait(view => forkCapability(view, command))
+    .catch(async error => { throw error instanceof CommandUnclear ? await withdrawn(command) : error; });
   if (!isIdleEmptyComposer(await frame())) throw new Error(t('backend.forkNeedsIdle'));
   await step(() => driver.pasteForTurn('/fork', false), isIdleEmptyComposer);
   let command: '/fork' | '/branch' = '/fork';
-  const capability = await wait(view => forkCapability(view, '/fork'));
+  const capability = await confirm('/fork');
   if (capability === 'background') {
     // Do not submit /fork in versions where it starts a background session.
     await step(() => driver.keyForTurn('erase'), view => forkCapability(view, '/fork') === 'background');
     await wait(view => isIdleEmptyComposer(view) ? true : undefined);
     await step(() => driver.pasteForTurn('/branch', false), isIdleEmptyComposer);
     command = '/branch';
-    if (await wait(view => forkCapability(view, '/branch')) !== 'branch') throw new Error(t('backend.forkCommandMissing'));
+    if (await confirm('/branch') !== 'branch') throw await withdrawn('/branch');
   }
-  // Guard the last frame but don't resolve the old UUID after Enter.
-  await step(() => driver.keyForTurn('switchSession'), view => forkCapability(view, command) === 'branch');
+  // Guard the last frame but don't resolve the old UUID after Enter. A refused Enter keeps
+  // its type (the caller drops the fork journal on it) after the command is taken out.
+  try { await step(() => driver.keyForTurn('switchSession'), view => forkCapability(view, command) === 'branch'); }
+  catch (error) {
+    if (!(error instanceof NavigationKeyNotSent)) throw error;
+    throw new NavigationKeyNotSent((await withdrawn(command, true)).message);
+  }
 }
 
 export function forkReceipt(view: string, original: string, fork: string): boolean {

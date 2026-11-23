@@ -1,6 +1,9 @@
 import type { ConversationTask } from '../shared/types';
+import { namedEditorBorder } from './editor-border';
 
-const border = /^\s*[─━▔]{5,}(?: .* [─━▔]+)?\s*$/u;
+const plainBorder = /^\s*[─━▔]{5,}(?: .* [─━▔]+)?\s*$/u;
+// A session name of any width in the input box's upper border (editor-border.ts).
+const border = { test: (line: string) => plainBorder.test(line) || namedEditorBorder.test(line) };
 const hint = /\b(?:ctrl\+t|control\+t) to (hide|show) tasks\b/i;
 
 // Claude Code 2.1.329 lists background work below the input box's footer: a

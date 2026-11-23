@@ -4,6 +4,7 @@ import { parseCacheConfirmationLines } from './model-switch-confirmation';
 import { AUTO_MODE_BILLING_TITLE, AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudgeLines, showsAutoModeBillingNotice, showsAutoModeUnavailable, type AutoModeNudge } from './auto-mode-screen';
 import { nativeTaskPanel, withoutTaskRows } from './native-task-screen';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
+import { namedEditorBorder } from './editor-border';
 import { t } from '../shared/i18n';
 
 export interface ScreenPreview {
@@ -91,15 +92,16 @@ export function matchText(text: string): string {
 
 const prompt = /^\s*[❯>]\s?(.*)$/u;
 const bullet = /^\s*[⏺●]\s?(.*)$/u;
-// The editor's upper border carries the session name when one is set ("──── discuss umi ─").
-export const editorRule = /^\s*[─━═╌┄-]{5,}(?: \S(?:.*\S)? [─━═╌┄-]+)?\s*$/u;
-const rule = editorRule;
+// The editor's upper border carries the session name when one is set ("──── discuss umi ─"),
+// any width of it (editor-border.ts).
+const editorRule = /^\s*[─━═╌┄-]{5,}(?: \S(?:.*\S)? [─━═╌┄-]+)?\s*$/u;
+export const isEditorRule = (line: string) => editorRule.test(line) || namedEditorBorder.test(line);
 const tool = /^(?:Bash|PowerShell|Read|Write|Edit|MultiEdit|Glob|Grep|Task|Agent|Workflow|Monitor|TaskOutput|TaskStop|KillShell|SendMessage|WebFetch|WebSearch|TodoWrite|NotebookEdit|Skill|ToolSearch|AskUserQuestion|EnterPlanMode|ExitPlanMode|mcp__[\w-]+)\s*\(/;
 const activity = /^\s*[✶✻✽✢✳✺·*]\s+.+(?:…|\.\.\.|\(.*(?:token|esc|s|m)\b)/iu;
 // The native input box: a box-drawing rule (optionally titled with the session
 // name) directly above the ❯ prompt row. Only this pair ends an open code block.
 const composerRule = /^\s*[─━]{8,}(?: \S(?:.*\S)? [─━]+)?\s*$/u;
-const composerAt = (lines: string[], index: number) => composerRule.test(lines[index]) && /^\s*❯/u.test(lines[index + 1] ?? '');
+const composerAt = (lines: string[], index: number) => (composerRule.test(lines[index]) || namedEditorBorder.test(lines[index])) && /^\s*❯/u.test(lines[index + 1] ?? '');
 const footer = /^\s*(?:\? for shortcuts|(?:shift\+tab|ctrl\+[a-z]|esc) (?:to|for)|(?:bypass permissions|accept edits|plan mode) (?:on|off)|[↓↑]\s*\d|Context left until auto-compact|\d+% of context)/iu;
 
 /** Native grouped tool headings differ from their JSONL tool names. Require
@@ -142,7 +144,7 @@ function completedActivityFooter(lines: string[], index: number): boolean {
   const next = lines.slice(index + 1).findIndex(value => !!value.trim());
   const ruleIndex = index + 1 + next;
   // The input box below may hold a draft.
-  return next >= 0 && rule.test(lines[ruleIndex]) && /^\s*[❯>](?:\s|$)/u.test(lines[ruleIndex + 1] ?? '');
+  return next >= 0 && isEditorRule(lines[ruleIndex]) && /^\s*[❯>](?:\s|$)/u.test(lines[ruleIndex + 1] ?? '');
 }
 
 function terminalLines(screen: string): string[] {
@@ -165,7 +167,7 @@ function nativeEvidence(lines: string[]): boolean[] {
     if (groupedToolHeading(lines, index)) { owner = 'tool'; return false; }
     const response = bullet.exec(line);
     if (response) { owner = tool.test(response[1]) ? 'tool' : 'assistant'; return false; }
-    if (prompt.test(line) || rule.test(line) || activity.test(line)) owner = undefined;
+    if (prompt.test(line) || isEditorRule(line) || activity.test(line)) owner = undefined;
     if (/^\s*⎿/.test(line)) {
       if (owner === 'tool') return false;
       // Claude also uses this glyph for native API failures outside tool output.
@@ -215,7 +217,7 @@ function classifyLines(allLines: string[]): SessionScreenClassification {
   // the error phrase alone must not turn explanations or code samples red.
   const retry = lines.findIndex((line, index) => index >= lines.length - 10 && native[index]
     && /^\s*❯\s+Once fixed, resend your message\s*$/.test(line)
-    && index > 0 && rule.test(lines[index - 1]) && index + 1 < lines.length && rule.test(lines[index + 1]));
+    && index > 0 && isEditorRule(lines[index - 1]) && index + 1 < lines.length && isEditorRule(lines[index + 1]));
   if (retry >= 0 && hasCurrentApiErrorBeforeRetry(lines, retry, native)) {
     return { status: 'error', detail: t('core.apiError') };
   }
@@ -236,7 +238,7 @@ function classifyLines(allLines: string[]): SessionScreenClassification {
   if (has(10, /^\s*[❯>]\s*$/)) return { status: 'idle', detail: t('core.waitingMessage') };
   if (lines.some((line, index) => index >= lines.length - 10 && native[index]
     && /^\s*❯\s+Try ["“].+["”]\s*$/.test(line)
-    && index > 0 && rule.test(lines[index - 1]) && index + 1 < lines.length && rule.test(lines[index + 1]))) {
+    && index > 0 && isEditorRule(lines[index - 1]) && index + 1 < lines.length && isEditorRule(lines[index + 1]))) {
     return { status: 'idle', detail: t('core.waitingMessage') };
   }
   return { status: 'unknown', detail: lines.length ? t('core.noStatusMarker') : t('core.noScreenYet') };
@@ -274,7 +276,7 @@ export function extractPreview(screen: string, userText: string, knownAnswer = '
       let candidate = matchText(found[1]);
       let end = index;
       // A multiline pasted prompt can occupy several hard lines.
-      while (candidate.length < expected.length && end + 1 < lines.length && !bullet.test(lines[end + 1]) && !prompt.test(lines[end + 1]) && !rule.test(lines[end + 1])) {
+      while (candidate.length < expected.length && end + 1 < lines.length && !bullet.test(lines[end + 1]) && !prompt.test(lines[end + 1]) && !isEditorRule(lines[end + 1])) {
         candidate += matchText(lines[++end]);
       }
       if (candidate === expected || (candidate.startsWith(expected) && candidate.length - expected.length < 4)) {
@@ -310,7 +312,7 @@ export function extractPreview(screen: string, userText: string, knownAnswer = '
       continue;
     }
     if (completedActivityFooter(lines, index)) { inText = false; continue; }
-    if (prompt.test(line) || rule.test(line)) {
+    if (prompt.test(line) || isEditorRule(line)) {
       // A later submitted prompt (including a local slash command) belongs to
       // another terminal interaction even when this turn has no answer yet.
       if (output.length || (anchor >= 0 && prompt.exec(line)?.[1]?.trim())) break;

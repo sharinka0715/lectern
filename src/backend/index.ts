@@ -39,7 +39,7 @@ import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './mo
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
 import { composerFrameGuard, animatedLabelText, guardWindow } from './composer-frame-guard';
-import { performTurnAction, type TurnDriver, type RewindTarget } from './native-turn-controls';
+import { notRunError, performTurnAction, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
 import type { NativePermissionScreen, PermissionAction } from '../shared/native-permission';
@@ -1585,7 +1585,7 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
     // Foreground discovery also rejects a second active pane claiming this
     // UUID. Check all panes before each input, then bind the dispatch itself to
     // both the observed target and the last parsed viewport on the target.
-    const input = async (paneId: string, key: string, contexts: Parameters<NativeKeybindings['guard']>[2], command: string, settle: boolean, tailLines?: number, settingPaste = false, switchSession = false) => {
+    const input = async (paneId: string, key: string, contexts: Parameters<NativeKeybindings['guard']>[2], command: string, settle: boolean, tailLines?: number, settingPaste = false, switchSession = false, recordBound = true) => {
       const { session, location, revision } = await (resolved ??= resolve());
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
       const [keymap, panes] = await Promise.all([bindings.guard(location.claudeDir, key, contexts), this.probe(workspace)]);
@@ -1600,7 +1600,9 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
       const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort' : 'exact';
       // The transcript revision guard runs first: for a question or permission answer its
       // failure is printed as a receipt that nothing was sent (TranscriptChangedNoKeys).
-      const recordGuard = !options.historyGuard ? '' : options.assertCurrent && rejectedNavigation
+      // Ctrl+U only takes out a command Lectern itself typed (withdrawCommand); it is bound to
+      // the frame showing it, not to the transcript revision a rewind was chosen from.
+      const recordGuard = !options.historyGuard || !recordBound ? '' : options.assertCurrent && rejectedNavigation
         ? receiptOnFailure(options.historyGuard, rejectedNavigation + RECORD_CHANGED) : options.historyGuard;
       options.assertCurrent?.();
       return read(settle, recordGuard + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
@@ -1639,7 +1641,7 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
         const [binding, tmuxKeys] = keys[action];
         const contexts: Parameters<NativeKeybindings['guard']>[2] = ['up','down','accept','cancel'].includes(action) ? ['Select','Confirmation'] : ['Chat'];
         const tail = footerOnly && turnComposer(viewport)?.tailLines;
-        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession');
+        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession', action !== 'erase');
       },
       pasteForTurn: async (text, footerOnly) => {
         if (!last) throw new Error(t('backend.nativeInputUnchecked'));
@@ -1690,7 +1692,10 @@ sleep 0.1`, false, undefined, true);
         }
         if (!hasPendingSettingCommand(pasted.viewport, command as Parameters<typeof hasPendingSettingCommand>[1], idleViewport)) {
           diagnostic.capture('settings.viewport', pasted.viewport, { kind, phase: 'command-entry-rejected', paneId, sessionId });
-          throw new SessionSettingError(t('backend.commandNotShown'));
+          // Not left in the input box: Ctrl+U, bound to a frame that shows exactly this command.
+          const erase = async () => { await input(paneId, 'ctrl+u', ['Chat'], this.tmux('send-keys', '-t', paneId, 'C-u'), false); };
+          const cleared = await withdrawCommand({ keyForTurn: erase }, command, async () => (await read(false)).viewport);
+          throw new SessionSettingError(notRunError(command, cleared, false).message);
         }
         await submitCommand(command, paneId);
       },

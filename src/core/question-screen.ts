@@ -1,6 +1,7 @@
 import type { NativeQuestionOption, NativeQuestionScreen } from '../shared/native-question';
 import { inTranscriptExample } from './dialog-boundary';
 import { stripTerminalEscapes, terminalCells } from './screen';
+import { namedEditorBorder } from './editor-border';
 
 const ruler = /^─{8,}$/u;
 // Claude Code wraps by terminal cells. A break between two wide (CJK) characters
@@ -12,8 +13,9 @@ const glued = (a = '', b = '') => wide(a) && wide(b) || cjkPunctuation.test(a) |
 function joinWrapped(parts: string[]) {
   return parts.reduce((text, part) => !text ? part : text + (glued(Array.from(text).at(-1), Array.from(part)[0]) ? '' : ' ') + part, '');
 }
-// A named session (2.1.329) closes the dialog with its name in a rule below the footer.
-const namedRule = /^─{3,} \S(?:.*\S)? ─+$/u;
+// A named session (2.1.329) closes the dialog with its name in a rule below the footer,
+// the input box's upper border: any width of name (editor-border.ts).
+const namedRule = namedEditorBorder;
 const numberRow = /^(❯ |  )([1-9]\d*)\. (.+)$/u;
 const footerPattern = /^Enter to select · (?:↑\/↓ to navigate|Tab\/Arrow keys to navigate)(?: · n to add notes)?(?: · Tab to switch questions)?(?: · ctrl\+g to edit in [^·]+)? · Esc to cancel$/u;
 const trimBlank = (lines: string[]) => {

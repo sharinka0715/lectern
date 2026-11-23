@@ -14,6 +14,8 @@ export interface TurnDriver {
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const changed = () => new Error(t('native.screenChanged'));
+/** The awaited screen did not come (as opposed to a changed terminal or session). */
+class NotYetConfirmed extends Error { constructor() { super(t('native.commandUnconfirmed')); } }
 
 /**
  * Send one key or paste of a turn action or fork. The driver binds it to the frame
@@ -35,12 +37,39 @@ export async function sendGuarded(dispatch: () => Promise<void>, recheck: () => 
     }
   }
 }
+/**
+ * Lectern typed the slash command `command` into an empty input box and cannot go on: the
+ * completion that identifies it is not shown, or Enter stays refused. Take it out again
+ * rather than leave a half-done command in the terminal (the chat box would only say there
+ * is a draft there). The erase (Ctrl+U) is bound to a frame whose input box holds exactly
+ * that command; `read` checks the pane's identity. True once the input box is empty again.
+ */
+export async function withdrawCommand(driver: Pick<TurnDriver, 'keyForTurn'>, command: string, read: () => Promise<string>): Promise<boolean> {
+  const typed = (view: string) => turnComposer(view)?.text === command && classifySessionScreen(view).status !== 'waiting';
+  const settle = async (test: (view: string) => boolean) => {
+    for (const ms of [40, 80, 150, 270, 450]) { await delay(ms); if (test(await read())) return true; }
+    return false;
+  };
+  try {
+    if (!typed(await read())) return false;
+    await sendGuarded(() => driver.keyForTurn('erase'), async () => { if (!await settle(typed)) throw changed(); });
+    return await settle(isIdleEmptyComposer);
+  } catch { return false; }
+}
+/** The error for a typed `command` that was not run, after `withdrawCommand`. */
+export const notRunError = (command: string, cleared: boolean, refused: boolean) => new Error(t(refused
+  ? cleared ? 'native.slashCommandNotSubmitted' : 'native.slashCommandNotSubmittedLeft'
+  : cleared ? 'native.slashCommandUnconfirmed' : 'native.slashCommandUnconfirmedLeft', { command }));
+
 const validText = (text: unknown): text is string => typeof text === 'string' && !!text.trim() && text.length <= 100000 && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text);
 // The native editor soft-wraps long drafts (CJK by display width) and indents
 // continuation rows, so a pasted single line comes back as several. The editor was
 // verified empty before the paste: its visible characters identify the draft.
 const visible = (s: string) => s.replace(/\s+/gu, '');
 export function sameDraft(rendered: string, text: string) { return visible(rendered) === visible(text); }
+
+// What the native /rewind completion says: 2.1.300–2.1.321, then 2.1.326–2.1.330.
+const rewindDescription = /^(?:Restore the code and\/or conversation to a previous point|Restore earlier code, conversation, or both)$/;
 
 export interface RewindTarget { index: number; prompts: string[] }
 const mismatch = () => new Error(t('native.rewindMismatch'));
@@ -80,7 +109,7 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
       const frame = await inspect();
       if (test(frame)) return frame;
     }
-    throw new Error(t('native.commandUnconfirmed'));
+    throw new NotYetConfirmed();
   };
   // Every key and paste goes through sendGuarded with the precondition it was chosen
   // under: a streaming reply redraws constantly, and under load the guard can catch a
@@ -91,6 +120,7 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
   const paste = (text: string, footerOnly: boolean, still: (frame: TurnFrame) => boolean) =>
     sendGuarded(() => driver.pasteForTurn(text, footerOnly), () => waitFor(still));
   const onMenu = (menu: RewindMenu) => (frame: TurnFrame) => readRewind(frame.viewport)?.signature === menu.signature;
+  const withdraw = (command: string) => withdrawCommand(driver, command, async () => (await inspect()).viewport);
   if (action?.kind === 'rewindTo' || action?.kind === 'restore' && target) {
     if (!target) throw mismatch();
     const text = target.prompts[target.index];
@@ -188,14 +218,24 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
       // The input box is empty here: idle for /rewind and a restored draft, replying for queue and steer.
       await paste(text, !opening, f => turnComposer(f.viewport)?.empty === true
         && (opening ? available(f) && isIdleEmptyComposer(f.viewport) : restored ? available(f) : running(f)));
-      await waitFor(frame => {
+      const shown = () => waitFor(frame => {
         const actual = turnComposer(frame.viewport);
         return !!actual && sameDraft(actual.text,text) && (opening || restored ? available(frame) : running(frame)) &&
-          (!opening || focusedTurnCommandDescription(frame.viewport, '/rewind') === 'Restore earlier code, conversation, or both');
+          (!opening || rewindDescription.test(focusedTurnCommandDescription(frame.viewport, '/rewind') ?? ''));
       });
+      // A /rewind that is not confirmed as such is never submitted, nor left in the input box.
+      try { await shown(); }
+      catch (error) {
+        if (!opening || !(error instanceof NotYetConfirmed)) throw error;
+        throw notRunError(text, await withdraw(text), false);
+      }
     }
     const submitted = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport); return !!actual && sameDraft(actual.text, text) && (opening || restored ? available(frame) : running(frame)); };
-    await press(opening || restored ? 'submit' : action.kind === 'queue' ? 'queue' : 'steer', !opening, submitted);
+    try { await press(opening || restored ? 'submit' : action.kind === 'queue' ? 'queue' : 'steer', !opening, submitted); }
+    catch (error) {
+      if (!opening || !keysNotSent(error)) throw error;
+      throw notRunError(text, await withdraw(text), true);
+    }
     if (opening) await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint');
     return;
   }

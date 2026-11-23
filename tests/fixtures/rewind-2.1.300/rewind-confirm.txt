@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.300
+▝▜██████▀  Sonnet 5.5 with low effort · API Usage Billing
+ ▝▝   ▝▝   /home/dev/project
+
+
+❯ Rewind check one ccm:rw-one
+
+● First answer (ccm-rw-one).
+
+✻ Churned for 0s · done 7:32 AM
+
+❯ Rewind check two ccm:rw-two
+
+● Second answer (ccm-rw-two).
+
+✻ Cooked for 0s · done 7:32 AM
+
+❯ /rename 矩阵回退测试 很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名
+称很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名称
+  ⎿  Session renamed to: 矩阵回退测试 很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名
+     称很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名称很长的会话名称
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Rewind
+
+   Confirm you want to restore to the point before you sent this message:
+
+   │ Rewind check two ccm:rw-two
+   │ (1s ago)
+
+   The conversation will be forked.
+   The code will be unchanged.
+
+   ❯ 1. Restore conversation
+     2. Summarize from here
+     3. Summarize up to here
+     4. Never mind

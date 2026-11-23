@@ -3,7 +3,7 @@ import { t, type MessageKey } from '../shared/i18n';
 import { TranscriptStore, type TranscriptChange } from './transcript-store';
 import type { ContextUsageObservation } from './request-usage';
 export type { ContextUsageObservation } from './request-usage';
-import { editorRule, stripTerminalEscapes, withoutRightNotice, withoutTaskRows } from './screen';
+import { isEditorRule, stripTerminalEscapes, withoutRightNotice, withoutTaskRows } from './screen';
 
 export type ExecutionMode = 'auto' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'default' | 'dontAsk';
 
@@ -14,7 +14,6 @@ export interface ExecutionModeObservation {
   evidence: string;
 }
 
-const rule = editorRule;
 // The native footer resolves the user's binding. Accept a named key or
 // modifier chord (including a two-stroke sequence) inside the explicit hint.
 const stroke = String.raw`(?:(?:ctrl|control|alt|option|meta|cmd|command|shift|super)\+)*(?:[a-z0-9]|f(?:[1-9]|1[0-9]|2[0-4])|tab|space|enter|escape|esc|backspace|delete|up|down|left|right)`;
@@ -45,13 +44,13 @@ export function parseExecutionMode(screen: string): ExecutionModeObservation | u
   for (let index = lines.length - 1; index >= Math.max(0, lines.length - 24); index--) {
     if (/^\s*❯(?:\s|$)/u.test(lines[index])) { input = index; break; }
   }
-  if (input < 1 || !rule.test(lines[input - 1])) return undefined;
+  if (input < 1 || !isEditorRule(lines[input - 1])) return undefined;
   let fenced = false;
   for (const line of lines.slice(0, input)) if (/^\s*```/.test(line)) fenced = !fenced;
   if (fenced) return undefined;
   let bottom = -1;
   for (let index = input + 1; index < Math.min(lines.length, input + 10); index++) {
-    if (rule.test(lines[index])) { bottom = index; break; }
+    if (isEditorRule(lines[index])) { bottom = index; break; }
   }
   if (bottom < 0 || lines.length - bottom > 7) return undefined;
   for (const line of lines.slice(bottom + 1)) {

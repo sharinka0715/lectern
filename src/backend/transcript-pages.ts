@@ -98,12 +98,16 @@ export function decodeFileWindow(frame: Buffer): FileWindow {
 // note ("Auto mode lets Claude handle permission prompts automatically …", a
 // system/informational record) when the first command is submitted in auto mode.
 // They never change the branch's prompts: growth made only of such complete lines,
-// after an unchanged prefix (the guard sample), keeps the revision.
+// after an unchanged prefix (the guard sample), keeps the revision. So does a new
+// modification time alone: Claude Code 2.1.330 sets it (utimes, no write) when /rewind
+// first opens its menu in a process, so the first rewind after a resume failed at its
+// first menu key ("The conversation history file has changed").
 const noticesOnly = `awk 'BEGIN { ok = 1 } !/^[{]"parentUuid":("[^"]*"|null),"isSidechain":(true|false),"type":"system","subtype":"informational",/ { ok = 0 } END { print (ok && NR > 0 ? "ok" : "no") }'`;
 export function transcriptVersionGuard(files: string[], cursor: LiveCursor) {
   if (!/^\d+$/.test(cursor.inode) || !Number.isSafeInteger(cursor.offset) || !cursor.stamp) throw new Error(stale());
+  const sample = `[ "$(guard_at ${cursor.offset})" = ${q(cursor.guard ?? '')} ]`;
   const notices = cursor.guard && /^\d+-\d+$/.test(cursor.guard)
-    ? ` || { [ "$size" -gt ${cursor.offset} ] && [ "$(guard_at ${cursor.offset})" = ${q(cursor.guard)} ] && start=${cursor.offset} && end=$size && [ "$( { ${range}; } | ${noticesOnly})" = ok ]; }` : '';
+    ? ` || { [ "$size" = ${cursor.offset} ] && ${sample}; } || { [ "$size" -gt ${cursor.offset} ] && ${sample} && start=${cursor.offset} && end=$size && [ "$( { ${range}; } | ${noticesOnly})" = ok ]; }` : '';
   return `(\n${withTranscript(files, `[ "$inode" = ${q(cursor.inode)} ] && { { [ "$size" = ${cursor.offset} ] && [ "$stamp" = ${q(cursor.stamp)} ]; }${notices}; } || exit 1`, 'exit 1')}\n) || { echo ${q(stale())} >&2; exit 1; }\n`;
 }
 
