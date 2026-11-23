@@ -14,7 +14,9 @@ const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 let app;
 try {
   const executablePath = process.argv[2];
-  app = await _electron.launch({ executablePath, args: executablePath ? ['--demo'] : ['.', '--demo'], env });
+  // Windows has no demo (its conversation is a local tmux session): a fresh profile there.
+  const demo = process.platform === 'win32' ? [] : ['--demo'];
+  app = await _electron.launch({ executablePath, args: executablePath ? demo : ['.', ...demo], env });
   const page = await app.firstWindow();
   page.setDefaultTimeout(10000);
   await page.locator('.sidebar-bottom').getByText(`v${version}`, { exact: true }).waitFor();

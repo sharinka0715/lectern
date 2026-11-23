@@ -141,8 +141,10 @@ function windowReadable(win?: BrowserWindow) {
 
 function createWindow() {
   window = new BrowserWindow({
-    // Automated runs show the window themselves, invisibly and without focus.
-    ...(silentWindows && { show: false }),
+    // Automated runs show the window themselves, invisibly and without focus. They also
+    // keep the size they ask for: macOS otherwise fits a window into the screen (1024×768
+    // on the CI runner), and the e2e lay out against this size and resize it themselves.
+    ...(silentWindows && { show: false, enableLargerThanScreen: true }),
     width: 1280, height: 880, minWidth: 850, minHeight: 600,
     title: 'Lectern', icon: appIcon, backgroundColor: nativeTheme.shouldUseDarkColors ? '#202123' : '#ffffff',
     titleBarStyle: 'hidden',
@@ -639,7 +641,10 @@ async function boot() {
 if (!ownsProfile) app.quit();
 else app.whenReady().then(boot).catch(error => {
   diagnostic.event('app.boot_failed', { error: errorDetails(error) }, 'error');
-  dialog.showErrorBox(t('menu.startFailed'), error instanceof Error ? error.message : String(error));
+  const message = error instanceof Error ? error.message : String(error);
+  // Nobody answers the modal box in an automated run: it would hold the app (and the test) until killed.
+  if (silentWindows) console.error(`${t('menu.startFailed')}: ${message}`);
+  else dialog.showErrorBox(t('menu.startFailed'), message);
   app.quit();
 });
 app.on('second-instance', () => { window?.show(); window?.focus(); });

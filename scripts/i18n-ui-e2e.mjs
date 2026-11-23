@@ -20,8 +20,11 @@ const base = { ...process.env, LANGUAGE: 'zh_CN', LC_ALL: 'zh_CN.UTF-8', LANG: '
 delete base.ELECTRON_RUN_AS_NODE; delete base.LECTERN_DEV_URL; delete base.LECTERN_LOCALE;
 
 /** A demo window; `ready` is what to wait for (a relaunch restores the previous, now stale, selection). */
+// macOS takes the system languages from its preferences, not from the variables above:
+// the argument domain (`-AppleLanguages`) sets them for this process only.
+const systemChinese = process.platform === 'darwin' ? ['-AppleLanguages', '(zh-Hans)'] : [];
 async function launch(env, ready = '.message-assistant') {
-  const app = await _electron.launch({ executablePath, args: [...(executablePath ? [] : ['.']), '--demo'], env });
+  const app = await _electron.launch({ executablePath, args: [...(executablePath ? [] : ['.']), '--demo', ...systemChinese], env });
   const page = await app.firstWindow();
   page.setDefaultTimeout(20000);
   await page.locator(ready).first().waitFor();

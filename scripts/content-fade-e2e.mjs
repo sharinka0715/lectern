@@ -18,7 +18,11 @@ const output = path.resolve("test-results", "content-fade-" + Date.now());
 await mkdir(output, { recursive: true });
 const env = { ...process.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, TMUX_TMPDIR: root,
   LECTERN_USER_DATA: path.join(root, "profile"), CLAUDE_CONFIG_DIR: path.join(root, "claude"),
-  LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: path.join(output, "diagnostics"), LECTERN_DIAGNOSTIC_CONTENT: "0" };
+  LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: path.join(output, "diagnostics"), LECTERN_DIAGNOSTIC_CONTENT: "0",
+  // The mock's second paragraph starts 0.2 s into its reply at the usual pace: a slower machine (the
+  // macOS runner, more so beside another test) may read the reply first only then, and see two
+  // paragraphs arrive together. Even 0.5 s (250 ms) was not always enough there.
+  LECTERN_MOCK_STREAM_MS: "500" };
 delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 let app, page;
 const report = {};

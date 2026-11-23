@@ -75,10 +75,19 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: sudo apt-get update && sudo apt-get install -y tmux xvfb
+      - name: Install tmux and xvfb
+        run: |
+          # Only what the image lacks; the package lists are refreshed only if that install fails.
+          sudo rm -f /var/lib/man-db/auto-update
+          missing=$(for p in tmux xvfb; do dpkg -s "$p" >/dev/null 2>&1 || echo "$p"; done | xargs)
+          [ -z "$missing" ] || sudo apt-get install -y --no-install-recommends $missing \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends $missing; }
       # Ubuntu 24.04 confines unprivileged user namespaces, which Chromium's sandbox needs.
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: npm ci
+      # Electron fetches its binary on first use (otherwise inside the first scenario).
+      - name: Download Electron
+        run: node node_modules/electron/install.js
       - uses: actions/cache@v6
         with:
           path: ${{ env.CC_MATRIX_CACHE }}/${{ matrix.version }}

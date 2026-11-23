@@ -150,7 +150,11 @@ test('with subagents listed and ticking below the input box, inline and menu swi
         const verified = await backend.setSessionSetting(workspace, session.id, ticket.token, choice.id, undefined, mode);
         assert.equal(verified.options.find(option => option.current)?.label, label, `${agents} ${mode} ${kind}`);
       }
-      assert.match(await capture(paneId), listed, `${agents} still listed`);
+      // The mock clears and redraws its whole screen at every tick: a read may catch a redraw half
+      // done (on the macOS runner the pty hands it over in small pieces), so look a few times.
+      let screen = await capture(paneId);
+      for (let i = 0; i < 40 && !listed.test(screen); i++) { await pause(25); screen = await capture(paneId); }
+      assert.match(screen, listed, `${agents} still listed`);
     }
     const screen = await capture(paneId);
     assert.match(screen, /❯ \/model gateway\/custom-x\n\s+⎿ Set model to gateway\/custom-x and saved as your default/);
@@ -167,7 +171,13 @@ test('with subagents listed and ticking below the input box, the stop key is not
     const pid = Number((await runCommand(workspace, ['tmux', '-L', socket, 'display-message', '-p', '-t', paneId, '#{pane_pid}'].map(quoteShell).join(' '))).stdout.toString());
     await backend.sendMessage(workspace, session.id, 'a long reply to stop ' + '继续'.repeat(200));
     for (let i = 0; i < 120 && !(await capture(paneId)).includes('esc to interrupt'); i++) await pause(25);
-    await backend.turnAction(workspace, session.id, paneId, pid, { kind: 'stop' });
+    // A read of a redraw half done (40 ms ticks, see above) is refused before any key is sent: once more then.
+    const stop = () => backend.turnAction(workspace, session.id, paneId, pid, { kind: 'stop' });
+    await stop().catch(async error => {
+      if (!/原生画面已变化|native screen changed/.test(String(error?.message))) throw error;
+      await pause(100);
+      await stop();
+    });
     for (let i = 0; i < 120 && (await capture(paneId)).includes('esc to interrupt'); i++) await pause(25);
     assert.doesNotMatch(await capture(paneId), /esc to interrupt/, 'the reply stopped');
   });

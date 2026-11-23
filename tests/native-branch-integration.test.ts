@@ -12,7 +12,8 @@ import { nativeBranchFixture } from './helpers/native-branch-fixture';
 // No user config, credentials, endpoint or real history. Exercise local-only
 // slash commands in the installed CLI; all model traffic points at a closed port.
 test('installed CLI: paged duplicate rewind, fork recovery and two independently writable panes', {
-  skip: process.env.LECTERN_NATIVE_BRANCH_TEST !== '1', timeout: 120_000,
+  // Windows runs no local sessions (SSH only) and has no tmux.
+  skip: process.env.LECTERN_NATIVE_BRANCH_TEST !== '1' || process.platform === 'win32', timeout: 120_000,
 }, async () => {
   const {root,cwd,dir,config,env: fixture,ws,originalId,prompts,ids} = await nativeBranchFixture();
   // User skills whose long CJK descriptions wrap in the slash completions offered for /fork
@@ -84,7 +85,8 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
       await wait(async()=>(await readFile(join(dir,s.id+'.jsonl'),'utf8')).includes(`"customTitle":"${name}"`),'separate rename did not persist');
     }
     assert.ok(!(await readFile(join(dir,originalId+'.jsonl'),'utf8')).includes('Branch-only'));
-    assert.match(frame(pane), /^ Branch-only 分支回退测试\S*… ─\s*$/mu, 'the name is cut in the upper border, with no rule before it');
+    // The border is repainted after the title reaches the JSONL (later on a slow machine).
+    await wait(()=>/^ Branch-only 分支回退测试\S*… ─\s*$/mu.test(frame(pane)), 'the name is cut in the upper border, with no rule before it');
     await wait(async()=>(await readFile(join(dir,pair.fork.id+'.jsonl'),'utf8')).includes('This may indicate the session'), 'native rename metadata not flushed');
     const position = (await backend.readSession(ws,pair.fork.id,true)).transcriptPosition;
     await backend.turnAction(ws,pair.fork.id,pane,pid,{kind:'rewindTo',uuid:ids[1]}, {index:1,prompts}, undefined, position);

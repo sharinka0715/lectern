@@ -140,10 +140,14 @@ async function snap(page, name) {
 }
 const quitFromMain = run => run.app.evaluate(({ app }) => { app.quit(); });
 const closeWindow = run => run.app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].close(); });
-const quitFromMenu = run => run.app.evaluate(({ Menu }) => {
+// macOS keeps running without windows: closing the last one never asks (nor quits).
+const closingQuits = process.platform !== 'darwin';
+const quitFromMenu = run => run.app.evaluate(({ Menu }, mac) => {
   const find = items => { for (const item of items) { if (item.role === 'quit') return item; const inner = item.submenu && find(item.submenu.items); if (inner) return inner; } };
-  find(Menu.getApplicationMenu().items).click();
-});
+  const quit = find(Menu.getApplicationMenu().items);
+  // macOS runs the Quit role natively (click() from script does nothing there): send its action.
+  if (mac) Menu.sendActionToFirstResponder('terminate:'); else quit.click();
+}, process.platform === 'darwin');
 async function exitWithin(run, ms) {
   // The timer is cleared once the app exits: a pending one would keep this script alive for up to `ms`.
   let timer;
@@ -207,7 +211,7 @@ try {
     assert.ok(await footerOnOneLine(run.page), 'the three choices fit on one line');
     // Quitting again, from the app or the window, only brings the same dialog forward.
     const shown = await dialog(run.page).innerText();
-    await quitFromMain(run); await closeWindow(run); await quitFromMenu(run);
+    await quitFromMain(run); if (closingQuits) await closeWindow(run); await quitFromMenu(run);
     await pause(400);
     assert.equal(await run.page.locator('dialog.quit-dialog').count(), 1);
     assert.equal(await dialog(run.page).innerText(), shown);
@@ -219,8 +223,8 @@ try {
     assert.ok(run.alive(), 'Cancel keeps Lectern');
     assert.equal(await run.page.evaluate(() => 1 + 1), 2);
     assert.deepEqual(await lecternPanes(run.socket), before);
-    // Closing the last window (Windows, Linux) asks the same; "only quit" leaves every pane running.
-    await closeWindow(run);
+    // Closing the last window (Windows, Linux; on macOS ⌘Q) asks the same; "only quit" leaves every pane running.
+    await (closingQuits ? closeWindow(run) : quitFromMenu(run));
     await dialog(run.page).waitFor();
     await assertListsRunning(run);
     await dialog(run.page).getByRole('button', { name: /^只退出 Lectern/ }).click();
@@ -228,7 +232,7 @@ try {
     assert.deepEqual(await lecternPanes(run.socket), before, '"only quit" leaves the conversations running in tmux');
     assert.deepEqual(await proceededBecause(run), ['leave']);
     const requests = (await events(run)).filter(record => record.event === 'app.quit_request').map(record => record.data.reason);
-    assert.deepEqual(requests.slice(0, 4), ['user', 'user', 'window', 'user']);
+    assert.deepEqual(requests.slice(0, 4), closingQuits ? ['user', 'user', 'window', 'user'] : ['user', 'user', 'user', 'user']);
     assert.deepEqual(run.errors, []);
     console.log(`A: listed ${listed.length} running conversations in ${askedMs} ms; Esc cancelled; "only quit" left ${before.length} panes running`);
   }
@@ -309,7 +313,7 @@ try {
     await addConversation(run, '迁移数据库');
     const before = await lecternPanes(run.socket);
     await run.app.evaluate(() => { process.env.LECTERN_DEMO_FAIL_TAG = 'tmux.close_session'; });
-    await closeWindow(run);
+    await (closingQuits ? closeWindow(run) : quitFromMain(run));
     await dialog(run.page).waitFor();
     await dialog(run.page).getByRole('button', { name: '关闭所有对话并退出', exact: true }).click();
     await run.page.locator('dialog.quit-dialog[data-phase="failed"]').waitFor({ timeout: 40_000 });
@@ -392,6 +396,8 @@ try {
     const opened = run.app.waitForEvent('window', { timeout: 30_000 });
     // destroy() skips the close event: the window is gone and the app quits from window-all-closed.
     await run.app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].destroy(); });
+    // On macOS the app stays without a window; quitting (⌘Q) is what opens one.
+    if (!closingQuits) await quitFromMain(run);
     const page = await opened;
     await dialog(page).waitFor({ timeout: 30_000 });
     assert.deepEqual((await rows(page)).map(row => [row.pane, row.session]), before.map(pane => [pane.pane, pane.session]));

@@ -133,7 +133,15 @@ try {
   const resume = page.getByRole("button", { name: "续接会话", exact: true });
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
   const row = id => page.locator('.session-row[data-session-id="' + id + '"]');
-  const liveId = await page.locator('.session-row.active[data-session-live="true"]').getAttribute("data-session-id");
+  // A 400 px wheel moved the transcript up and it has come to rest. Not exactly 400: while the
+  // input area still eases to its new height (slower machines), the transcript keeps its bottom
+  // line in place and moves the scroll position with it.
+  const wheeledUp = top => page.waitForFunction(top => {
+    const now = document.querySelector(".conversation-scroll").scrollTop, last = window.__lastScrollTop;
+    window.__lastScrollTop = now;
+    return top - now >= 300 && last === now;
+  }, top, { polling: 150 });
+  const liveId =await page.locator('.session-row.active[data-session-live="true"]').getAttribute("data-session-id");
   const archiveId = await seedArchive();
   await refreshFolderUntil(page, "demo-local", row(archiveId));
   await row(archiveId).click();
@@ -151,8 +159,7 @@ try {
   await viewport.hover();
   await page.mouse.wheel(0, -400);
   // Composited wheel scrolling can finish after the jump-to-latest button appears.
-  await page.waitForFunction(top =>
-    Math.abs(document.querySelector(".conversation-scroll").scrollTop - (top - 400)) <= 1, beforeWheel);
+  await wheeledUp(beforeWheel);
   await page.getByRole("button", { name: "滚动到最新消息" }).waitFor();
   report.readingEarlier = await observeRefreshes(2, true);
 
@@ -170,8 +177,7 @@ try {
   const beforeCloseWheel = await viewport.evaluate(el => el.scrollTop);
   await viewport.hover();
   await page.mouse.wheel(0, -400);
-  await page.waitForFunction(top =>
-    Math.abs(document.querySelector(".conversation-scroll").scrollTop - (top - 400)) <= 1, beforeCloseWheel);
+  await wheeledUp(beforeCloseWheel);
   await page.getByRole("button", { name: "滚动到最新消息" }).waitFor();
   const closeProbe = await observeClose();
   await app.evaluate(() => { process.env.LECTERN_DEMO_LATENCY_MS = "300"; });

@@ -18,7 +18,8 @@ import { tsImport } from "tsx/esm/api";
 
 const { parseQuestionScreen } = await tsImport("../src/core/question-screen.ts", import.meta.url);
 const { scenarios } = JSON.parse(await readFile(new URL("../tests/fixtures/native-contracts/question-2.1.326.json", import.meta.url), "utf8"));
-const root = await realpath(await mkdtemp(path.join(tmpdir(), "lectern-composer-focus-")));
+// A short name: the demo's tmux socket lives below it, and macOS allows 104 bytes for a socket path.
+const root = await realpath(await mkdtemp(path.join(tmpdir(), "tcfo-")));
 const output = path.resolve("test-results", "composer-focus");
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
@@ -285,13 +286,15 @@ try {
   await page.waitForFunction(() => document.querySelector(".desk-pane[data-view='primary'] form.composer textarea")?.getAttribute("aria-disabled") !== "true");
   await box("primary").fill("先看问题再说");
   await box("primary").evaluate(el => el.setSelectionRange(1, 3));
+  // [1, 3, "forward"]; macOS has no selection direction by default: "none" there.
+  const caret = await selection();
   await ask("q-1");
   assert.equal(await box("primary").count(), 0, "the card stands in for the box");
   await publish(base);
   await questionCard.waitFor({ state: "detached" });
   await focusedOn("primary");
   assert.equal(await box("primary").inputValue(), "先看问题再说");
-  assert.deepEqual(await selection(), [1, 3, "forward"], "the caret and selection as they were");
+  assert.deepEqual(await selection(), caret, "the caret and selection as they were");
   await ask("q-2");
   await filter.click();
   await page.keyboard.type("yy");

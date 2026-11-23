@@ -123,13 +123,18 @@ async function run(locale) {
     page = await app.firstWindow();
     page.setDefaultTimeout(11000);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
-    // Light, whatever the system's theme.
-    await page.evaluate(() => {
-      const key = 'lectern.desktop.preferences.v1';
-      localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? '{}'), theme: 'light' }));
-    });
-    await page.reload();
-    await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+    // Light, whatever the system's theme. The app saves its whole state at every change (the first
+    // folder opening at launch is one), which on a slow machine can overwrite this before the reload.
+    for (let attempt = 1; ; attempt++) {
+      await page.evaluate(() => {
+        const key = 'lectern.desktop.preferences.v1';
+        localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? '{}'), theme: 'light' }));
+      });
+      await page.reload();
+      const light = await page.waitForFunction(() => document.documentElement.dataset.theme === 'light', null, { timeout: 4000 }).catch(error => error);
+      if (!(light instanceof Error)) break;
+      if (attempt === 3) throw light;
+    }
     // The first folder opens by itself at launch.
     await group(L.designs).waitFor();
     await group(L.designs).getByRole('button', { name: L.showMore(L.designs) }).click();

@@ -242,11 +242,13 @@ async function answer(text) {
     : `已收到你的消息：${text}\n\n这段回复正通过 tmux 抓屏显示。模型请求、登录状态和会话文件都由目标机器上的 Claude Code 管理。\n\n**落盘后**，正文会在同一个气泡内补全，不会追加第二份回复。\n\n\`\`\`bash\ntmux capture-pane -p -J\n\`\`\``;
   const chars = [...response];
   preview = '';
+  // 12 characters per 100 ms; a test that must see each paragraph start sets a slower pace.
+  const pace = Number(process.env.LECTERN_MOCK_STREAM_MS) || 100;
   for (let i = 0; i < chars.length; i += 12) {
     if (token !== generation) return;
     preview = chars.slice(0, i + 12).join('');
     draw();
-    await pause(100);
+    await pause(pace);
   }
   busy = false;
   draw();
