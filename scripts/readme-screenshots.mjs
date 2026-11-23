@@ -424,14 +424,23 @@ async function sortingShot({ app, page, workspace }, s, locale) {
   };
   const reply = { id: randomUUID(), title: tr(locale, '检查文档导航', 'Check docs navigation'),
     mapping: 'exact', paneId: '%93', status: 'working', updatedAt: at(30) };
-  const discovery = await page.evaluate(id => window.desktop.discover(id), workspace.id);
-  await app.evaluate(({ ipcMain }, { discovery, remote, reply }) => {
+  const [discovery, localHost] = await page.evaluate(id => Promise.all([
+    window.desktop.discover(id), window.desktop.checkHost({ kind: 'local' }),
+  ]), workspace.id);
+  const remoteHost = { ok: true, tools: {
+    system: 'Linux', distro: ['ubuntu'], managers: ['apt-get'], root: false,
+    tmux: { path: '/usr/bin/tmux', version: 'tmux 3.4' },
+    claude: { path: '/usr/local/bin/claude', version: '2.1.329 (Claude Code)' },
+  } };
+  await app.evaluate(({ ipcMain }, { discovery, localHost, remote, remoteHost, reply }) => {
+    ipcMain.removeHandler('lectern:checkHost');
+    ipcMain.handle('lectern:checkHost', (_event, target) => target.kind === 'ssh' ? remoteHost : localHost);
     ipcMain.removeHandler('lectern:listWorkspaces');
     ipcMain.handle('lectern:listWorkspaces', () => [discovery.workspace, remote]);
     ipcMain.removeHandler('lectern:discover');
     ipcMain.handle('lectern:discover', (_event, id) => id === remote.id
       ? { workspace: remote, sessions: [reply], panes: [] } : discovery);
-  }, { discovery, remote, reply });
+  }, { discovery, localHost, remote, remoteHost, reply });
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('lectern-projects-updated')));
 
   await page.getByRole('button', { name: tr(locale, '对话排序', 'Sort conversations'), exact: true }).click();
