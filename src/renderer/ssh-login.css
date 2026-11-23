@@ -1,14 +1,14 @@
 .ssh-login.modal { width: min(500px, calc(100vw - 32px)); }
-.ssh-login-host { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--muted); font-size: var(--text-label); overflow-wrap: anywhere; }
-.ssh-login-body { display: grid; gap: 12px; margin-top: 18px; min-height: 64px; }
+.ssh-login-host { display: flex; align-items: center; gap: 6px; margin-top: calc(7 * var(--ui-px)); color: var(--muted); font-size: var(--text-label); overflow-wrap: anywhere; }
+.ssh-login-body { display: grid; gap: calc(12 * var(--ui-px)); margin-top: calc(18 * var(--ui-px)); min-height: calc(64 * var(--ui-px)); }
 .ssh-login-status { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--secondary-text); font-size: var(--text-ui); }
 .ssh-login-success { color: var(--live); }
-.ssh-login-error { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--danger-bg); color: var(--danger); font-size: var(--text-label); line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ssh-login-error { margin: 0; padding: calc(10 * var(--ui-px)) 12px; border-radius: 8px; background: var(--danger-bg); color: var(--danger); font-size: var(--text-label); line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ssh-login-context, .ssh-login-prompt-text {
   margin: 0;
   max-height: 150px;
   overflow: auto;
-  padding: 10px 12px;
+  padding: calc(10 * var(--ui-px)) 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-sunken);
@@ -19,16 +19,16 @@
 }
 .ssh-login-prompt-text { color: var(--text); max-height: 200px; }
 .ssh-login-notice { margin: 0; color: var(--secondary-text); font-size: var(--text-label); line-height: 1.6; }
-.ssh-login-warning { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 8px; color: var(--secondary-text); font-size: var(--text-label); line-height: 1.6; }
-.ssh-login-warning svg { flex: none; margin-top: 2px; color: var(--signal); }
-.ssh-login-form { display: grid; gap: 7px; }
+.ssh-login-warning { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 calc(8 * var(--ui-px)); color: var(--secondary-text); font-size: var(--text-label); line-height: 1.6; }
+.ssh-login-warning svg { flex: none; margin-top: calc(2 * var(--ui-px)); color: var(--signal); }
+.ssh-login-form { display: grid; gap: calc(7 * var(--ui-px)); }
 .ssh-login-form label { color: var(--text); font-size: var(--text-ui); font-weight: 560; overflow-wrap: anywhere; white-space: pre-wrap; }
-.ssh-login-field { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); }
+.ssh-login-field { display: flex; align-items: center; gap: 8px; height: calc(38 * var(--ui-px)); padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); }
 .ssh-login-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
 .ssh-login-field svg { flex: none; color: var(--muted); }
 .ssh-login-field input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: var(--text-ui); font-family: var(--font-mono); }
 .ssh-login-hint { margin: 0; color: var(--muted); font-size: var(--text-meta); }
-.machine-login { flex-shrink: 0; width: 26px; height: 26px; padding: 0; opacity: .7; }
+.machine-login { flex-shrink: 0; width: calc(26 * var(--ui-px)); height: calc(26 * var(--ui-px)); padding: 0; opacity: .7; }
 .machine-heading:hover .machine-login, .machine-login:focus-visible { opacity: 1; }
 /* The field draws the focus ring; the bare input inside must not add its own. */
 .ssh-login .ssh-login-field input, .ssh-login .ssh-login-field input:focus, .ssh-login .ssh-login-field input:focus-visible {

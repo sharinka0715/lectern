@@ -93,7 +93,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 30px;
+  height: calc(30 * var(--ui-px));
   min-width: 0;
   padding: 0 9px;
   border-radius: 8px;
@@ -128,7 +128,7 @@
   overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 5px;
+  padding: calc(5 * var(--ui-px)) 5px;
   box-shadow: var(--shadow-pop);
   background: var(--surface-raised);
 }
@@ -137,8 +137,8 @@
   gap: 9px;
   align-items: center;
   width: 100%;
-  min-height: 34px;
-  padding: 7px 9px;
+  min-height: calc(34 * var(--ui-px));
+  padding: calc(7 * var(--ui-px)) 9px;
   text-align: left;
   background: transparent;
   color: var(--text);

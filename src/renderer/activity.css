@@ -1,37 +1,37 @@
-.activity-scroll { overflow:auto; padding:16px 14px 28px; }
-.activity-card + h3 { margin-top:24px; }
-.activity-scroll h3 { display:flex; align-items:center; gap:8px; font-size:var(--text-label); font-weight:600; color:var(--muted); margin:0 0 9px; }
+.activity-scroll { overflow:auto; padding:calc(16 * var(--ui-px)) 14px calc(28 * var(--ui-px)); }
+.activity-card + h3 { margin-top:calc(24 * var(--ui-px)); }
+.activity-scroll h3 { display:flex; align-items:center; gap:8px; font-size:var(--text-label); font-weight:600; color:var(--muted); margin:0 0 calc(9 * var(--ui-px)); }
 .activity-scroll h3 span { font:inherit; font-variant-numeric:tabular-nums; }
-.activity-card { background:var(--surface-raised); border:1px solid var(--line); border-radius:12px; padding:12px 13px; margin-bottom:8px; overflow-wrap:anywhere; }
+.activity-card { background:var(--surface-raised); border:1px solid var(--line); border-radius:12px; padding:calc(12 * var(--ui-px)) 13px; margin-bottom:calc(8 * var(--ui-px)); overflow-wrap:anywhere; }
 .activity-card[data-activity-state=running] { border-color:color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .activity-card-heading { display:flex; align-items:flex-start; gap:9px; width:100%; text-align:left; color:inherit; padding:0; background:transparent; }
-.activity-type-icon { display:grid; place-items:center; flex:none; width:28px; height:28px; color:var(--action); background:var(--tile); box-shadow:inset 0 0 0 1px var(--tile-line); border-radius:8px; }
-.activity-title { display:flex; flex:1; min-width:0; flex-direction:column; gap:3px; line-height:1.5; }
+.activity-type-icon { display:grid; place-items:center; flex:none; width:calc(28 * var(--ui-px)); height:calc(28 * var(--ui-px)); color:var(--action); background:var(--tile); box-shadow:inset 0 0 0 1px var(--tile-line); border-radius:8px; }
+.activity-title { display:flex; flex:1; min-width:0; flex-direction:column; gap:calc(3 * var(--ui-px)); line-height:1.5; }
 .activity-title small,.activity-card-subhead,.activity-facts,.activity-events time,.activity-output h4,.activity-empty small { font-size:var(--text-meta); color:var(--muted); }
 .activity-title strong { font-size:var(--text-label); font-weight:600; }
 .activity-chevron { flex:none; color:var(--muted); transform:rotate(-90deg); }
 .activity-chevron.open { transform:none; }
-.activity-card-subhead { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:9px; }
+.activity-card-subhead { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:calc(9 * var(--ui-px)); }
 .activity-state { display:inline-flex; align-items:center; gap:4px; font-size:var(--text-meta); color:var(--muted); }
 .activity-state i { width:6px; height:6px; border-radius:50%; background:currentColor; }
 [data-activity-state=running] .activity-state { color:var(--accent); }
 [data-activity-state=completed] .activity-state { color:var(--success); }
 [data-activity-state=failed] .activity-state { color:var(--danger); }
-.activity-open-conversation { margin-left:auto; display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 8px; border-radius:6px; border:1px solid var(--line);
+.activity-open-conversation { margin-left:auto; display:inline-flex; align-items:center; gap:4px; height:calc(22 * var(--ui-px)); padding:0 8px; border-radius:6px; border:1px solid var(--line);
   background:transparent; color:var(--secondary-text); font-size:var(--text-caption); white-space:nowrap; }
 .activity-open-conversation:hover { background:var(--hover); color:var(--text); }
-.activity-detail { border-top:1px solid var(--line); margin-top:10px; padding-top:10px; font-size:var(--text-label); }
-.activity-detail pre { font:var(--text-meta)/1.6 var(--font-mono); white-space:pre-wrap; margin:0; padding:8px 10px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px; max-height:170px; overflow:auto; }
-.activity-facts { display:grid; grid-template-columns:max-content 1fr; align-items:baseline; gap:4px 9px; margin:9px 0 0; }
+.activity-detail { border-top:1px solid var(--line); margin-top:calc(10 * var(--ui-px)); padding-top:calc(10 * var(--ui-px)); font-size:var(--text-label); }
+.activity-detail pre { font:var(--text-meta)/1.6 var(--font-mono); white-space:pre-wrap; margin:0; padding:calc(8 * var(--ui-px)) 10px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px; max-height:170px; overflow:auto; }
+.activity-facts { display:grid; grid-template-columns:max-content 1fr; align-items:baseline; gap:calc(4 * var(--ui-px)) 9px; margin:calc(9 * var(--ui-px)) 0 0; }
 .activity-facts dd { color:var(--text); margin:0; }
-.activity-prompt,.activity-result { white-space:pre-wrap; line-height:1.6; max-height:220px; overflow:auto; margin:3px 0; }
-.activity-result { margin-top:10px; }
-.activity-events { list-style:none; margin:11px 0 0; padding:0; max-height:200px; overflow:auto; }
-.activity-events li { display:flex; gap:7px; border-left:2px solid var(--line); padding:3px 0 3px 8px; }
+.activity-prompt,.activity-result { white-space:pre-wrap; line-height:1.6; max-height:220px; overflow:auto; margin:calc(3 * var(--ui-px)) 0; }
+.activity-result { margin-top:calc(10 * var(--ui-px)); }
+.activity-events { list-style:none; margin:calc(11 * var(--ui-px)) 0 0; padding:0; max-height:200px; overflow:auto; }
+.activity-events li { display:flex; gap:7px; border-left:2px solid var(--line); padding:calc(3 * var(--ui-px)) 0 calc(3 * var(--ui-px)) 8px; }
 .activity-events time { flex:none; }
-.activity-output h4 { font-weight:500; margin:10px 0 4px; }
-.activity-empty { text-align:center; padding:46px 8px; color:var(--muted); font-size:var(--text-ui); }
-.activity-toolbar-count { display:inline-grid; place-items:center; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--accent); color:var(--on-accent); font-size:var(--text-caption); font-variant-numeric:tabular-nums; }
+.activity-output h4 { font-weight:500; margin:calc(10 * var(--ui-px)) 0 calc(4 * var(--ui-px)); }
+.activity-empty { text-align:center; padding:calc(46 * var(--ui-px)) 8px; color:var(--muted); font-size:var(--text-ui); }
+.activity-toolbar-count { display:inline-grid; place-items:center; min-width:calc(18 * var(--ui-px)); height:calc(18 * var(--ui-px)); padding:0 5px; border-radius:9px; background:var(--accent); color:var(--on-accent); font-size:var(--text-caption); font-variant-numeric:tabular-nums; }
 /* A tally ("2 running · 1 done", see Tally): whole parts wrap to the next line. Each
    separator has a fixed slot outside its part's margin box (a negative margin, given
    back to the neighbouring part), so where a line ends (or starts) it lies outside the

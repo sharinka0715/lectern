@@ -2,10 +2,10 @@
    Knots are structural (filled = a running pane, hollow = saved history, ice =
    the session this pane is attached to). Activity state stays in the trailing
    dot column that folders and sessions share. */
-.machine-section + .machine-section { margin-top: 14px; }
-.machine-heading { display: flex; align-items: center; min-height: 30px; padding-right: 2px; }
+.machine-section + .machine-section { margin-top: calc(14 * var(--ui-px)); }
+.machine-heading { display: flex; align-items: center; min-height: calc(30 * var(--ui-px)); padding-right: 2px; }
 /* The chevron expands or collapses; the name opens a new chat on the machine. */
-.machine-toggle { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 20px; height: 28px; padding: 0; border-radius: 7px; background: transparent; color: var(--rail-muted); }
+.machine-toggle { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 20px; height: calc(28 * var(--ui-px)); padding: 0; border-radius: 7px; background: transparent; color: var(--rail-muted); }
 .machine-toggle:hover { background: var(--rail-hover); color: var(--rail-text); }
 .machine-open {
   flex: 1;
@@ -13,7 +13,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 28px;
+  height: calc(28 * var(--ui-px));
   padding: 0 6px 0 2px;
   border-radius: 7px;
   background: transparent;
@@ -23,27 +23,27 @@
 .machine-open:hover { background: var(--rail-hover); color: var(--rail-text); }
 .machine-open svg { flex-shrink: 0; color: var(--rail-muted); }
 .machine-open strong { overflow: hidden; font-size: var(--text-meta); font-weight: 650; white-space: nowrap; text-overflow: ellipsis; letter-spacing: .01em; }
-.machine-add { flex-shrink: 0; width: 26px; height: 26px; padding: 0; opacity: .7; }
+.machine-add { flex-shrink: 0; width: calc(26 * var(--ui-px)); height: calc(26 * var(--ui-px)); padding: 0; opacity: .7; }
 .machine-heading:hover .machine-add, .machine-add:focus-visible { opacity: 1; }
 .machine-folders { margin-inline-start: 4px; }
-.machine-empty { display: block; padding: 3px 0 6px 24px; color: var(--rail-muted); font-size: var(--text-caption); }
-.machine-endpoint { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; color: var(--secondary-text); overflow-wrap: anywhere; }
+.machine-empty { display: block; padding: calc(3 * var(--ui-px)) 0 calc(6 * var(--ui-px)) 24px; color: var(--rail-muted); font-size: var(--text-caption); }
+.machine-endpoint { display: flex; align-items: center; gap: 7px; margin-bottom: calc(14 * var(--ui-px)); color: var(--secondary-text); overflow-wrap: anywhere; }
 
 /* Folder row */
-.workspace-tree-group { margin-bottom: 2px; }
-.sidebar-tree .workspace-row { position: relative; display: flex; align-items: center; height: 30px; min-height: 30px; margin: 0; padding: 0; border-radius: 7px; }
+.workspace-tree-group { margin-bottom: calc(2 * var(--ui-px)); }
+.sidebar-tree .workspace-row { position: relative; display: flex; align-items: center; height: calc(30 * var(--ui-px)); min-height: calc(30 * var(--ui-px)); margin: 0; padding: 0; border-radius: 7px; }
 .sidebar-tree .workspace-row:hover { background: var(--rail-hover); }
-.sidebar-tree .workspace-toggle { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 18px; height: 30px; padding: 0 0 0 3px; background: transparent; }
-.sidebar-tree .workspace-select { display: flex; align-items: center; flex: 1; gap: 6px; height: 30px; min-width: 0; padding: 0 5px 0 2px; background: transparent; text-align: left; }
+.sidebar-tree .workspace-toggle { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 18px; height: calc(30 * var(--ui-px)); padding: 0 0 0 3px; background: transparent; }
+.sidebar-tree .workspace-select { display: flex; align-items: center; flex: 1; gap: 6px; height: calc(30 * var(--ui-px)); min-width: 0; padding: 0 5px 0 2px; background: transparent; text-align: left; }
 .sidebar-tree .workspace-select[aria-current="page"] .workspace-name { color: var(--rail-ice); }
 .sidebar-tree .workspace-chevron { flex-shrink: 0; color: var(--rail-muted); }
 .sidebar-tree .workspace-folder-icon { flex-shrink: 0; color: var(--rail-secondary); }
 .sidebar-tree .workspace-row.active .workspace-folder-icon { color: var(--rail-ice); }
-.sidebar-tree .workspace-name { overflow: hidden; color: var(--rail-text); font-size: var(--text-label); font-weight: 580; line-height: 30px; white-space: nowrap; text-overflow: ellipsis; }
+.sidebar-tree .workspace-name { overflow: hidden; color: var(--rail-text); font-size: var(--text-label); font-weight: 580; line-height: calc(30 * var(--ui-px)); white-space: nowrap; text-overflow: ellipsis; }
 .sidebar-tree .workspace-select > .session-status-dot { margin-left: auto; flex-shrink: 0; }
 .workspace-row-actions { display: flex; align-items: center; flex-shrink: 0; padding-right: 2px; opacity: 0; transition: opacity .12s ease; }
 .workspace-row:hover .workspace-row-actions, .workspace-row:focus-within .workspace-row-actions { opacity: 1; }
-.sidebar-tree .workspace-row-actions .icon-button { width: 20px; height: 22px; padding: 3px; color: var(--rail-muted); }
+.sidebar-tree .workspace-row-actions .icon-button { width: 20px; height: calc(22 * var(--ui-px)); padding: calc(3 * var(--ui-px)) 3px; color: var(--rail-muted); }
 .sidebar-tree .workspace-row-actions .icon-button:hover:not(:disabled) { color: var(--rail-text); background: var(--rail-selected); }
 .workspace-row[data-drag-over] { box-shadow: inset 0 -2px var(--rail-ice); }
 /* The other split pane's new-chat draft has no row: its folder is marked like one. Its
@@ -53,7 +53,7 @@
 .sidebar-tree .workspace-row[data-split-open]:hover { background: var(--rail-split-hover); }
 
 /* The line. Each row draws its own segment so the line ends at the last knot. */
-.workspace-children { position: relative; margin: 1px 0 4px 24px; padding-left: 14px; }
+.workspace-children { position: relative; margin: calc(1 * var(--ui-px)) 0 calc(4 * var(--ui-px)) 24px; padding-left: 14px; }
 .session-row-wrap { position: relative; }
 .session-row-wrap::before {
   content: "";
@@ -108,15 +108,15 @@
   align-items: center;
   gap: 7px;
   width: 100%;
-  height: 30px;
-  min-height: 30px;
+  height: calc(30 * var(--ui-px));
+  min-height: calc(30 * var(--ui-px));
   margin: 0;
   padding: 0 47px 0 8px;
   border-radius: 7px;
   background: transparent;
   color: var(--rail-secondary);
   font-size: var(--text-label);
-  line-height: 30px;
+  line-height: calc(30 * var(--ui-px));
   text-align: left;
   transition: background-color .12s ease, color .12s ease;
 }
@@ -155,9 +155,9 @@
 .sidebar-tree .session-row[data-status="error"] .session-state-label { color: var(--danger-dot); }
 .session-row-wrap .session-rename {
   position: absolute;
-  inset: 3px 3px auto auto;
-  width: 24px;
-  height: 24px;
+  inset: calc(3 * var(--ui-px)) 3px auto auto;
+  width: calc(24 * var(--ui-px));
+  height: calc(24 * var(--ui-px));
   padding: 0;
   color: var(--rail-muted);
   opacity: 0;
@@ -167,18 +167,18 @@
 .session-row-wrap .session-rename:hover { color: var(--rail-text); background: var(--rail-selected); }
 
 /* The cross-project list keeps the same status colors without a folder line. */
-.sidebar-global h2 { margin: 0 0 4px; padding-inline: 8px; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 650; }
-.sidebar-global h2:not(:first-child) { margin-top: 12px; }
+.sidebar-global h2 { margin: 0 0 calc(4 * var(--ui-px)); padding-inline: 8px; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 650; }
+.sidebar-global h2:not(:first-child) { margin-top: calc(12 * var(--ui-px)); }
 .sidebar-global .session-row-wrap::before,
 .sidebar-tree .sidebar-global .session-row::before { display: none; }
 .sidebar-tree .sidebar-global .session-row {
   height: auto;
-  min-height: 42px;
-  padding-block: 4px;
+  min-height: calc(42 * var(--ui-px));
+  padding-block: calc(4 * var(--ui-px));
   padding-inline-end: 31px;
   line-height: 1.3;
 }
-.sidebar-global .session-rename { inset-block-start: calc(50% - 12px); }
+.sidebar-global .session-rename { inset-block-start: calc(50% - 12 * var(--ui-px)); }
 .session-name-and-origin { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .session-origin { overflow: hidden; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 400; white-space: nowrap; text-overflow: ellipsis; }
 
@@ -195,24 +195,24 @@
 .sidebar-tree .state-error { background: var(--danger-dot); }
 
 /* Notes under a folder */
-.tree-note { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 8px; color: var(--rail-muted); font-size: var(--text-meta); }
+.tree-note { display: flex; align-items: center; gap: 7px; min-width: 0; height: calc(28 * var(--ui-px)); padding: 0 8px; color: var(--rail-muted); font-size: var(--text-meta); }
 .tree-note > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tree-note > button { margin-left: auto; }
-.tree-note .icon-button { width: 22px; height: 22px; padding: 3px; }
+.tree-note .icon-button { width: calc(22 * var(--ui-px)); height: calc(22 * var(--ui-px)); padding: calc(3 * var(--ui-px)) 3px; }
 .tree-note-error { color: var(--rail-muted); }
-.tree-note-action { padding: 3px 7px; border-radius: 6px; background: transparent; color: var(--rail-ice); font-size: var(--text-meta); }
+.tree-note-action { padding: calc(3 * var(--ui-px)) 7px; border-radius: 6px; background: transparent; color: var(--rail-ice); font-size: var(--text-meta); }
 .tree-note-action:hover:not(:disabled) { background: var(--rail-hover); }
-.tree-more { display: flex; align-items: baseline; justify-content: flex-start; gap: 6px; width: 100%; margin: 2px 0 4px; padding: 4px 9px; border-radius: 7px; background: transparent; color: var(--secondary-text); font-size: var(--text-label); text-align: left; }
+.tree-more { display: flex; align-items: baseline; justify-content: flex-start; gap: 6px; width: 100%; margin: calc(2 * var(--ui-px)) 0 calc(4 * var(--ui-px)); padding: calc(4 * var(--ui-px)) 9px; border-radius: 7px; background: transparent; color: var(--secondary-text); font-size: var(--text-label); text-align: left; }
 .tree-more:hover, .tree-more:focus-visible { background: var(--hover); color: var(--text); }
 .tree-more small { color: var(--muted); font-size: var(--text-caption); }
-.tree-note-scan { flex-direction: column; align-items: flex-start; height: auto; gap: 1px; padding-block: 3px 5px; }
+.tree-note-scan { flex-direction: column; align-items: flex-start; height: auto; gap: 1px; padding-block: calc(3 * var(--ui-px)) calc(5 * var(--ui-px)); }
 .tree-note-scan > button { margin-left: 0; }
 .tree-more-row { display: flex; align-items: baseline; gap: 2px; }
 .tree-more-row > .tree-more { width: auto; flex: 1 1 auto; }
 .tree-more-row > .tree-collapse { flex: 0 0 auto; }
 
 /* A machine whose everyday connection failed: checked at startup and by folder reads. */
-.machine-connection { flex-shrink: 0; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: var(--text-caption); line-height: 17px; font-weight: 560; }
+.machine-connection { flex-shrink: 0; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: var(--text-caption); line-height: calc(17 * var(--ui-px)); font-weight: 560; }
 .machine-connection.state-login { color: var(--warning); background: var(--warning-bg); }
 .machine-connection.state-unreachable { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .machine-connection.state-unsupported { color: var(--secondary-text); background: var(--surface-muted); }

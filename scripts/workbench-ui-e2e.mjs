@@ -110,6 +110,25 @@ async function expectText(view, i) {
     .getByText("独立历史回复 " + i, { exact: true })
     .waitFor();
 }
+// Rows that follow the interface font size: a sidebar conversation and folder, and one
+// line of reply text in the primary pane. Their heights scale with it, so a smaller font
+// leaves no extra space between the rows.
+async function measureRows() {
+  const rows = await page.evaluate(() => {
+    const height = selector => document.querySelector(selector).getBoundingClientRect().height;
+    return { font: parseFloat(getComputedStyle(document.documentElement).fontSize),
+      session: height('.sidebar-tree .session-row'), folder: height('.sidebar-tree .workspace-row') };
+  });
+  const line = await pane("primary").getByText("独立历史回复 0", { exact: true }).boundingBox();
+  return { ...rows, line: line.height };
+}
+function expectScaledRows(rows, base) {
+  for (const key of ["session", "folder", "line"]) {
+    const expected = base[key] * rows.font / base.font;
+    assert.ok(Math.abs(rows[key] - expected) <= 1,
+      `${key} row at ${rows.font}px: ${rows[key]}px, expected ${expected.toFixed(2)}px (${base[key]}px at ${base.font}px)`);
+  }
+}
 const defaultLayout = { chat: 130, composer: 135, tool: 13, width: 1000 };
 const customLayout = { chat: 120, composer: 190, tool: 18, width: 800 };
 async function checkChatLayout(view, expected) {
@@ -175,6 +194,8 @@ try {
   await launch();
   await row(0).click();
   await expectText("primary", 0);
+  const defaultRows = await measureRows();
+  assert.equal(defaultRows.font, 18, "the default interface font size");
   // One conversation on screen: dragging it cannot split off a copy of itself.
   await dragChat(0, null, async () => {
     assert.equal(await page.locator(".split-drop").count(), 0);
@@ -361,6 +382,7 @@ try {
         .evaluate((el) => parseFloat(getComputedStyle(el).fontSize)),
       saved,
     );
+    expectScaledRows(await measureRows(), defaultRows);
     await checkChatLayout('primary', saved === 16 ? defaultLayout :
       { chat: 130, composer: 150, tool: 18, width: 800 });
   }
@@ -375,6 +397,7 @@ try {
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
   results.chatLayout = true;
   results.fontPreferences = true;
+  results.rowsFollowFontSize = true;
   assert.deepEqual(errors, []);
   results.success = true;
 } catch (e) {

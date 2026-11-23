@@ -20,7 +20,7 @@
   width: fit-content;
   max-width: 100%;
   margin-left: 6px;
-  padding: 3px 13px 3px 9px;
+  padding: calc(3 * var(--ui-px)) 13px calc(3 * var(--ui-px)) 9px;
   /* Warm sand with a terracotta pulse: the app's own colours, not a blue tint. */
   border: 1px solid color-mix(in srgb, var(--action) 16%, var(--line));
   border-radius: 999px;

@@ -15,30 +15,30 @@
   box-shadow: 0 1px 2px rgb(60 44 22 / 6%), 0 8px 24px rgb(60 44 22 / 9%); font-size: var(--text-label);
 }
 /* Repository name and the fold button, then the branch and the Claude Code version. */
-.activity-float > header { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; min-height: 36px; padding: 6px 6px 6px 14px; }
+.activity-float > header { display: flex; flex-wrap: wrap; align-items: center; gap: calc(2 * var(--ui-px)) 7px; min-height: calc(36 * var(--ui-px)); padding: calc(6 * var(--ui-px)) 6px calc(6 * var(--ui-px)) 14px; }
 .activity-float-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: var(--text-label); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .activity-float-meta { display: flex; flex-basis: 100%; align-items: center; gap: 6px; min-width: 0; padding-right: 8px; }
 .activity-float-branch { display: inline-flex; align-items: center; gap: 3px; min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--text-caption); white-space: nowrap; text-overflow: ellipsis; }
-.activity-float-version { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--bubble) 70%, var(--line)); color: var(--muted);
+.activity-float-version { flex: none; padding: calc(1 * var(--ui-px)) 7px; border-radius: 999px; background: color-mix(in srgb, var(--bubble) 70%, var(--line)); color: var(--muted);
   font-size: var(--text-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.activity-float > header .icon-button { width: 26px; height: 26px; margin-left: auto; color: var(--muted); }
+.activity-float > header .icon-button { width: calc(26 * var(--ui-px)); height: calc(26 * var(--ui-px)); margin-left: auto; color: var(--muted); }
 /* The machine beside the folder name: 本地 or the SSH machine's name. */
-.activity-float-machine { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 55%; overflow: hidden; padding: 1px 7px;
+.activity-float-machine { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 55%; overflow: hidden; padding: calc(1 * var(--ui-px)) 7px;
   border: 1px solid var(--line-strong); border-radius: 999px; color: var(--secondary-text); font-size: var(--text-caption); white-space: nowrap; }
 .activity-float-machine > svg { flex: none; color: var(--muted); }
 .activity-float-machine > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.activity-float-section { padding: 2px 6px; }
-.activity-float-section + .activity-float-section { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 4px; }
-.activity-float-section:last-of-type { padding-bottom: 6px; }
+.activity-float-section { padding: calc(2 * var(--ui-px)) 6px; }
+.activity-float-section + .activity-float-section { border-top: 1px solid var(--line); padding-top: calc(6 * var(--ui-px)); margin-top: calc(4 * var(--ui-px)); }
+.activity-float-section:last-of-type { padding-bottom: calc(6 * var(--ui-px)); }
 .activity-float-row { display: flex; align-items: center; gap: 2px; }
 /* The heading (icon, name, summary), then the chevron. A summary that does not fit beside
    the name moves whole to a second line, right-aligned; only where even that line is too
    narrow do its parts wrap (Tally), never cut. The name is cut only when it alone is too wide. */
 .activity-float-toggle {
-  display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 30px; padding: 3px 8px; border-radius: 8px;
+  display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: calc(30 * var(--ui-px)); padding: calc(3 * var(--ui-px)) 8px; border-radius: 8px;
   background: transparent; color: var(--text); text-align: left;
 }
-.activity-float-heading { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.activity-float-heading { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: calc(2 * var(--ui-px)) 8px; min-width: 0; }
 .activity-float-toggle:not(:disabled):hover { background: var(--hover); }
 .activity-float-toggle:disabled { cursor: default; opacity: 1; }
 .activity-float-icon { display: inline-flex; flex: none; color: var(--muted); }
@@ -49,23 +49,23 @@
 .activity-float-summary .activity-float-dots { margin-right: 6px; }
 .activity-float-chevron { flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform .15s ease; }
 .activity-float-section[data-open] .activity-float-chevron { transform: none; }
-.activity-float-refresh { flex: none; width: 26px; height: 26px; color: var(--muted); }
-.activity-float-link { flex: none; padding: 2px 8px; border-radius: 6px; background: transparent; color: var(--accent); font-size: var(--text-meta); }
+.activity-float-refresh { flex: none; width: calc(26 * var(--ui-px)); height: calc(26 * var(--ui-px)); color: var(--muted); }
+.activity-float-link { flex: none; padding: calc(2 * var(--ui-px)) 8px; border-radius: 6px; background: transparent; color: var(--accent); font-size: var(--text-meta); }
 .activity-float-link:hover { background: var(--hover); }
-.activity-float-body { display: grid; gap: 6px; max-height: 320px; overflow: auto; padding: 4px 2px 6px; }
-.activity-float-body .activity-card { margin: 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 55%, transparent); }
+.activity-float-body { display: grid; gap: calc(6 * var(--ui-px)); max-height: 320px; overflow: auto; padding: calc(4 * var(--ui-px)) 2px calc(6 * var(--ui-px)); }
+.activity-float-body .activity-card { margin: 0; padding: calc(8 * var(--ui-px)) 10px; border-radius: 10px; background: color-mix(in srgb, var(--surface-raised) 55%, transparent); }
 .activity-float-body .activity-card-heading { align-items: center; gap: 8px; }
-.activity-float-body .activity-type-icon { width: 22px; height: 22px; border-radius: 6px; }
+.activity-float-body .activity-type-icon { width: calc(22 * var(--ui-px)); height: calc(22 * var(--ui-px)); border-radius: 6px; }
 .activity-float-body .activity-type-icon svg { width: 13px; height: 13px; }
 /* The section already names the kind. */
 .activity-float-body .activity-title small { display: none; }
 .activity-float-body .activity-title strong { font-size: var(--text-meta); }
-.activity-float-body .activity-card-subhead { margin-top: 5px; gap: 7px; }
+.activity-float-body .activity-card-subhead { margin-top: calc(5 * var(--ui-px)); gap: 7px; }
 /* Details stay smaller than the task's title. */
 .activity-float-body :is(.activity-card-subhead, .activity-state, .activity-facts, .activity-events time, .activity-output h4) { font-size: var(--text-caption); }
-.activity-float-body .activity-detail { margin-top: 8px; padding-top: 8px; font-size: var(--text-caption); line-height: 1.5; }
-.activity-float-body .activity-detail pre { font: .625rem/1.5 var(--font-mono); padding: 6px 8px; max-height: 120px; }
-.activity-float-body .activity-facts { gap: 2px 8px; margin-top: 7px; }
+.activity-float-body .activity-detail { margin-top: calc(8 * var(--ui-px)); padding-top: calc(8 * var(--ui-px)); font-size: var(--text-caption); line-height: 1.5; }
+.activity-float-body .activity-detail pre { font: .625rem/1.5 var(--font-mono); padding: calc(6 * var(--ui-px)) 8px; max-height: 120px; }
+.activity-float-body .activity-facts { gap: calc(2 * var(--ui-px)) 8px; margin-top: calc(7 * var(--ui-px)); }
 .activity-float-body :is(.activity-prompt, .activity-result) { line-height: 1.5; max-height: 160px; }
 
 /* Subagent and task states as a row of dots, like the native task list. */
@@ -80,7 +80,7 @@
 
 .activity-float-files, .activity-float-attachments { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
 .activity-float-files button, .activity-float-attachments button {
-  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 0 8px; border-radius: 7px;
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: calc(28 * var(--ui-px)); padding: 0 8px; border-radius: 7px;
   background: transparent; color: var(--text); font-size: var(--text-meta); text-align: left;
 }
 .activity-float-files button:not(:disabled):hover, .activity-float-attachments button:hover { background: var(--hover); }
@@ -93,7 +93,7 @@
 .activity-float-file { display: flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .activity-float-file small { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
 .activity-float-files .activity-changes { font-size: var(--text-caption); }
-.activity-float-more { padding: 4px 8px; color: var(--muted); font-size: var(--text-caption); }
+.activity-float-more { padding: calc(4 * var(--ui-px)) 8px; color: var(--muted); font-size: var(--text-caption); }
 .activity-float-attachments button svg { flex: none; color: var(--muted); }
 /* Each attachment's slot: an image's own thumbnail, center-cropped to a square; other files and loading images keep the icon. */
 .activity-float-thumb { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center;
@@ -101,15 +101,15 @@
 /* Out of flow, so a tall image cannot stretch the slot: the box stays the square and cover crops the long side. */
 .activity-float-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 .activity-float-thumb:has(img) { outline: 1px solid var(--line); outline-offset: -1px; }
-.activity-float-error, .activity-float-empty { margin: 4px 14px 12px; color: var(--muted); font-size: var(--text-meta); line-height: 1.55; }
+.activity-float-error, .activity-float-empty { margin: calc(4 * var(--ui-px)) 14px calc(12 * var(--ui-px)); color: var(--muted); font-size: var(--text-meta); line-height: 1.55; }
 .activity-float-error { color: var(--danger); }
 
 /* Folded: a small pill in the same corner. */
 .activity-float-pill {
-  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 6px; height: calc(28 * var(--ui-px)); padding: 0 11px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--float-bg); color: var(--secondary-text); font-size: var(--text-meta); box-shadow: 0 1px 2px rgb(60 44 22 / 6%), 0 4px 14px rgb(60 44 22 / 7%);
 }
 .activity-float-pill:hover { color: var(--text); }
-.activity-float-pill b { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: var(--text-caption); }
+.activity-float-pill b { display: inline-grid; place-items: center; min-width: calc(17 * var(--ui-px)); height: calc(17 * var(--ui-px)); padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: var(--text-caption); }
 .activity-float-pill small { color: var(--muted); font-size: var(--text-caption); }
 @container chatpane (max-width: 520px) { .activity-float-anchor { --activity-float-width: 312px; } }

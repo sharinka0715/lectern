@@ -1,12 +1,12 @@
 /* The hover card of buttons and figures around the input box (Tooltip.tsx). */
 .hover-tip {
-  position: fixed; z-index: 1000; max-width: min(320px, calc(100vw - 16px)); padding: 8px 11px 9px;
+  position: fixed; z-index: 1000; max-width: min(320px, calc(100vw - 16px)); padding: calc(8 * var(--ui-px)) 11px calc(9 * var(--ui-px));
   border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-raised); color: var(--secondary-text);
   box-shadow: var(--shadow-pop); font-size: var(--text-meta); line-height: 1.55; pointer-events: none;
   animation: hover-tip-in .12s ease-out;
 }
 .hover-tip strong { display: block; color: var(--text); font-size: var(--text-label); font-weight: 600; }
-.hover-tip p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.hover-tip p { margin: calc(4 * var(--ui-px)) 0 0; overflow-wrap: anywhere; }
 @keyframes hover-tip-in { from { opacity: 0; transform: translateY(3px); } }
 .hover-tip[data-below] { animation-name: hover-tip-in-below; }
 @keyframes hover-tip-in-below { from { opacity: 0; transform: translateY(-3px); } }

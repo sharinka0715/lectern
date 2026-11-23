@@ -1,13 +1,13 @@
 .directory-picker.modal { width: min(540px, calc(100vw - 32px)); }
-.directory-picker-host { display: flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--muted); font-size: var(--text-label); overflow-wrap: anywhere; }
-.directory-picker-navigation { display: flex; gap: 5px; align-items: center; margin: 18px 0 9px; }
-.directory-picker-navigation input { flex: 1; min-width: 0; height: 36px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); color: var(--text); font: inherit; font-size: var(--text-ui); }
-.directory-picker-list { overflow-y: auto; overscroll-behavior: contain; height: min(32vh, 290px); border-block: 1px solid var(--line); padding-block: 4px; }
-.directory-picker-list p { margin: 16px 8px; color: var(--muted); font-size: var(--text-label); overflow-wrap: anywhere; }
+.directory-picker-host { display: flex; align-items: center; gap: 6px; margin-top: calc(7 * var(--ui-px)); color: var(--muted); font-size: var(--text-label); overflow-wrap: anywhere; }
+.directory-picker-navigation { display: flex; gap: 5px; align-items: center; margin: calc(18 * var(--ui-px)) 0 calc(9 * var(--ui-px)); }
+.directory-picker-navigation input { flex: 1; min-width: 0; height: calc(36 * var(--ui-px)); padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); color: var(--text); font: inherit; font-size: var(--text-ui); }
+.directory-picker-list { overflow-y: auto; overscroll-behavior: contain; height: min(32vh, 290px); border-block: 1px solid var(--line); padding-block: calc(4 * var(--ui-px)); }
+.directory-picker-list p { margin: calc(16 * var(--ui-px)) 8px; color: var(--muted); font-size: var(--text-label); overflow-wrap: anywhere; }
 .directory-picker-list .directory-picker-error { color: var(--danger); }
-.directory-picker-row { display: flex; align-items: center; width: 100%; gap: 10px; text-align: left; border-radius: 8px; padding: 8px; color: var(--text); background: transparent; font-size: var(--text-ui); }
+.directory-picker-row { display: flex; align-items: center; width: 100%; gap: 10px; text-align: left; border-radius: 8px; padding: calc(8 * var(--ui-px)) 8px; color: var(--text); background: transparent; font-size: var(--text-ui); }
 .directory-picker-row span { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
 .directory-picker-row svg { flex-shrink: 0; color: var(--muted); }
 .directory-picker-row:hover, .directory-picker-row:focus-visible { background: var(--hover); }
 .directory-picker-navigation input { font-family: var(--font-mono); font-size: var(--text-label); }
-.directory-picker-login { margin: 0 8px 12px; }
+.directory-picker-login { margin: 0 8px calc(12 * var(--ui-px)); }

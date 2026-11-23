@@ -88,7 +88,7 @@
 .split-drop.disabled { border-style: dotted; background: color-mix(in srgb, var(--surface-muted) 80%, transparent); color: var(--muted); opacity: .75; }
 .split-drop-zones.single { grid-template: 1fr / 1fr; place-items: center; }
 .split-drop-hint {
-  padding: 10px 16px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--surface-raised);
+  padding: calc(10 * var(--ui-px)) 16px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--surface-raised);
   color: var(--secondary-text); font-size: var(--text-ui); box-shadow: var(--shadow-soft);
 }
 .split-drop.over {
@@ -131,8 +131,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
-  margin: 2px 0 6px;
+  height: calc(34 * var(--ui-px));
+  margin: calc(2 * var(--ui-px)) 0 calc(6 * var(--ui-px));
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 9px;
@@ -160,7 +160,7 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .project-group-heading {
-  padding: 10px 8px 4px;
+  padding: calc(10 * var(--ui-px)) 8px calc(4 * var(--ui-px));
   font-weight: 600;
   font-size: var(--text-meta);
   color: var(--muted);
@@ -172,10 +172,10 @@
   display: flex; flex-direction: column; overflow: hidden; padding: 0;
   width: min(960px, 94vw); height: min(800px, 87vh); background: var(--surface);
 }
-.handoff-source { flex: none; padding: 12px 20px; border-bottom: 1px solid var(--line); }
+.handoff-source { flex: none; padding: calc(12 * var(--ui-px)) 20px; border-bottom: 1px solid var(--line); }
 .handoff-source label { display: flex; align-items: center; gap: 10px; color: var(--secondary-text); font-size: var(--text-label); }
-.handoff-source select { min-width: 0; max-width: 80%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); color: var(--text); }
-.handoff-source p { margin: 7px 0 0; color: var(--muted); font-size: var(--text-meta); }
+.handoff-source select { min-width: 0; max-width: 80%; padding: calc(5 * var(--ui-px)) 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); color: var(--text); }
+.handoff-source p { margin: calc(7 * var(--ui-px)) 0 0; color: var(--muted); font-size: var(--text-meta); }
 .handoff-body { display: flex; flex: 1; min-height: 0; position: relative; }
 .handoff-body .transcript-area { min-width: 0; container-type: inline-size; }
 .handoff-body .artifact-drawer { max-width: 90%; }
@@ -197,7 +197,7 @@
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
-  padding: 14px 16px 14px 22px;
+  padding: calc(14 * var(--ui-px)) 16px calc(14 * var(--ui-px)) 22px;
 }
 .pref-header h2,
 .pref-section h3 {
@@ -220,7 +220,7 @@
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  padding: 12px 8px;
+  padding: calc(12 * var(--ui-px)) 8px;
   background: var(--rail);
 }
 .pref-layout nav button,
@@ -229,7 +229,7 @@
   align-items: center;
   gap: 9px;
   background: transparent;
-  padding: 8px 10px;
+  padding: calc(8 * var(--ui-px)) 10px;
   border-radius: 8px;
   color: var(--text);
   font-size: var(--text-label);
@@ -249,7 +249,7 @@
 .pref-layout nav button[aria-current] > svg { color: var(--rail-ice); }
 .pref-layout nav { overflow-y: auto; }
 .pref-section {
-  padding: 22px 28px 28px;
+  padding: calc(22 * var(--ui-px)) 28px calc(28 * var(--ui-px));
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
@@ -258,20 +258,20 @@
 .pref-section h3 {
   font-size: var(--text-ui);
   font-weight: 650;
-  margin-bottom: 10px;
+  margin-bottom: calc(10 * var(--ui-px));
 }
 .pref-section p {
   color: var(--muted);
   font-size: var(--text-label);
   line-height: 1.6;
-  margin: 8px 0 16px;
+  margin: calc(8 * var(--ui-px)) 0 calc(16 * var(--ui-px));
 }
 .pref-section label {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 48px;
+  min-height: calc(48 * var(--ui-px));
   font-size: var(--text-label);
   border-bottom: 1px solid var(--line);
 }
@@ -296,7 +296,7 @@
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
-  padding: 6px 10px;
+  padding: calc(6 * var(--ui-px)) 10px;
   min-width: 0;
   font: inherit;
   font-size: var(--text-label);
@@ -307,29 +307,29 @@
 }
 .pref-action {
   border: 1px solid var(--line-strong);
-  margin-top: 12px;
+  margin-top: calc(12 * var(--ui-px));
   font-weight: 560;
 }
 .pref-chat-preview {
-  margin: 12px 0 0;
+  margin: calc(12 * var(--ui-px)) 0 0;
   border-top: 1px solid var(--line);
-  padding-top: 12px;
+  padding-top: calc(12 * var(--ui-px));
 }
 .pref-chat-preview figcaption {
   color: var(--muted);
   font-size: var(--text-meta);
 }
-.pref-code-preview { margin: 12px 0 0; border-top: 1px solid var(--line); padding-top: 12px; }
+.pref-code-preview { margin: calc(12 * var(--ui-px)) 0 0; border-top: 1px solid var(--line); padding-top: calc(12 * var(--ui-px)); }
 .pref-code-preview figcaption { color: var(--muted); font-size: var(--text-meta); }
-.pref-code-preview .code-preview { margin-top: 8px; padding: 10px 12px; max-height: 220px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.pref-code-preview .code-preview { margin-top: calc(8 * var(--ui-px)); padding: calc(10 * var(--ui-px)) 12px; max-height: 220px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .pref-preview-column {
   display: grid;
-  gap: 7px;
-  margin: 8px auto 0;
+  gap: calc(7 * var(--ui-px));
+  margin: calc(8 * var(--ui-px)) auto 0;
   min-width: 0;
 }
 .pref-preview-column .composer {
-  padding: 6px 9px;
+  padding: calc(6 * var(--ui-px)) 9px;
   border-radius: 7px;
 }
 .pref-preview-column textarea {
@@ -339,8 +339,8 @@
 @media (max-width: 640px) {
   .pref-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .pref-layout nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
-  .pref-layout nav button { padding: 5px 8px; }
-  .pref-section { padding: 12px; }
+  .pref-layout nav button { padding: calc(5 * var(--ui-px)) 8px; }
+  .pref-section { padding: calc(12 * var(--ui-px)) 12px; }
   .pref-section label { flex-wrap: wrap; gap: 4px 10px; }
 }
 .pref-action.primary {
@@ -354,7 +354,7 @@
   gap: 4px;
   align-items: center;
   border-bottom: 1px solid var(--line);
-  padding: 9px 0;
+  padding: calc(9 * var(--ui-px)) 0;
 }
 .pref-project > div {
   flex: 1;
@@ -370,7 +370,7 @@
 .pref-project small {
   color: var(--muted);
   font-size: var(--text-meta);
-  margin-top: 2px;
+  margin-top: calc(2 * var(--ui-px));
 }
 .pref-project input {
   width: 80px;
@@ -405,16 +405,16 @@
 
 /* SSH config import */
 .pref-connection-actions { justify-content: flex-start; flex-wrap: wrap; }
-.pref-ssh-connection { margin-top: 18px; border-top: 1px solid var(--line); }
+.pref-ssh-connection { margin-top: calc(18 * var(--ui-px)); border-top: 1px solid var(--line); }
 .pref-actions .pref-import-link { margin-right: auto; }
 .ssh-import-modal .history-scan-summary { gap: 12px; }
-.ssh-import-filter { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--text-label); }
+.ssh-import-filter { flex: 1; min-width: 0; padding: calc(6 * var(--ui-px)) 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--text-label); }
 .ssh-import-modal .history-project-row { cursor: pointer; }
 .ssh-import-modal .history-project-row[data-status="unsupported"] { border-style: dashed; }
 
 /* Settings → 回收站 */
-.pref-trash-group { margin: 12px 0; }
-.pref-trash-group h4 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 6px; font-size: var(--text-label); font-weight: 600; }
+.pref-trash-group { margin: calc(12 * var(--ui-px)) 0; }
+.pref-trash-group h4 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 calc(6 * var(--ui-px)); font-size: var(--text-label); font-weight: 600; }
 .pref-trash-group h4 small { color: var(--muted); font-weight: 400; font-family: var(--font-mono); font-size: var(--text-caption); overflow-wrap: anywhere; }
 .pref-empty { color: var(--muted); }
 .pref-project strong .machine-connection { margin-left: 8px; vertical-align: 1px; }

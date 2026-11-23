@@ -7,14 +7,14 @@
 .composer-has-question > .terminal-panel { min-height: 0; overflow-y: auto; }
 .question-card {
   flex: 0 1 auto; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
-  min-height: 0; padding: 13px 16px; border: 1px solid var(--warning-line); border-left: 3px solid var(--signal); border-radius: 12px;
+  min-height: 0; padding: calc(13 * var(--ui-px)) 16px; border: 1px solid var(--warning-line); border-left: 3px solid var(--signal); border-radius: 12px;
   color: var(--text); background: var(--surface-raised); box-shadow: var(--shadow-soft); font-size: var(--text-label); overflow-wrap: anywhere;
 }
 .question-card button { border: 0; }
 .question-card button:focus-visible, .question-card textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .question-header, .question-header span, .question-header button, .question-preview figcaption,
 .question-link, .question-option-tools { display: flex; align-items: center; gap: 6px; }
-.question-header { justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.question-header { justify-content: space-between; flex-wrap: wrap; gap: calc(4 * var(--ui-px)) 12px; }
 .question-header > span { font-weight: 620; color: var(--warning); }
 .question-header button, .question-nav button, .question-option-tools button, .question-link {
   padding: 5px; border-radius: 4px; background: transparent; color: var(--muted); font-size: var(--text-meta);
@@ -23,17 +23,17 @@
   background: var(--hover); color: var(--text);
 }
 .question-card svg { flex: none; }
-.question-nav { display: flex; align-items: center; margin-top: 6px; gap: 4px; }
-.question-nav button, .question-option-tools button { display: grid; place-items: center; min-width: 28px; min-height: 28px; }
-.question-nav ol { flex: 1; display: flex; align-items: stretch; flex-wrap: wrap; gap: 3px 10px; list-style: none; padding: 0; margin: 0; }
-.question-nav li { display: flex; align-items: center; gap: 2px; min-width: 0; padding: 2px 0; color: var(--muted); font-size: var(--text-meta); }
+.question-nav { display: flex; align-items: center; margin-top: calc(6 * var(--ui-px)); gap: 4px; }
+.question-nav button, .question-option-tools button { display: grid; place-items: center; min-width: calc(28 * var(--ui-px)); min-height: calc(28 * var(--ui-px)); }
+.question-nav ol { flex: 1; display: flex; align-items: stretch; flex-wrap: wrap; gap: calc(3 * var(--ui-px)) 10px; list-style: none; padding: 0; margin: 0; }
+.question-nav li { display: flex; align-items: center; gap: 2px; min-width: 0; padding: calc(2 * var(--ui-px)) 0; color: var(--muted); font-size: var(--text-meta); }
 .question-nav [aria-current="step"] { border-bottom: 2px solid var(--accent); font-weight: 600; color: var(--text); }
-.question-card h3 { max-width: 75ch; margin: 9px 0; font-size: var(--text-body); line-height: 1.55; font-weight: 650; white-space: pre-wrap; }
-.question-guidance { margin: -2px 0 8px; color: var(--muted); font-size: var(--text-meta); }
+.question-card h3 { max-width: 75ch; margin: calc(9 * var(--ui-px)) 0; font-size: var(--text-body); line-height: 1.55; font-weight: 650; white-space: pre-wrap; }
+.question-guidance { margin: calc(-2 * var(--ui-px)) 0 calc(8 * var(--ui-px)); color: var(--muted); font-size: var(--text-meta); }
 .question-options, .question-review { margin: 0; padding: 0; list-style: none; }
 .question-options li + li, .question-review div + div { border-top: 1px solid var(--line); }
 .question-option-row { display: flex; align-items: center; gap: 4px; }
-.question-card .question-option { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; text-align: start; padding: 8px 6px; border-radius: 8px; background: transparent; }
+.question-card .question-option { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; text-align: start; padding: calc(8 * var(--ui-px)) 6px; border-radius: 8px; background: transparent; }
 .question-option:hover:not(:disabled) { background: var(--surface-muted); }
 .question-mark { width: 1.35rem; min-height: 1.35rem; flex: none; display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
 .question-mark.multiple { border-radius: 4px; }
@@ -43,33 +43,33 @@
 .question-option-copy strong { display: block; font-size: var(--text-ui); line-height: 1.45; font-weight: 550; }
 .question-option-copy small, .question-editor small { display: block; font-size: var(--text-meta); line-height: 1.5; color: var(--muted); }
 .question-option-tools { gap: 2px; }
-.question-editor, .question-preview { margin: 4px 0 8px; padding: 9px 11px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: 9px; }
-.question-editor label { display: grid; gap: 4px; color: var(--secondary-text); font-size: var(--text-meta); }
-.question-editor textarea { field-sizing: content; resize: vertical; max-height: 5lh; width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text); background: var(--surface); font-size: var(--text-ui); }
-.question-editor-actions, .question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.question-editor-actions:not(:empty) { margin-top: 7px; }
-.question-editor-actions button, .question-actions button { font-size: var(--text-meta); min-height: 30px; padding: 0 11px; }
+.question-editor, .question-preview { margin: calc(4 * var(--ui-px)) 0 calc(8 * var(--ui-px)); padding: calc(9 * var(--ui-px)) 11px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: 9px; }
+.question-editor label { display: grid; gap: calc(4 * var(--ui-px)); color: var(--secondary-text); font-size: var(--text-meta); }
+.question-editor textarea { field-sizing: content; resize: vertical; max-height: 5lh; width: 100%; min-width: 0; padding: calc(7 * var(--ui-px)) 10px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text); background: var(--surface); font-size: var(--text-ui); }
+.question-editor-actions, .question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: calc(4 * var(--ui-px)) 8px; }
+.question-editor-actions:not(:empty) { margin-top: calc(7 * var(--ui-px)); }
+.question-editor-actions button, .question-actions button { font-size: var(--text-meta); min-height: calc(30 * var(--ui-px)); padding: 0 11px; }
 .question-preview figcaption { color: var(--secondary-text); font-size: var(--text-meta); }
-.question-preview pre { max-width: 100%; overflow-x: auto; white-space: pre; margin: 6px 0 0; padding-bottom: 2px; color: var(--text); font: var(--text-label)/1.5 var(--font-mono); }
-.question-review div { padding: 6px 0; }
+.question-preview pre { max-width: 100%; overflow-x: auto; white-space: pre; margin: calc(6 * var(--ui-px)) 0 0; padding-bottom: calc(2 * var(--ui-px)); color: var(--text); font: var(--text-label)/1.5 var(--font-mono); }
+.question-review div { padding: calc(6 * var(--ui-px)) 0; }
 .question-review dt { color: var(--secondary-text); font-size: var(--text-meta); }
-.question-review dd { margin: 3px 0 0; font-size: var(--text-ui); white-space: pre-wrap; }
-.question-actions { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); }
+.question-review dd { margin: calc(3 * var(--ui-px)) 0 0; font-size: var(--text-ui); white-space: pre-wrap; }
+.question-actions { margin-top: calc(7 * var(--ui-px)); padding-top: calc(7 * var(--ui-px)); border-top: 1px solid var(--line); }
 .question-actions [role="status"] { font-size: var(--text-meta); color: var(--muted); }
-.question-error { margin: 7px 0; font-size: var(--text-label); color: var(--danger); }
-@container conversation (max-width: 450px) { .question-card { padding: 8px 10px; } }
+.question-error { margin: calc(7 * var(--ui-px)) 0; font-size: var(--text-label); color: var(--danger); }
+@container conversation (max-width: 450px) { .question-card { padding: calc(8 * var(--ui-px)) 10px; } }
 /* Tool permission dialog: the command, file preview or diff Claude Code shows. */
 .permission-card .question-header > span { display: flex; align-items: center; gap: 6px; }
-.permission-subtitle { margin: 4px 0 0; overflow-wrap: anywhere; }
+.permission-subtitle { margin: calc(4 * var(--ui-px)) 0 0; overflow-wrap: anywhere; }
 .permission-content { max-height: 16lh; overflow: auto; }
 .permission-content pre { margin: 0; }
 .permission-add { color: var(--success, #2f855a); background: color-mix(in srgb, var(--success, #2f855a) 12%, transparent); display: inline-block; min-width: 100%; }
 .permission-del { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); display: inline-block; min-width: 100%; }
 /* "Auto mode can't check actions in this session": Lectern's explanation, Claude Code's
    own paragraphs, and choices made with keys (Enter, Shift+Tab) rather than numbers. */
-.permission-intro { margin: 2px 0 6px; font-size: var(--text-ui); line-height: 1.5; }
+.permission-intro { margin: calc(2 * var(--ui-px)) 0 calc(6 * var(--ui-px)); font-size: var(--text-ui); line-height: 1.5; }
 .permission-native { max-height: 9lh; overflow: auto; }
-.permission-native p { margin: 6px 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--secondary-text); overflow-wrap: anywhere; }
+.permission-native p { margin: calc(6 * var(--ui-px)) 0 0; font-size: var(--text-meta); line-height: 1.5; color: var(--secondary-text); overflow-wrap: anywhere; }
 .permission-native p strong { color: var(--text); font-weight: 550; }
 /* Help links in the native text open in the system browser; a generic dialog also shows its key hints. */
 .permission-native a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }

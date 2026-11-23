@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalFrame, TerminalInput } from '../shared/types';
 import { paintFrame, typedInput } from './terminal-input';
 import { imeOwnsKey } from './enter-key';
 import { t } from '../shared/i18n';
+import { useDesktopState } from './desktop-state';
 
 interface Props {
   frame: TerminalFrame;
@@ -104,6 +105,18 @@ export default function TerminalViewport(props: Props) {
     });
     return () => { active = false; };
   }, [frame.ansi, frame.cols, frame.rows, frame.cursorX, frame.cursorY, frame.cursorVisible]);
+
+  // The grid's text is the viewport's (var(--text-meta)), so it follows the interface font
+  // size. App applies a new size in its own effect, after this one: read it a frame later.
+  const { fontSize } = useDesktopState();
+  useEffect(() => {
+    const next = requestAnimationFrame(() => {
+      const term = terminal.current, viewer = viewport.current;
+      const size = viewer ? parseFloat(getComputedStyle(viewer).fontSize) : 0;
+      if (term && size && term.options.fontSize !== size) term.options.fontSize = size;
+    });
+    return () => cancelAnimationFrame(next);
+  }, [fontSize]);
 
   return <div className="terminal-viewport" ref={viewport} onWheelCapture={() => { follow.current = false; }}>
     <div ref={host} className="terminal-grid" />

@@ -35,6 +35,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.3',
+    features: [],
+    fixes: [
+      ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',
+        'Changing the interface font size now scales line heights, vertical spacing and row heights with it, so the sidebar and other lists no longer leave extra gaps.'],
+    ],
+  },
+  {
     version: '0.2.2',
     features: [
       ['输入框里加入的文件、图片和从 @ 补全选中的文件都留在原位，显示为写着文件名的整体卡片，可整体选中、剪切粘贴和撤销。',

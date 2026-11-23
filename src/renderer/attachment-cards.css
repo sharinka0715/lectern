@@ -2,8 +2,8 @@
    An image is its own thumbnail, center-cropped to a square; any other file is a
    tinted icon for its kind, the name and the kind. Both share one height. */
 .attachment-cards, .composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
-.attachment-cards { margin: 1px 0 9px; }
-.attachment-cards:last-child { margin-bottom: 1px; }
+.attachment-cards { margin: calc(1 * var(--ui-px)) 0 calc(9 * var(--ui-px)); }
+.attachment-cards:last-child { margin-bottom: calc(1 * var(--ui-px)); }
 .attachment-card {
   --card-size: 56px;
   position: relative; display: inline-flex; flex: none; align-items: center; box-sizing: border-box;
@@ -46,7 +46,7 @@ button.attachment-card:hover { background: var(--hover); }
 .attachment-card-kind { color: var(--muted); font-size: var(--text-caption); }
 
 /* In the input box: a little smaller, each with a remove badge on its corner. */
-.composer-attachments { margin: 2px 8px 6px 0; }
+.composer-attachments { margin: calc(2 * var(--ui-px)) 8px calc(6 * var(--ui-px)) 0; }
 .composer-attachments .attachment-card { --card-size: 52px; }
 .attachment-card-remove {
   position: absolute; top: -7px; right: -7px; z-index: 1; display: grid; place-items: center;
