@@ -32,12 +32,12 @@ try {
     return { workspace, session: (await window.desktop.discover(workspace.id)).sessions[0] };
   });
   const input = page.getByRole('textbox', { name: '发送给 Claude 的消息' });
-  const card = page.locator('section.permission-card');
+  const card = page.locator('section.permission-card:not([data-leaving])');
   const send = async text => { await input.fill(text); await page.getByRole('button', { name: '发送消息', exact: true }).click(); };
   const calls = async file => (await readFile(file, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line))
     .filter(row => row.type === 'assistant' && row.message.content.some(block => block.type === 'tool_use'));
   const idle = () => page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-status') === 'idle');
-  const owned = () => page.waitForFunction(() => document.querySelector('section.permission-card')?.dataset.permissionCall?.startsWith('toolu_mock_'), null, { timeout: 15_000 });
+  const owned = () => page.waitForFunction(() => document.querySelector('section.permission-card:not([data-leaving])')?.dataset.permissionCall?.startsWith('toolu_mock_'), null, { timeout: 15_000 });
 
   // 1. The dialog first, its call five seconds later: a card read off the screen, then the same card names its call.
   await send('运行标记命令 permission-late:5000');

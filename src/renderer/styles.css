@@ -508,7 +508,7 @@ code, pre, kbd { font-family: var(--font-mono); }
 .scroll-latest:hover { color: var(--text); }
 
 /* ───────── Messages ───────── */
-.message { margin: 0 0 30px; animation: appear .22s ease; }
+.message { margin: 0 0 30px; }
 .message-user { position: relative; display: flex; justify-content: flex-end; margin-bottom: 32px; }
 .message-user .message-content {
   max-width: min(86%, 640px);
@@ -1421,7 +1421,6 @@ code, pre, kbd { font-family: var(--font-mono); }
 .rotating { animation: rotate 1.6s linear infinite; }
 @keyframes rotate { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .35; } }
-@keyframes appear { from { opacity: .25; } to { opacity: 1; } }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(.985); } }
 @keyframes knot-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }

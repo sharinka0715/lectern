@@ -59,6 +59,8 @@ export const releaseNotes: ReleaseNote[] = [
         "New \"Reuse existing SSH connections\" setting: when off, Lectern opens its own connection to each machine (up to 8 sessions) instead of sharing the server's session limit with terminals and VS Code."],
       ['设置「会话」页可分别设定主对话和子代理等其他请求的提示缓存时长（默认、5 分钟或 1 小时），对之后新启动的对话生效。',
         'Settings → Session can set the prompt-cache lifetime for the main conversation and for subagents and other requests (Claude Code default, 5 minutes or 1 hour), for chats started afterwards.'],
+      ['对话里新出现的内容平滑淡入，删除的内容在原处淡出再收起，不打乱正在读的位置。',
+        'New messages, reply blocks, tool rows and cards fade in, and rewound turns, answered cards and the progress pill fade out without moving what you read (off with Reduce Motion).'],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',

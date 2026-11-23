@@ -131,7 +131,7 @@ try {
   await card.getByText(second.question, { exact: true }).waitFor();
   for (const number of [1, 2]) {
     await row(number).click();
-    await page.waitForFunction(n => document.querySelector(`section.question-card button.question-option[data-question-number="${n}"]`)?.getAttribute('aria-pressed') === 'true', number);
+    await page.waitForFunction(n => document.querySelector(`section.question-card:not([data-leaving]) button.question-option[data-question-number="${n}"]`)?.getAttribute('aria-pressed') === 'true', number);
   }
   await card.locator('nav.question-nav button').last().click();
   await card.locator('dl.question-review').waitFor();

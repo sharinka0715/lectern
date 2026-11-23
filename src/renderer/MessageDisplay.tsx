@@ -166,7 +166,8 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   const shown = useMemo(() => layout ? { ...message, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
     [message, layout]);
   const parts = useMemo(() => replyParts(shown, compact), [shown, compact, locale]);
-  if (!parts.length && message.status === 'streaming') return <div className="markdown">{t('chat.waitingClaude')}</div>;
+  // A stand-in: the reply's first block that replaces it fades in (content-fade.ts).
+  if (!parts.length && message.status === 'streaming') return <div className="markdown" data-fade-placeholder>{t('chat.waitingClaude')}</div>;
   let offset = 0;
   const content = parts.map(part => {
     if (part.kind === 'image') return <AttachmentImage key={part.key} attachment={part.attachment} onOpen={onOpenAttachment} />;

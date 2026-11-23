@@ -830,7 +830,7 @@ export const SCENARIOS = [
         await ui.waitStatus('idle', 30_000);
         await ui.send('/compact');
         // While the summary request is held, the app shows the compaction and only queues.
-        await page.locator('.turn-progress[data-turn-progress="compacting"]').waitFor({ timeout: 60_000 });
+        await page.locator(`${sel.progress}[data-turn-progress="compacting"]`).waitFor({ timeout: 60_000 });
         assert.ok(api.waiting('compact') >= 1, 'the compaction request reached the fake API');
         await ui.type('After compaction ccm:after-compact');
         await page.locator(sel.turnAction).first().waitFor({ timeout: 20_000 });
@@ -920,7 +920,7 @@ export const SCENARIOS = [
         const picker = page.locator('dialog.rewind-picker');
         await picker.locator('.rewind-choices button', { hasText: 'Next turn ccm:after-settings' }).click();
         // The native menu opened (the typed /rewind was recognized and submitted) and reached its confirmation.
-        await page.locator('.rewind-panel .rewind-confirm').click({ timeout: 45_000 });
+        await page.locator('section.rewind-panel:not([data-leaving]) .rewind-confirm').click({ timeout: 45_000 });
         await page.waitForFunction(([selector, text]) => document.querySelector(selector)?.value === text, [sel.composer, 'Next turn ccm:after-settings'], { timeout: 30_000 });
         await page.waitForFunction(selector => ![...document.querySelectorAll(selector)].some(node => node.textContent.includes('Next turn ccm:after-settings')), sel.user, { timeout: 30_000 });
         assert.ok([...await page.locator(sel.user).allTextContents()].some(text => text.includes('Session settings check')), 'the first prompt stays');
@@ -1018,7 +1018,7 @@ export const SCENARIOS = [
             .observe(document.body, { childList: true, subtree: true });
         });
         await ui.closeChat();
-        await page.locator('.resume-bar').waitFor({ timeout: 30_000 });
+        await page.locator('.resume-bar:not([data-leaving])').waitFor({ timeout: 30_000 });
         assert.equal(await shown.evaluate(node => node.isConnected), true, 'closing reloaded the transcript');
         assert.equal(await page.evaluate(() => window.ccmTranscriptEmptied), false, 'closing blanked the transcript');
       });
@@ -1042,7 +1042,7 @@ export const SCENARIOS = [
         await page.waitForFunction(selector => document.querySelector(selector)?.textContent.includes('Matrix closed session'), `${sel.row(id)} .session-title`, { timeout: 30_000 });
       });
       await check('resume', async () => {
-        await page.locator('.resume-bar button').first().click();
+        await page.locator('.resume-bar:not([data-leaving]) button').first().click();
         await ui.ready(60_000);
         const argv = await ui.claudeArgv();
         assert.equal(argv[argv.indexOf('--resume') + 1], id, 'claude --resume <session>');

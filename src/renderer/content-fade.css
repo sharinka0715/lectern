@@ -1,0 +1,23 @@
+/* New and removed content in the conversation and above the input box (content-fade.ts).
+   The durations match FADE_ENTER_MS and FADE_LEAVE_MS there. In the conversation only
+   opacity changes while fading in: a moved box would shift the line kept at the bottom
+   edge (ConversationTranscript reads positions with transforms applied). */
+[data-fade="in"] { animation: lectern-fade-in 200ms cubic-bezier(.2, .7, .3, 1) both; }
+/* Above the input box and the jump button: a slight rise too (not measured for anchoring). */
+.composer-area > [data-fade="in"], .scroll-latest[data-fade="in"] { animation-name: lectern-rise-in; }
+@keyframes lectern-fade-in { from { opacity: 0; } }
+@keyframes lectern-rise-in { from { opacity: 0; translate: 0 6px; } }
+
+/* Put back by content-fade.ts only to fade out: never a target, gone when the animation ends. */
+[data-leaving] { pointer-events: none; animation: lectern-fade-out 180ms ease both; }
+/* A message gives its height back while it fades, so what follows moves up smoothly. */
+[data-leaving="collapse"] { overflow: hidden; animation-name: lectern-collapse; }
+/* A card above the input box stays where it was (left, bottom, size set inline) while the input
+   area eases to its new height. */
+.composer-area > [data-leaving="pin"] { position: absolute; z-index: 1; margin: 0; overflow: hidden; animation-name: lectern-sink; }
+@keyframes lectern-fade-out { to { opacity: 0; } }
+@keyframes lectern-sink { to { opacity: 0; translate: 0 4px; } }
+@keyframes lectern-collapse {
+  from { height: calc-size(auto, size); }
+  to { height: 0; margin-block: 0; padding-block: 0; opacity: 0; }
+}

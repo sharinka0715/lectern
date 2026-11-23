@@ -82,8 +82,8 @@ try {
   };
   const input = page.getByRole('textbox', { name: '发送给 Claude 的消息' });
   const ready = () => page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'));
-  const card = page.locator('section.permission-card[data-permission-kind="auto-mode-billing"]');
-  const unavailable = page.locator('section.permission-card[data-permission-kind="auto-mode-unavailable"]');
+  const card = page.locator('section.permission-card:not([data-leaving])[data-permission-kind="auto-mode-billing"]');
+  const unavailable = page.locator('section.permission-card:not([data-leaving])[data-permission-kind="auto-mode-unavailable"]');
   const ask = async prompt => {
     await ready();
     await input.fill(prompt);

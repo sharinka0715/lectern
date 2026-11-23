@@ -82,13 +82,13 @@ try {
       // The app has to get past this prompt itself; the test never answers it.
       if (!/Make auto mode your default/.test(screen)) since = undefined;
       else if (Date.now() - (since ??= Date.now()) > 10_000) throw new Error('the auto-mode prompt blocks the first message');
-      if (await page.locator('section.permission-card').count()) return;
+      if (await page.locator('section.permission-card:not([data-leaving])').count()) return;
       await new Promise(r => setTimeout(r, 250));
     }
   };
   const input = page.getByRole('textbox', { name: '发送给 Claude 的消息' });
   const ready = () => page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'));
-  const card = page.locator('section.permission-card');
+  const card = page.locator('section.permission-card:not([data-leaving])');
   const ask = async prompt => {
     await ready();
     await input.fill(prompt);
@@ -156,7 +156,7 @@ try {
   assert.equal((jsonl.match(/User rejected tool use/g) ?? []).length, 2);
 
   // 4. "Auto mode can't check actions in this session": a card, never answered by Lectern.
-  const unavailable = page.locator('section.permission-card[data-permission-kind="auto-mode-unavailable"]');
+  const unavailable = page.locator('section.permission-card:not([data-leaving])[data-permission-kind="auto-mode-unavailable"]');
   const dumpPanes = async () => {
     for (const pane of tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').filter(line => / lectern-/.test(line)).map(line => line.split(' ')[0]))
       console.error(`PANE ${pane}\n` + tmux('capture-pane', '-p', '-t', pane).split('\n').filter(l => l.trim()).slice(-30).join('\n'));
