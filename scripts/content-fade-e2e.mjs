@@ -108,8 +108,17 @@ const readLine = () => page.evaluate(() => {
   const bottom = document.querySelector(".composer-area").getBoundingClientRect().top;
   const el = [...document.querySelectorAll(".conversation-scroll .message:not([data-leaving])")].filter(node => node.getBoundingClientRect().top < bottom - 40).at(-1);
   window.__anchor = el;
-  return { id: el.dataset.messageId, text: el.textContent.slice(0, 12), offset: bottom - el.getBoundingClientRect().top };
+  const top = el.getBoundingClientRect().top;
+  return { id: el.dataset.messageId, text: el.textContent.slice(0, 12), top, offset: bottom - top };
 });
+/** Where the message read before (`readLine`) is now, looked up again by its id: whether it is still
+ * the same element, its top on screen and how far that is above the input area. */
+const findLine = id => page.evaluate(id => {
+  const bottom = document.querySelector(".composer-area").getBoundingClientRect().top;
+  const el = document.querySelector(`.conversation-scroll .message[data-message-id="${CSS.escape(id)}"]:not([data-leaving])`);
+  const top = el?.getBoundingClientRect().top;
+  return el ? { same: el === window.__anchor, top, offset: bottom - top } : null;
+}, id);
 const maxGap = frames => Math.max(0, ...frames.map(frame => frame.gap));
 const shot = name => page.screenshot({ path: path.join(output, name) });
 
@@ -274,10 +283,16 @@ try {
   // The input area also drops when the reply ends (its progress pill fades out): in the same update
   // as the reply's last text, the conversation keeps its first visible message where it is.
   const drift = Math.max(...frames.filter(frame => frame.top !== null).map(frame => Math.abs(frame.top - frames[0].top)));
-  report.reading = { line: reading, drift, frames: frames.length, covered: Math.min(...frames.map(frame => frame.read)) };
+  report.reading = { line: reading, drift, frames: frames.length, covered: Math.min(...frames.map(frame => frame.read)),
+    dock: [frames[0].dock, frames.at(-1).dock].map(Math.round) };
   assert.ok(drift <= 4, `the line being read does not move on screen while new content fades in below (${drift}px)`);
   assert.ok(report.reading.covered >= 40, "the input area never covers it");
-  assert.equal((await readLine()).id, reading.id, "the same message is at the bottom edge");
+  // Afterwards it is still the same message, where it was. (Not "still the message at the bottom edge":
+  // the input area drops by the pill's height and uncovers what was under it, so the next message may
+  // now start above the edge, depending on fonts and line wrapping: on CI, without CJK fonts, it did.)
+  const after = report.reading.after = await findLine(reading.id);
+  assert.ok(after?.same && Math.abs(after.top - reading.top) <= 4 && after.offset >= 40,
+    "the message being read stays where it was, above the input area: " + JSON.stringify(after));
   seen = await fades();
   assert.ok(seen.entered.some(entry => entry.parent === "div.markdown"), "blocks of the new reply faded in");
   await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
