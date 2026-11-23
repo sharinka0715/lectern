@@ -382,6 +382,16 @@ export const SCENARIOS = [
       api.script('perm-allow', once({ name: 'Bash', input: { command: 'echo allowed > allowed.txt', description: 'Write a marker file' } }, 'Allowed (ccm-perm-allow-done).'));
       api.script('perm-deny', once({ name: 'Write', input: { file_path: path.join(cwd, 'denied.md'), content: '# Denied\n' } }, 'Should not happen (ccm-perm-deny-done).'));
       const card = page.locator(sel.permission);
+      // The card can come before the transcript has its call (read off the screen alone: Claude Code
+      // writes in batches, and 2.1.300/2.1.310 can write a new session's first call ahead of its
+      // prompt). The call must then show up in the chat and own the card: the transcript read right.
+      const owned = async name => {
+        ctx.note(`${name}-card-before-call`, await card.getAttribute('data-permission-call') === null);
+        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.permissionCall, sel.permission, { timeout: 30_000 });
+        const id = await card.getAttribute('data-permission-call'), tools = await ui.tools();
+        assert.equal(tools.find(tool => tool.id === id)?.name, name, JSON.stringify(tools));
+        return id;
+      };
       await check('manual-fallback', async () => {
         await startChat(ctx, folders.perm, 'Write a marker ccm:perm-allow');
         // The folder turns auto mode off: Claude Code falls back to manual mode.
@@ -393,10 +403,12 @@ export const SCENARIOS = [
         const labels = await card.locator('[data-permission-option] strong').allInnerTexts();
         ctx.note('bash-options', labels);
         assert.match(labels[0], /^Yes/);
+        const call = await owned('Bash');
         await card.locator('[data-permission-option="1"]').click();
         await card.waitFor({ state: 'detached', timeout: 30_000 });
         await ui.waitReply('ccm-perm-allow-done');
         assert.equal((await readFile(path.join(cwd, 'allowed.txt'), 'utf8')).trim(), 'allowed');
+        assert.equal((await ui.tools()).find(tool => tool.id === call)?.state, 'completed');
       });
       await check('permission-deny', async () => {
         await ui.waitStatus('idle', 30_000);
@@ -405,6 +417,7 @@ export const SCENARIOS = [
         const labels = await card.locator('[data-permission-option] strong').allInnerTexts();
         ctx.note('write-options', labels);
         assert.match(labels.at(-1), /^No\b/);
+        await owned('Write');
         await card.locator(`[data-permission-option="${labels.length}"]`).click();
         await card.waitFor({ state: 'detached', timeout: 30_000 });
         await ui.waitStatus('idle', 30_000);

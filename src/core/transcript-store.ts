@@ -414,6 +414,10 @@ export class TranscriptStore {
         if (row.kind === 'compact') this.rememberCompaction(row);
         else if (!direct && row.parent === null) this.rememberCompaction(undefined);
       }
+      // Claude Code 2.1.300 and 2.1.310 can write a new session's first response (a tool call
+      // waiting for permission, say) before its prompt and attachments, parents intact: the
+      // prompt takes the leaf, and the chain reaching the response must carry it on there.
+      if (fillsGap && this.leaf === key) this.leaf = this.newestDescendant(key);
       if (old && this.boundary?.key === key) this.rememberCompaction(row.kind === 'compact' ? row : undefined);
       if (old || fillsGap || !direct || this.compactionKeys.has(key) || this.preserved.has(key) || this.anchor && row.parent === this.anchor) replace = true;
       added.push(row);
@@ -432,6 +436,26 @@ export class TranscriptStore {
     if (!leaf) return;
     for (let i = this.boundaries.length - 1; i >= 0; i--) {
       if (this.boundaries[i].order <= leaf.order) return this.boundaries[i];
+    }
+  }
+
+  /** The tip below `key` that rows written ahead of their parents left: at each step the
+   * newest child not cut off by a rewind. */
+  private newestDescendant(key: string): string {
+    const children = new Map<string, TranscriptRow[]>();
+    for (const row of this.nodes.values()) {
+      if (!row.parent) continue;
+      const list = children.get(row.parent);
+      if (list) list.push(row); else children.set(row.parent, [row]);
+    }
+    const seen = new Set([key]);
+    for (let tip = key; ;) {
+      const next = (children.get(tip) ?? []).filter(row => !seen.has(row.key) && !this.isDiscarded(row.key))
+        .reduce<TranscriptRow | undefined>((best, row) => !best || row.order > best.order ? row : best, undefined);
+      if (!next) return tip;
+      if (next.kind === 'compact') this.rememberCompaction(next);
+      seen.add(next.key);
+      tip = next.key;
     }
   }
 

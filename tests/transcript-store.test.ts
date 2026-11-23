@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { MessageDisplay } from '../src/core/message-display';
 import type { JsonRecord } from '../src/core/jsonl';
+import { pendingToolId } from '../src/main/session-permission';
 
 const encode = (...rows: JsonRecord[]) => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
 const user = (uuid: string, parentUuid: string | null, content = uuid) => ({ type: 'user', uuid, parentUuid, message: { content } });
@@ -188,6 +189,34 @@ test('partial history signals a broken link until its parent arrives', () => {
   display.ingestJsonl(encode(user('missing', null)));
   assert.deepEqual(texts(display), ['missing', 'reply']);
   assert.equal(display.notice, undefined);
+});
+
+test('a first response written before its prompt and attachments (Claude Code 2.1.300/2.1.310) stays in its turn', () => {
+  // Sampled with the matrix sandbox (config on a slow disk): the session's first flush holds the
+  // tool call awaiting permission ahead of the prompt it answers; parents are intact.
+  const attachment = (uuid: string, parentUuid: string) => ({ type: 'attachment', uuid, parentUuid, attachment: { type: 'date', date: '2026-11-21' } });
+  const call = { type: 'assistant', uuid: 'call', parentUuid: 'att3', message: { id: 'msg_1', role: 'assistant', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'echo allowed > allowed.txt', description: 'Write a marker file' } }] } };
+  const flushed = [{ type: 'ai-title', aiTitle: 'Check' }, { type: 'mode', mode: 'normal' }, { type: 'atis-latch', atis: '' }, { type: 'atis-latch', atis: '' }, call,
+    { type: 'file-history-snapshot', messageId: 'prompt', snapshot: { messageId: 'prompt', trackedFileBackups: {} } },
+    user('prompt', null, 'Write a marker'), attachment('att1', 'prompt'), attachment('att2', 'att1'), attachment('att3', 'att2')];
+  const turn = (display: MessageDisplay) => display.getMessages().map(message => [message.role, message.text, message.tools.map(tool => [tool.id, tool.result === undefined ? 'pending' : 'done'])]);
+  const expected = [['user', 'Write a marker', []], ['assistant', '', [['toolu_bash', 'pending']]]];
+  const whole = new MessageDisplay('s');
+  whole.ingestJsonl(encode(...flushed));
+  assert.deepEqual(turn(whole), expected);
+  assert.equal(pendingToolId(whole.getMessages()), 'toolu_bash', 'the permission card has its call');
+  const split = new MessageDisplay('s');
+  for (const row of flushed) split.ingestJsonl(encode(row));
+  assert.deepEqual(turn(split), expected, 'record by record');
+  // Approved: the result and the reply follow in order.
+  const rest = [result('result', 'call', 'toolu_bash'), assistant('Done', 'result', 12), duration('took', 'Done')];
+  whole.ingestJsonl(encode(...rest));
+  assert.deepEqual(turn(whole), [['user', 'Write a marker', []], ['assistant', 'Done', [['toolu_bash', 'done']]]]);
+  // A text reply written ahead of its prompt is shown too, not held back until the next turn.
+  const text = new MessageDisplay('s');
+  text.ingestJsonl(encode(assistant('Hello', 'att2', 10), user('hi', null), attachment('att1', 'hi'), attachment('att2', 'att1'), duration('d', 'Hello')));
+  assert.deepEqual(texts(text), ['hi', 'Hello']);
 });
 
 test('a finished turn that left background agents or workflows running reports them until they end', () => {

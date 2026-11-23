@@ -21,8 +21,8 @@ import { focusedSettingCommandHistory, isIdleEmptyComposer, observeUltracode } f
 import { parseExecutionMode } from '../core/session-telemetry';
 import { CompactSamples, parseTurnProgress, showsCompactCompletion } from '../core/turn-progress';
 import { parseQuestionScreen } from '../core/question-screen';
-import { parsePermissionScreen } from '../core/permission-screen';
-import { observePermission, pendingToolId, type WatchedPermission } from './session-permission';
+import { parsePermissionScreen, permissionLayout } from '../core/permission-screen';
+import { earlyPermission, observePermission, pendingToolId, type WatchedPermission } from './session-permission';
 import { PermissionInputUnconfirmed } from '../backend/native-permission-actions';
 import type { PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
@@ -46,6 +46,8 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   compactSamples: CompactSamples;
   question?: WatchedQuestion;
   permission?: WatchedPermission;
+  /** The permission dialog last seen with its pending call (permissionLayout), while it stays up. */
+  permissionOwned?: string;
   terminalVisible?: boolean;
   nativeTasks?: SessionSnapshot['tasks'];
   terminalEpoch?: number;
@@ -733,15 +735,24 @@ export class Controller extends EventEmitter {
           ? observeQuestion(watch.question, screen, handle, owner, result.transcriptPosition) : undefined;
       }
       const question = watch.question?.snapshot;
-      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = undefined;
+      if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = watch.permissionOwned = undefined;
       if (questionReadCurrent && !question) {
-        // A tool permission dialog replaces the input box. Only the current
-        // turn's pending call can own it; menu-like text in the reply cannot.
+        // A tool permission dialog replaces the input box. The current turn's pending call owns
+        // it; menu-like text in the reply cannot. Before the transcript has the call, Claude
+        // Code's own record of waiting for a permission prompt vouches for it (earlyPermission).
         const screen = (!result.nativeStatus || result.nativeStatus === 'waiting') && result.active && !result.directoryTrust && !result.hasMore && result.viewport
           ? parsePermissionScreen(result.viewport) : undefined;
         const owner = screen && pendingToolId(messages);
-        watch.permission = screen && owner && handle?.panePid && !settingBusy && !trustBusy && result.session.status !== 'error'
-          ? observePermission(watch.permission, screen, handle, owner, result.transcriptPosition) : undefined;
+        const layout = screen && permissionLayout(screen);
+        if (owner) watch.permissionOwned = layout;
+        else if (layout !== watch.permissionOwned) watch.permissionOwned = undefined;
+        const early = !!screen && !owner && earlyPermission(screen, result.nativeStatus, result.nativeWaitingFor, watch.permissionOwned);
+        const before = watch.permission, beforeOwner = before?.owner;
+        watch.permission = screen && (owner || early) && handle?.panePid && !settingBusy && !trustBusy && result.session.status !== 'error'
+          ? observePermission(watch.permission, screen, handle, owner || undefined, result.transcriptPosition) : undefined;
+        if (watch.permission && (watch.permission !== before || watch.permission.owner !== beforeOwner))
+          diagnostic.event('controller.permission.card', { cardId: watch.permission.snapshot.cardId, toolUseId: watch.permission.owner,
+            adopted: watch.permission === before, nativeWaitingFor: result.nativeWaitingFor });
       }
       const permission = watch.permission?.snapshot;
       // Progress never falls back to scrollback. Keep at most one live sample

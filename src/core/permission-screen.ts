@@ -184,11 +184,9 @@ function autoModeBilling(lines: string[]): NativePermissionScreen | undefined {
     options: [{ number: 1, label: 'continue', focused: false, key: 'Enter' }] };
 }
 
+/** Which dialog it is, focus aside. A tool dialog's footer may follow the focus; the keyed dialog's footer is its choices. */
+export const permissionLayout = (s: NativePermissionScreen) => JSON.stringify([s.kind, s.title, s.subtitle, s.content, s.notice, s.question, s.kind && s.footer,
+  s.options.map(o => [o.number, o.label, o.key, o.unavailable])]);
 /** The same dialog in two frames: focus may differ, nothing else. */
-export function samePermission(a: NativePermissionScreen, b: NativePermissionScreen): boolean {
-  // A tool dialog's footer may follow the focus; the keyed dialog's footer is its choices.
-  const layout = (s: NativePermissionScreen) => JSON.stringify([s.kind, s.title, s.subtitle, s.content, s.notice, s.question, s.kind && s.footer,
-    s.options.map(o => [o.number, o.label, o.key, o.unavailable])]);
-  return layout(a) === layout(b);
-}
+export const samePermission = (a: NativePermissionScreen, b: NativePermissionScreen) => permissionLayout(a) === permissionLayout(b);
 export const focusedPermission = (screen: NativePermissionScreen) => screen.options.findIndex(option => option.focused);

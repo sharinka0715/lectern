@@ -37,7 +37,7 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
   // A keyed dialog: "Auto mode can't check actions" or the classifier billing notice.
   const keyed = !!p.kind, billing = p.kind === 'auto-mode-billing';
   const heading = billing ? t('cards.autoModeBilling') : keyed ? t('cards.autoModeUnavailable') : t('cards.permission');
-  useEffect(() => { root.current?.querySelector<HTMLButtonElement>('.question-option[aria-pressed="true"]')?.focus({ preventScroll: true }); }, [p.toolUseId]);
+  useEffect(() => { root.current?.querySelector<HTMLButtonElement>('.question-option[aria-pressed="true"]')?.focus({ preventScroll: true }); }, [p.cardId]);
   const act = async (action: PermissionAction) => {
     if (blocked || inFlight.current) return;
     inFlight.current = true;
@@ -47,7 +47,7 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
     finally { inFlight.current = false; }
   };
   return <section ref={root} className={`question-card permission-card${keyed ? ` ${p.kind}` : ''}`} aria-label={heading}
-    aria-busy={blocked} data-permission-token={p.token} data-permission-kind={p.kind}
+    aria-busy={blocked} data-permission-token={p.token} data-permission-kind={p.kind} data-permission-call={p.toolUseId}
     onKeyDown={event => {
       if (event.altKey || event.ctrlKey || event.metaKey) return;
       // Number keys pick numbered native choices only; a keyed dialog has none.

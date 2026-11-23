@@ -26,4 +26,12 @@ export interface NativePermissionScreen {
 }
 export type PermissionAction = { kind: 'choose'; number: number } | { kind: 'cancel' };
 /** The dialog as offered to the window, bound to the frame it was read from. */
-export interface PermissionSnapshot extends NativePermissionScreen { token: string; toolUseId: string }
+export interface PermissionSnapshot extends NativePermissionScreen {
+  token: string;
+  /** The pending tool call it answers; undefined while the dialog is on screen before the
+   * session's transcript has that call (main/session-permission.ts). */
+  toolUseId?: string;
+  /** The same while dialogs of one call follow each other (focus moves issue new tokens) and when
+   * the transcript catches up with a dialog first read off the screen alone: one card, not a new one. */
+  cardId: string;
+}

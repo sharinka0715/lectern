@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // A deterministic offline TUI fixture. It uses a real PTY and real append-only JSONL.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 const args = process.argv.slice(2);
 const arg = name => args[args.indexOf(name) + 1];
 const config = arg('--fixture-config');
@@ -59,7 +60,9 @@ const record = (type, content, extra = {}) => ({
   type, uuid: randomUUID(), sessionId: id, cwd, timestamp: new Date().toISOString(),
   message: { role: type, content, ...extra },
 });
-const append = object => appendFileSync(file, JSON.stringify(object) + '\n');
+// The newest record with a UUID: the parent of rows written with explicit links (permission prompts below).
+let lastUuid;
+const append = object => { appendFileSync(file, JSON.stringify(object) + '\n'); if (object.uuid) lastUuid = object.uuid; };
 function renameSession(customTitle) {
   const metadata = { type: 'custom-title', customTitle, sessionId: id };
   append(metadata);
@@ -73,6 +76,7 @@ if (existsSync(file)) {
   history = readFileSync(file, 'utf8').split('\n').filter(Boolean).flatMap(line => {
     try {
       const r = JSON.parse(line);
+      if (r.uuid) lastUuid = r.uuid;
       if (!['user', 'assistant'].includes(r.type)) return [];
       const content = r.message.content;
       return [{ role: r.type, text: typeof content === 'string' ? content : content.filter(b => b.type === 'text').map(b => b.text).join('\n\n') }];
@@ -114,7 +118,7 @@ const draw = () => {
   const lines = ['╭─ Claude Code · offline fixture ─╮', '  Local simulation · no model requests', ''];
   for (const message of history.slice(-4)) lines.push(`${message.role === 'user' ? '❯' : '⏺'} ${message.text}`, '');
   if (preview) lines.push(`⏺ ${preview}`, '');
-  if (busy) lines.push('✻ Thinking… (esc to interrupt)', '');
+  if (busy && !permission) lines.push('✻ Thinking… (esc to interrupt)', '');
   if (fixtureState === 'compacting') lines.push('✻ Compacting conversation… (20m 27s · ↓ 842 tokens)', '');
   else if (fixtureState === 'progress') lines.push('✻ Whirring… (8s · ↓ 15 tokens)', '');
   if (nativeMenu === 'model') {
@@ -127,6 +131,10 @@ const draw = () => {
     const track = '─'.repeat(labels.length - 1);
     lines.push('Effort', 'Faster                Smarter', track.slice(0, pointer) + '▲' + track.slice(pointer + 1),
       labels, '←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel');
+  } else if (permission) {
+    const rule = '╌'.repeat(64), options = ['Yes', "Yes, and don't ask again for echo commands in this project", 'No'];
+    lines.push('⏺ Write a marker file', `  ⎿  $ ${command}`, '', '─'.repeat(64), ' Bash command', ' Write a marker file', rule, ` ${command}`, rule,
+      ' Do you want to proceed?', ...options.map((label, i) => ` ${i === permission.focus ? '❯' : ' '} ${i + 1}. ${label}`), '', ' Esc to cancel · Tab to amend');
   } else if (fixtureState === 'waiting') {
     lines.push('Permission required', 'Do you want to allow this action?', '❯ 1. Yes', '  2. No', 'Enter to confirm · Esc to cancel');
   } else {
@@ -142,8 +150,72 @@ const draw = () => {
   process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+// Claude Code's own session record (<config>/sessions/<pid>.json), where Lectern reads the native
+// status: written from the first permission prompt on and kept current until the process exits.
+let presence;
+const presenceFile = path.join(config, 'sessions', `${process.pid}.json`);
+function setPresence(status, waitingFor) {
+  if (!presence) {
+    const procStart = process.platform === 'linux' ? readFileSync('/proc/self/stat', 'utf8').replace(/^.*\) /s, '').split(' ')[19]
+      : execFileSync('ps', ['-p', String(process.pid), '-o', 'lstart='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).toString().trim();
+    const tmux = execFileSync('tmux', ['display-message', '-p', '-t', process.env.TMUX_PANE, '#{session_name}:#{window_id}.#{pane_id}']).toString().trim();
+    presence = { pid: process.pid, sessionId: id, cwd, procStart, startedAt: Date.now(), kind: 'interactive', entrypoint: 'cli', tmux };
+    mkdirSync(path.dirname(presenceFile), { recursive: true });
+    process.on('exit', () => rmSync(presenceFile, { force: true }));
+  }
+  writeFileSync(presenceFile + '.tmp', JSON.stringify({ ...presence, status, ...(waitingFor && { waitingFor }) }));
+  renameSync(presenceFile + '.tmp', presenceFile);
+}
+// A prompt with `permission-late[:ms]` asks to run a Bash command in Claude Code 2.1.328's dialog and
+// writes the call to the transcript only after `ms` (default 4000) or once answered; `permission-first`
+// writes it at once but ahead of the prompt and its attachments, as Claude Code 2.1.300 and 2.1.310 can
+// for a new session's first response. Up/Down/Enter, 1–3 and Esc answer as in Claude Code.
+let permission;
+const command = 'echo allowed > allowed.txt';
+const linked = (type, content, parentUuid, extra = {}) => ({ ...record(type, content, extra), parentUuid: parentUuid ?? null });
+function askPermission(text, mode, ms) {
+  busy = true;
+  history.push({ role: 'user', text });
+  const call = linked('assistant', [{ type: 'tool_use', id: 'toolu_mock_' + randomUUID().slice(0, 8), name: 'Bash', input: { command, description: 'Write a marker file' } }],
+    undefined, { id: randomUUID(), stop_reason: 'tool_use', model: fixtureModels[selectedModel] });
+  permission = { focus: 0, call, written: false };
+  const prompt = linked('user', [{ type: 'text', text }], lastUuid);
+  const date = { type: 'attachment', uuid: randomUUID(), parentUuid: prompt.uuid, sessionId: id, cwd, attachment: { type: 'date', date: new Date().toISOString().slice(0, 10) } };
+  if (mode === 'first') {
+    permission.written = true;
+    append({ ...call, parentUuid: date.uuid });
+    append(prompt); append(date);
+  } else {
+    append(prompt); append(date);
+    call.parentUuid = date.uuid;
+    permission.timer = setTimeout(() => { if (permission && !permission.written) { permission.written = true; append(call); } }, ms);
+  }
+  setPresence('waiting', 'permission prompt');
+}
+function decide(choice) {
+  const { call, written, timer } = permission;
+  permission = undefined;
+  clearTimeout(timer);
+  if (!written) append(call);
+  const toolId = call.message.content[0].id;
+  if (choice === 1 || choice === 2) {
+    writeFileSync(path.join(cwd, 'allowed.txt'), 'allowed\n');
+    const output = linked('user', [{ type: 'tool_result', tool_use_id: toolId, content: '' }], lastUuid);
+    append(output);
+    const reply = `已允许并运行：${command}`;
+    append(linked('assistant', [{ type: 'text', text: reply }], output.uuid, { id: randomUUID(), stop_reason: 'end_turn', model: fixtureModels[selectedModel] }));
+    history.push({ role: 'assistant', text: reply });
+  } else {
+    append(linked('user', [{ type: 'tool_result', tool_use_id: toolId, is_error: true,
+      content: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed." }], lastUuid));
+    append(linked('user', [{ type: 'text', text: '[Request interrupted by user for tool use]' }], lastUuid));
+  }
+  busy = false;
+  setPresence('idle');
+}
 async function answer(text) {
   busy = true;
+  if (presence) setPresence('busy');
   const token = ++generation;
   history.push({ role: 'user', text });
   append(record('user', [{ type: 'text', text }]));
@@ -180,6 +252,7 @@ async function answer(text) {
   history.push({ role: 'assistant', text: response });
   preview = '';
   draw();
+  if (presence) setPresence('idle');
 }
 process.stdin.setRawMode?.(true);
 process.stdin.setEncoding('utf8');
@@ -190,6 +263,16 @@ process.stdin.on('data', chunk => {
   for (let i = 0; i < chunk.length;) {
     if (chunk.startsWith('\x1b[200~', i)) { pasted = true; i += 6; continue; }
     if (chunk.startsWith('\x1b[201~', i)) { pasted = false; i += 6; continue; }
+    if (permission && !pasted) {
+      const arrow = ['\x1b[A', '\x1b[B'].find(key => chunk.startsWith(key, i));
+      if (arrow) { permission.focus = Math.max(0, Math.min(2, permission.focus + (arrow.endsWith('A') ? -1 : 1))); i += arrow.length; continue; }
+      const key = chunk[i++];
+      if (key === '\r' || key === '\n') decide(permission.focus + 1);
+      else if (/^[1-3]$/.test(key)) decide(Number(key));
+      else if (key === '\x1b') decide('cancel');
+      else if (key === '\x03') process.exit(0);
+      continue;
+    }
     if (nativeMenu && !pasted) {
       const sequence = ['\x1b[A', '\x1b[B', '\x1b[C', '\x1b[D'].find(key => chunk.startsWith(key, i));
       if (sequence) {
@@ -211,7 +294,7 @@ process.stdin.on('data', chunk => {
     }
     const char = chunk[i++];
     if (char === '\x03') { process.exit(0); }
-    if (char === '\x1b') { generation++; busy = false; preview = ''; draw(); continue; }
+    if (char === '\x1b') { generation++; busy = false; preview = ''; if (presence) setPresence('idle'); draw(); continue; }
     if ((char === '\r' || char === '\n') && !pasted) {
       const text = input.trim(); input = '';
       const inline = aliasModels && /^\/(model|effort) (\S+)$/.exec(text);
@@ -229,6 +312,9 @@ process.stdin.on('data', chunk => {
         const reserved = path.join(config, 'fixture-occupied-name');
         const collision = existsSync(reserved) && readFileSync(reserved, 'utf8') === requested;
         renameSession(collision ? requested + '-2' : requested);
+      } else if (text && !busy && /\bpermission-(?:late(?::\d+)?|first)\b/.test(text)) {
+        const [, mode, ms] = /\bpermission-(late|first)(?::(\d+))?/.exec(text);
+        askPermission(text, mode, Number(ms ?? 4000));
       } else if (text && !busy) void answer(text);
     } else if (!pasted && char === '\x15') input = ''; // Ctrl+U clears this fixture's single-line draft.
     else if (char === '\x7f') input = input.slice(0, -1);

@@ -808,3 +808,86 @@ test('a tool permission dialog becomes a card only for the pending call, and eac
     assert.equal(snapshots.at(-1)!.permission, undefined);
   } finally { await cleanup(); }
 });
+
+/** The Bash dialog on screen while the transcript has only `records` so far (more via `next`). */
+async function earlyDialog(native: { status?: 'waiting' | 'idle' | 'busy'; waitingFor?: string } = { status: 'waiting', waitingFor: 'permission prompt' }) {
+  const { readFileSync } = await import('node:fs');
+  const dialog = readFileSync(new URL('./fixtures/permission-2.1.328/bash.txt', import.meta.url), 'utf8');
+  const state = { records: [{ type: 'user', uuid: 'u1', parentUuid: null, sessionId: 'chat', message: { role: 'user', content: 'run the bash step' } }] as unknown[],
+    screen: dialog, offset: 400, native };
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = { ...readResult(id, state.records), screen: state.screen, viewport: state.screen, panePid: 77,
+      nativeStatus: state.native.status, nativeWaitingFor: state.native.waitingFor, transcriptPosition: { inode: '42', offset: state.offset },
+      session: { ...readResult(id).session, status: 'waiting' as const } };
+    state.records = [];
+    return result;
+  });
+  const answered: unknown[][] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => { answered.push(args); };
+  const snapshots: SessionSnapshot[] = []; controller.on('snapshot', value => snapshots.push(value));
+  const call = { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 'chat', message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'echo hello > greeting.txt && ls' } }] } };
+  const result = { type: 'user', uuid: 'r1', parentUuid: 'a1', sessionId: 'chat', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bash', content: 'ok' }] } };
+  await controller.watchSession('test', 'chat');
+  return { controller, cleanup, state, answered, snapshots, call, result, dialog };
+}
+
+test('a permission dialog on screen before its call is in the transcript is a card; the call then takes it over', async () => {
+  const { controller, cleanup, state, answered, snapshots, call, result, dialog } = await earlyDialog();
+  try {
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.ok(card, 'Claude Code waits for a permission prompt: the dialog is a card without its call');
+    assert.equal(card.toolUseId, undefined);
+    assert.equal(card.title, 'Bash command');
+    assert.deepEqual(card.content, ['echo hello > greeting.txt && ls']);
+    assert.deepEqual(card.options.map(option => option.label.split(',')[0]), ['Yes', 'Yes', 'No']);
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission!.token, card.token, 'the same dialog keeps its token');
+    // The transcript catches up: the same card (token and identity) now names its call, once.
+    state.records = [call]; state.offset = 1300;
+    await pollNow(controller);
+    const adopted = snapshots.at(-1)!.permission!;
+    assert.deepEqual([adopted.token, adopted.cardId, adopted.toolUseId], [card.token, card.cardId, 'toolu_bash']);
+    assert.equal(snapshots.at(-1)!.messages.filter(message => message.tools.some(tool => tool.id === 'toolu_bash')).length, 1);
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 1 });
+    assert.deepEqual(answered.map(args => [args[5], args[7]]), [[{ kind: 'choose', number: 1 }, { inode: '42', offset: 1300 }]], 'answered at the newer record');
+    // Answered: the result arrives while a late frame still shows the dialog. Not a question again.
+    state.records = [result]; state.offset = 1500;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined);
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined, 'still the dialog that had its call');
+    // Once the dialog has gone, a new one may again come before its call.
+    state.screen = '──────────\n❯ \n──────────';
+    await pollNow(controller);
+    state.screen = dialog;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission?.toolUseId, undefined);
+    assert.ok(snapshots.at(-1)!.permission, 'the next dialog before its call');
+  } finally { await cleanup(); }
+});
+
+test('a card read off the screen alone answers like any other, bound to the transcript as read', async () => {
+  const { controller, cleanup, answered, snapshots } = await earlyDialog();
+  try {
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'choose', number: 3 });
+    assert.equal(answered.length, 1);
+    assert.equal((answered[0][4] as { title: string }).title, 'Bash command', 'the driver checks the live screen against this dialog');
+    assert.deepEqual(answered[0][7], { inode: '42', offset: 400 }, 'and refuses if the transcript moved meanwhile');
+    await assert.rejects(controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'cancel' }), /已更新/, 'a token answers once');
+  } finally { await cleanup(); }
+});
+
+test('without Claude Code waiting for a permission prompt, a dialog-like screen with no pending call is no card', async () => {
+  for (const native of [{}, { status: 'idle' as const }, { status: 'busy' as const }, { status: 'waiting' as const },
+    { status: 'waiting' as const, waitingFor: 'dialog open' }, { status: 'waiting' as const, waitingFor: 'input needed' }]) {
+    const { controller, cleanup, snapshots } = await earlyDialog(native);
+    try {
+      await pollNow(controller);
+      assert.equal(snapshots.at(-1)!.permission, undefined, JSON.stringify(native));
+    } finally { await cleanup(); }
+  }
+});

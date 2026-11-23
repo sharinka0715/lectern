@@ -1622,7 +1622,7 @@ export default function App({view = "primary"}: {view?: ChatView}) {
               onAction={answerQuestion} onViewTerminal={() => setTerminalOpen(true)} />)}
           {permission && !terminalOpen && (terminalLocked ?
             <div className="resume-bar"><span>{t('app.permissionInTerminal')}</span><button onClick={() => setTerminalOpen(true)}>{t('app.viewTerminal')}</button></div> :
-            <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.toolUseId, permission.kind])}
+            <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.cardId, permission.kind])}
               permission={permission} unconfirmed={snapshot?.permissionUnconfirmed} busy={permissionBusy || busy || sending || settingUIBusy || !!snapshot?.settingBusy || !!snapshot?.trustBusy}
               onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} />)}
           {directoryTrust && (

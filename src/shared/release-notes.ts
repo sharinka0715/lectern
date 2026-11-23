@@ -35,6 +35,17 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.2',
+    features: [
+    ],
+    fixes: [
+      ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',
+        'The first permission request in a new chat sometimes had no card, only the terminal (Claude Code 2.1.300/2.1.310 can save the call before the prompt); the card and the call now show as usual.'],
+      ['Claude Code 已弹出权限框但还没把调用写进会话记录时，聊天里也立即显示权限卡，写入后不会重复。',
+        'The permission card now shows as soon as Claude Code asks, even before the call is saved to the session (slow disk, busy machine); once saved it stays the same card, never a second one.'],
+    ],
+  },
+  {
     version: '0.2.1',
     features: [
       ['粘贴、拖入或选择的文件在输入框里显示为附件卡片，可单独移除，不再往文字里插入长路径。',
