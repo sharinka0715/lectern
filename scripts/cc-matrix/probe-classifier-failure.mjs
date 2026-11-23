@@ -1,18 +1,24 @@
 // node scripts/cc-matrix/probe-classifier-failure.mjs [--versions a,b] [--modes ok,500,hang] [--local]
-//   [--keys Enter/Down,Enter] [--then] [--restart] [--simple-first] [--rows 24] [--env K=V] [--rename name] [--output dir]
+//   [--keys Enter/Down,Enter] [--then] [--restart] [--simple-first] [--rows 24] [--env K=V] [--rename name] [--refuse-beta] [--output dir]
 // Samples what each Claude Code release shows when auto mode's safety check fails,
 // in the matrix sandbox (loopback fake API, private tmux, Lectern's launch settings).
 // The fake model runs a pipeline marked ccm-unchecked. Like Lectern, the probe leaves
 // CLAUDE_CODE_AUTO_MODE_SERVER unset, so the check is to run on the server, which this
 // third-party endpoint never does: 2.1.300/2.1.310 show the classifier billing notice,
-// 2.1.321+ "Auto mode can't check actions in this session". --local sets the variable
+// 2.1.321+ "Auto mode can't check actions in this session" here. 2.1.330 shows the billing
+// notice too where it may fall back to its own check: with telemetry at its default level
+// (a real user's; the sandbox turns it off), or `--env CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1`,
+// which does the same without any outside connection. --local sets the variable
 // to 0 in Claude Code's environment (as the test sandboxes do): the check runs locally,
 // and the fake API answers or fails it in one way per mode (see MODES). Records every
 // distinct screen, the check requests and how they failed, and, with --keys, what the
 // keys pressed on each resulting prompt did (footer mode, files written, later
 // requests); --then sends a second message afterwards, --restart a new Claude Code
 // process in the same configuration, --simple-first runs a command auto mode does not
-// check before the pipeline. Writes <output>/<version>/<mode>[.<variant>].json.
+// check before the pipeline. --refuse-beta makes the fake API refuse (HTTP 400) requests that
+// carry auto mode's dangerous-tool-use beta, like a gateway whose deployment does not know it
+// (2.1.330 sends them again without it; `refusedBetas` in the record). Writes
+// <output>/<version>/<mode>[.<variant>].json.
 import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -73,6 +79,7 @@ for (const version of versions) {
     const dir = path.join(output, version);
     await mkdir(dir, { recursive: true });
     const api = await startFakeApi({ logFile: path.join(dir, `${mode}.fake-api.jsonl`) });
+    if (args.includes('--refuse-beta')) api.refuseBeta(/^dangerous-tool-use-/);
     let unchecked = 0;
     api.script('@classifier', ({ action, answer }) => {
       if (!/ccm-unchecked/.test(action)) return { text: answer() };
@@ -114,6 +121,7 @@ for (const version of versions) {
       if (prompting(turn.frames.at(-1)?.screen ?? '')) { await delay(1500); turn.frames.push({ at: Date.now(), screen: screenOf(sandbox, pane) }); turn.reason = 'prompt'; }
       record.turn = turn.frames.map(frame => ({ t: frame.at - t0, screen: frame.screen }));
       record.turnEnd = turn.reason;
+      record.refusedBetas = api.requests.filter(r => r.refusedBeta).map(r => ({ t: r.at - t0, kind: r.kind, beta: r.refusedBeta }));
       record.checks = api.requests.filter(r => r.kind === 'classifier').map(r => ({ t: r.at - t0, stream: r.stream, maxTokens: r.maxTokens, failed: r.failed, aborted: r.aborted }));
       record.stuck = turn.reason === 'until' ? undefined : turn.frames.at(-1)?.screen;
       record.footerBefore = footerMode(turn.frames.at(-1)?.screen ?? '');
@@ -175,8 +183,8 @@ for (const version of versions) {
       await api.close();
       const name = [mode, ...keys.length ? [keys.join('-').replaceAll('/', '+')] : [], ...args.includes('--then') ? ['then'] : [], ...args.includes('--local') ? ['local'] : [],
         ...args.includes('--restart') ? ['restart'] : [], ...args.includes('--simple-first') ? ['simple'] : [],
-        ...option('--rows') ? [`rows${option('--rows')}`] : [], ...option('--rename') ? ['named'] : [],
-        ...args.flatMap((arg, i) => arg === '--env' ? [args[i + 1].replace(/[^A-Za-z0-9=]/g, '')] : [])].join('.');
+        ...option('--rows') ? [`rows${option('--rows')}`] : [], ...option('--rename') ? ['named'] : [], ...args.includes('--refuse-beta') ? ['refuse-beta'] : [],
+        ...args.flatMap((arg, i) => arg === '--env' ? [args[i + 1].replace(/[^A-Za-z0-9=_]/g, '')] : [])].join('.');
       await writeFile(path.join(dir, `${name}.json`), JSON.stringify(record, null, 2));
     }
     console.log(`${version} ${mode}: end=${record.turnEnd} checks=${record.checks?.length} unchecked=${record.uncheckedChecks} files=${record.files?.join('|')} footer="${record.footerBefore}"${keys.length ? ` → "${record.footerAfter}" (${record.afterKeysEnd})` : ''}`);

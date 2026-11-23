@@ -133,7 +133,9 @@ export class MessageDisplay {
     const turn = this.foreground;
     if (!turn) return this.terminalStatus ?? 'idle';
     if (turn.interrupted) return 'idle';
-    if (turn.finished) return this.terminalStatus === 'working' ? 'working' : 'idle';
+    // Claude Code recorded that the user stopped it (Esc, a refused call): over, even with a live
+    // preview left that the transcript never matched (a reply stopped at a dialog before its call was written).
+    if (turn.finished || turn.stopped) return this.terminalStatus === 'working' ? 'working' : 'idle';
     if (turn.optimistic || turn.preview || this.terminalStatus === 'working') return 'working';
     return this.terminalStatus ?? 'idle';
   }

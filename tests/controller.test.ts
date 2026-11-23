@@ -809,6 +809,63 @@ test('a tool permission dialog becomes a card only for the pending call, and eac
   } finally { await cleanup(); }
 });
 
+test('the billing notice behind a gateway, and a native dialog Lectern does not know, are cards before the transcript has the call', async () => {
+  // Claude Code 2.1.329–2.1.330 write a streamed reply's call only after its dialog is answered: a user
+  // behind a gateway saw the billing notice as a "dialog open" banner and had to take over the terminal.
+  const { readFileSync } = await import('node:fs');
+  const notice = readFileSync(new URL('./fixtures/auto-mode-billing-2.1.330/streamed.txt', import.meta.url), 'utf8');
+  const mcp = readFileSync(new URL('./fixtures/native-dialog-2.1.330/mcp-server.txt', import.meta.url), 'utf8');
+  const prompt = { type: 'user', uuid: 'u1', parentUuid: null, sessionId: 'chat', message: { role: 'user', content: 'Run the probe' } };
+  const call = { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 'chat', message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'toolu_probe', name: 'Bash', input: { command: "seq -w 1 3 | sed 's/$/ ccm-unchecked/' | tee unchecked-0.txt" } }] } };
+  let records: unknown[] = [prompt], screen = notice, nativeStatus: 'waiting' | 'busy' | undefined = 'waiting', waitingFor: string | undefined = 'dialog open', offset = 300;
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = { ...readResult(id, records), screen, viewport: screen, panePid: 77, nativeStatus, nativeWaitingFor: waitingFor, transcriptPosition: { inode: '42', offset },
+      session: { ...readResult(id).session, status: 'waiting' as const } };
+    records = [];
+    return result;
+  });
+  const answered: unknown[][] = [];
+  (controller.backend as any).answerPermission = async (...args: unknown[]) => { answered.push(args); };
+  const snapshots: SessionSnapshot[] = []; controller.on('snapshot', value => snapshots.push(value));
+  try {
+    await controller.watchSession('test', 'chat');
+    await pollNow(controller);
+    const card = snapshots.at(-1)!.permission!;
+    assert.equal(card.kind, 'auto-mode-billing');
+    assert.equal(card.toolUseId, undefined, 'no call known yet');
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission!.token, card.token, 'the same dialog keeps its token');
+    // Should the call be written while the notice is up, the same card takes it (token and identity kept).
+    records = [call]; offset = 900;
+    await pollNow(controller);
+    const adopted = snapshots.at(-1)!.permission!;
+    assert.deepEqual([adopted.token, adopted.cardId, adopted.toolUseId], [card.token, card.cardId, 'toolu_probe']);
+    await controller.answerPermission('test', 'chat', '%1', 77, card.token, { kind: 'cancel' });
+    assert.deepEqual(answered[0][5], { kind: 'cancel' });
+    assert.deepEqual(answered[0][7], { inode: '42', offset: 900 }, 'bound to the transcript as read');
+    // A dialog Lectern does not know becomes the generic card while Claude Code waits, whatever for.
+    records = [{ type: 'user', uuid: 'r1', parentUuid: 'a1', sessionId: 'chat', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_probe', content: 'refused', is_error: true }] } }];
+    screen = mcp;
+    for (const what of ['dialog open', 'sandbox request', undefined]) {
+      waitingFor = what;
+      await pollNow(controller);
+      const generic = snapshots.at(-1)!.permission!;
+      assert.equal(generic?.kind, 'native-dialog', String(what));
+      assert.equal(generic.title, 'New MCP server found in this project: demo-notes');
+      assert.equal(generic.escape, 'cancel');
+      assert.equal(generic.toolUseId, undefined);
+    }
+    nativeStatus = undefined;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined, 'without the status record the text proves nothing');
+    // Nor the billing notice's text without a call or Claude Code's "waiting".
+    screen = notice;
+    await pollNow(controller);
+    assert.equal(snapshots.at(-1)!.permission, undefined);
+  } finally { await cleanup(); }
+});
+
 /** The Bash dialog on screen while the transcript has only `records` so far (more via `next`). */
 async function earlyDialog(native: { status?: 'waiting' | 'idle' | 'busy'; waitingFor?: string } = { status: 'waiting', waitingFor: 'permission prompt' }) {
   const { readFileSync } = await import('node:fs');

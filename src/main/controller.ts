@@ -21,8 +21,8 @@ import { focusedSettingCommandHistory, isIdleEmptyComposer, observeUltracode } f
 import { parseExecutionMode } from '../core/session-telemetry';
 import { CompactSamples, parseTurnProgress, showsCompactCompletion } from '../core/turn-progress';
 import { parseQuestionScreen } from '../core/question-screen';
-import { parsePermissionScreen, permissionLayout } from '../core/permission-screen';
-import { earlyPermission, observePermission, pendingToolId, type WatchedPermission } from './session-permission';
+import { permissionLayout } from '../core/permission-screen';
+import { earlyPermission, observePermission, pendingToolId, permissionDialog, type WatchedPermission } from './session-permission';
 import { PermissionInputUnconfirmed } from '../backend/native-permission-actions';
 import type { PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
@@ -737,11 +737,12 @@ export class Controller extends EventEmitter {
       const question = watch.question?.snapshot;
       if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = watch.permissionOwned = undefined;
       if (questionReadCurrent && !question) {
-        // A tool permission dialog replaces the input box. The current turn's pending call owns
-        // it; menu-like text in the reply cannot. Before the transcript has the call, Claude
-        // Code's own record of waiting for a permission prompt vouches for it (earlyPermission).
+        // A dialog replaces the input box. The current turn's pending call owns it; menu-like
+        // text in the reply cannot. Before the transcript has the call, Claude Code's own record
+        // of waiting for it vouches for it (earlyPermission); while it waits, a native dialog
+        // Lectern does not know is read by its common layout (permissionDialog).
         const screen = (!result.nativeStatus || result.nativeStatus === 'waiting') && result.active && !result.directoryTrust && !result.hasMore && result.viewport
-          ? parsePermissionScreen(result.viewport) : undefined;
+          ? permissionDialog(result.viewport, result.nativeStatus) : undefined;
         const owner = screen && pendingToolId(messages);
         const layout = screen && permissionLayout(screen);
         if (owner) watch.permissionOwned = layout;
@@ -752,7 +753,7 @@ export class Controller extends EventEmitter {
           ? observePermission(watch.permission, screen, handle, owner || undefined, result.transcriptPosition) : undefined;
         if (watch.permission && (watch.permission !== before || watch.permission.owner !== beforeOwner))
           diagnostic.event('controller.permission.card', { cardId: watch.permission.snapshot.cardId, toolUseId: watch.permission.owner,
-            adopted: watch.permission === before, nativeWaitingFor: result.nativeWaitingFor });
+            adopted: watch.permission === before, nativeWaitingFor: result.nativeWaitingFor, kind: watch.permission.screen.kind });
       }
       const permission = watch.permission?.snapshot;
       // Progress never falls back to scrollback. Keep at most one live sample

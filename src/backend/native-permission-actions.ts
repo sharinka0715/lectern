@@ -21,6 +21,8 @@ const equalScreen = (a: NativePermissionScreen, b: NativePermissionScreen) => sa
  * focus with arrows, proving each step on a fresh frame, then press Enter
  * (or Esc to cancel), and confirm that this dialog has closed. A dialog whose
  * choices are keys (Enter, Shift+Tab) gets that one key on the verified frame.
+ * Any dialog that is not a tool's own (keyed, or one Lectern only reads generically)
+ * may ignore keys right after it opens: its first key waits until it has been up a second.
  */
 export async function performPermissionAction(driver: Pick<QuestionDriver, 'frame' | 'questionKey'>, paneId: string, panePid: number,
   expected: NativePermissionScreen, action: PermissionAction, assertCurrent: () => void): Promise<void> {
@@ -31,7 +33,7 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
     const frame = await driver.frame();
     check();
     if (frame.paneId !== paneId || frame.panePid !== panePid || frame.nativeStatus === 'shell') throw changed();
-    return { frame, screen: parsePermissionScreen(frame.viewport) };
+    return { frame, screen: parsePermissionScreen(frame.viewport, { generic: expected.kind === 'native-dialog' }) };
   };
   const initial = (await inspect()).screen;
   if (!initial || !equalScreen(initial, expected)) throw changed();
@@ -80,6 +82,8 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
   };
   try {
     if (action?.kind === 'cancel') {
+      // A dialog read generically takes Esc only when its key hints say so.
+      if (current.kind === 'native-dialog' && current.escape === undefined) throw new Error(t('native.permissionOptionUnavailable'));
       if (current.kind) await settleKeyed();
       await key('Escape'); await settle(() => false, true); return;
     }
@@ -88,14 +92,16 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
     if (index < 0) throw new Error(t('native.permissionNoOption'));
     // A keyed choice ("Auto mode can't check actions …"): its own key, then the dialog must close.
     const keyed = current.options[index].key;
-    if (current.kind || keyed) {
+    if ((current.kind && current.kind !== 'native-dialog') || keyed) {
       if (!keyed || current.options[index].unavailable) throw new Error(t('native.permissionOptionUnavailable'));
       await settleKeyed();
       await key(keyed);
       await settle(() => false, true);
       return;
     }
+    if (current.kind) await settleKeyed();
     let at = focusedPermission(current);
+    if (at < 0) throw changed();
     while (at !== index) {
       const step = Math.sign(index - at);
       await key(step < 0 ? 'Up' : 'Down');

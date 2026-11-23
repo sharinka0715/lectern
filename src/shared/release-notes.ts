@@ -41,6 +41,10 @@ export const releaseNotes: ReleaseNote[] = [
         'Images and files added to the input box stay where you put them as chips like "Image 1": select, delete, cut and paste them whole; sending or copying gives the @path.'],
       ['输入框上方的图片缩略图标出与卡片相同的编号，点开可看大图。',
         'Image thumbnails above the input box carry the same numbers as their chips and open larger with a click or the keyboard.'],
+      ['Lectern 不认识的原生对话框只要能读出正文和按键提示，也显示为卡片，不必接管终端。',
+        "Native dialogs Lectern does not know become cards when their text and keys or choices can be read: original text, choices and the screen's keys; others still offer the terminal."],
+      ['计费说明等对话框卡片里的帮助链接可以点开，在系统浏览器中打开。',
+        'Help links in the auto mode billing notice and other dialog cards open in the system browser.'],
     ],
     fixes: [
       ['新对话第一次请求工具权限时偶尔没有权限卡（Claude Code 2.1.300、2.1.310 把调用存在了提问之前），现已修复。',
@@ -59,6 +63,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Rewinding from the app now works with Claude Code 2.1.321 and earlier too: the menu opens and its confirmation is recognized.'],
       ['修复续接会话后第一次回退误报「会话历史文件已变化」。',
         'The first rewind after resuming a conversation no longer fails with "The conversation history file has changed".'],
+      ['在对话框上按 Esc 中断本轮后，对话不再一直显示「正在回复」。',
+        'After Esc on a dialog stops the turn, the conversation no longer stays "replying".'],
     ],
   },
   {
