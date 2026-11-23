@@ -400,6 +400,22 @@ try {
     .filter(row => row.type === 'user' || row.type === 'assistant');
   assert.deepEqual(turns.slice(-3).map(row => [row.type, row.message.content[0].text.split('\n')[0]]),
     [['user', slowPrompt], ['user', afterStop], ['assistant', '已收到你的消息：' + afterStop]]);
+  // Claude Code saves a pasted tab as four spaces. The "sending" bubble is still that
+  // turn: it must not stay below the next turns with a live preview and a stop banner.
+  const tabbed = '默认显示\t名称 + 大小', afterTab = '制表符之后的消息';
+  for (const text of [tabbed, afterTab]) {
+    await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.status === 'idle' && !document.querySelector('textarea')?.disabled);
+    await input.fill(text);
+    await page.getByRole('button', { name: '发送消息', exact: true }).click();
+    await page.locator('.message-assistant[data-source="jsonl"]').getByText('已收到你的消息：' + text.replace('\t', '    '), { exact: true }).waitFor();
+  }
+  const shown = await page.locator('.message').evaluateAll(nodes => nodes.slice(-4).map(node => [node.dataset.role, node.dataset.source, node.innerText]));
+  assert.deepEqual(shown.map(([role, source]) => [role, source]), [['user', 'jsonl'], ['assistant', 'jsonl'], ['user', 'jsonl'], ['assistant', 'jsonl']], JSON.stringify(shown));
+  assert.match(shown[0][2], /默认显示\s+名称 \+ 大小/);
+  assert.match(shown[2][2], new RegExp(afterTab));
+  // (The reply stopped above keeps its unsaved text as a preview, by design.)
+  assert.equal(await page.locator('.message[data-source="pending"]').count(), 0);
+  assert.equal(await page.locator('.notice-banner', { hasText: '已中断' }).count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS: Electron + tmux preview, JSONL, stop and continue in the same session, history reload, resume and local diagnostics.');
   console.log(`Screenshots: ${results}`);

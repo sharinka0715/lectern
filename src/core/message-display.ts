@@ -10,6 +10,7 @@ import { TranscriptUsage } from './session-telemetry';
 import { alignPreview, extractPreview, matchText } from './screen';
 import { diagnostic, getDiagnosticsInfo, summarize } from '../diagnostics';
 import { joinList, t } from '../shared/i18n';
+import { samePrompt } from '../shared/native-prompt';
 
 interface Part { text: string; tools: ToolBlock[] }
 interface Turn {
@@ -730,12 +731,27 @@ export class MessageDisplay {
     }
   }
 
+  /**
+   * Claude Code saves prompts in the order it receives them. Once a later send
+   * is saved, earlier sends still unmatched were saved under a text the match
+   * does not know, or never submitted. Kept, such a bubble stays below every
+   * later turn, takes the live screen as its preview and can never settle.
+   */
+  private retireUnmatched(stale: Turn[], matchedBy: string) {
+    if (!stale.length) return;
+    this.turns = this.turns.filter(turn => !stale.includes(turn));
+    this.pendingCount -= stale.length;
+    diagnostic.event('display.pending.retired', { matchedBy, turns: stale.map(turn => ({ turn: turn.index,
+      text: summarize(turn.user?.text ?? ''), preview: summarize(turn.preview), interrupted: turn.interrupted })) });
+  }
+
   private applyUser(row: TranscriptRow, existingUsers: Set<string | undefined> | undefined, allowPending: boolean): void {
     const text = row.text ?? '';
-    const pending = allowPending && this.pendingCount && !existingUsers?.has(row.key)
-      ? this.turns.slice(-this.pendingCount).find(turn => (turn.user?.text ?? '').trim() === text.trim()) : undefined;
+    const sent = allowPending && this.pendingCount && !existingUsers?.has(row.key) ? this.turns.slice(-this.pendingCount) : [];
+    const pending = sent.find(turn => samePrompt(turn.user?.text ?? '', text));
     const turn = pending ?? this.newTurn(text, false, row.key, row.timestamp);
     if (pending) {
+      this.retireUnmatched(sent.slice(0, sent.indexOf(pending)), row.key);
       this.turns.splice(this.turns.indexOf(pending), 1);
       this.pendingCount--;
       this.turns.splice(this.turns.length - this.pendingCount, 0, pending);

@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../shared/types";
+import { samePrompt } from "../shared/native-prompt";
 
 /**
  * A chat message the user just sent, shown at once while the main process
@@ -26,8 +27,7 @@ export function startOutgoing(scope: string, text: string, messages: ChatMessage
 
 /** True once the controller shows this message itself (optimistic or saved). */
 export function outgoingDelivered(messages: ChatMessage[] | undefined, outgoing: OutgoingMessage): boolean {
-  const text = outgoing.text.trim();
-  return (messages ?? []).some(message => message.role === "user" && !outgoing.before.has(message.id) && message.text.trim() === text);
+  return (messages ?? []).some(message => message.role === "user" && !outgoing.before.has(message.id) && samePrompt(outgoing.text, message.text));
 }
 
 export function withOutgoing(messages: ChatMessage[] | undefined, scope: string, outgoing?: OutgoingMessage): ChatMessage[] | undefined {

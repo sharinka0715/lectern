@@ -182,6 +182,44 @@ test('a canonical user record arriving before send returns does not create an op
   } finally { releaseSend(); await cleanup(); }
 });
 
+test('a tabbed send is its saved record (tab as four spaces), before or after send returns', { timeout: 5000 }, async () => {
+  let records: unknown[] = [];
+  let releaseSend: () => void = () => {};
+  let observedCanonical: () => void = () => {};
+  let early = true;
+  const { controller, cleanup } = await fakeController(async id => {
+    const result = readResult(id, records);
+    records = [];
+    return result;
+  }, async text => {
+    // Claude Code's paste handler saves each tab as four spaces.
+    const saved = { type: 'user', uuid: `user-${text.length}`, sessionId: 'chat', origin: { kind: 'human' }, promptSource: 'typed', message: { content: text.replace(/\t/g, '    ') } };
+    if (early) {
+      records = [saved];
+      await new Promise<void>(resolve => { releaseSend = resolve; });
+    } else setTimeout(() => { records = [saved]; }, 0);
+  });
+  let snapshot: SessionSnapshot | undefined;
+  controller.on('snapshot', (next: SessionSnapshot) => {
+    snapshot = next;
+    if (next.messages.some(message => message.role === 'user' && message.source === 'jsonl')) observedCanonical();
+  });
+  try {
+    await controller.watchSession('test', 'chat');
+    const observed = new Promise<void>(resolve => { observedCanonical = resolve; });
+    const sending = controller.sendMessage('test', 'chat', 'show name\tsize');
+    await observed;
+    releaseSend();
+    await sending;
+    assert.deepEqual(snapshot!.messages.filter(m => m.role === 'user').map(m => [m.text, m.source]), [['show name    size', 'jsonl']]);
+    early = false;
+    await controller.sendMessage('test', 'chat', 'then\tdate');
+    for (let i = 0; i < 50 && snapshot!.messages.some(m => m.source === 'pending'); i++) await pause(20);
+    assert.deepEqual(snapshot!.messages.filter(m => m.role === 'user').map(m => [m.text, m.source]),
+      [['show name    size', 'jsonl'], ['then    date', 'jsonl']]);
+  } finally { releaseSend(); await cleanup(); }
+});
+
 test('failed transport does not manufacture a user bubble or retry the send', async () => {
   let attempts = 0;
   const { controller, cleanup } = await fakeController(async id => readResult(id), async () => {

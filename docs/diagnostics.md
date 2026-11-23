@@ -45,7 +45,7 @@ npm run diagnostics:replay -- /absolute/path/to/saved-diagnostics --session SESS
 
 当前视口与滚屏在同一 shell / SSH 调用中读取。导航状态使用当前视口，防止旧生成/错误提示影响当前状态；消息预览仍可使用滚屏做匹配。未选中会话的导航刷新只记录状态元数据，不保存这些会话的原屏正文。选中会话的 `viewportCaptureId` 和 `viewportApplied` 会进入离线重放，旧版本日志没有这两个字段时保持旧格式兼容。
 
-只有 `controller.poll.apply` 引用的数据才是实际送入 MessageDisplay 的输入。单独的原始 capture 可能来自随后被取消或丢弃的读取，不能见到 capture 就直接重放。乐观输入、打断和失败分别有对应事件。
+只有 `controller.poll.apply` 引用的数据才是实际送入 MessageDisplay 的输入。单独的原始 capture 可能来自随后被取消或丢弃的读取，不能见到 capture 就直接重放。乐观输入、打断和失败分别有对应事件；一直没被会话记录认领、在后发的消息被认领时去掉的乐观输入记为 `display.pending.retired`（含当时的预览摘要和是否已标为中断）。
 
 ## 文件上限与失败处理
 

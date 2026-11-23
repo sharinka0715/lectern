@@ -318,7 +318,8 @@ process.stdin.on('data', chunk => {
       } else if (text && !busy) void answer(text);
     } else if (!pasted && char === '\x15') input = ''; // Ctrl+U clears this fixture's single-line draft.
     else if (char === '\x7f') input = input.slice(0, -1);
-    else input += char;
+    // Like Claude Code's paste handler, which saves a pasted tab as four spaces.
+    else input += pasted && char === '\t' ? '    ' : char;
   }
   if (args.includes('--delayed-setting-redraw') && /^\/(?:model|effort)$/.test(input)) setTimeout(draw, 320);
   else draw();

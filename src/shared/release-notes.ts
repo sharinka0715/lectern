@@ -79,6 +79,8 @@ export const releaseNotes: ReleaseNote[] = [
         'When a rewind fails after the terminal\'s rewind menu opened, Lectern closes the menu it opened, leaves the input box as it was and says nothing was rewound.'],
       ['改名等操作后马上回退不再报「会话历史文件已变化」，Lectern 会重读一次再回退。',
         'Rewinding right after a rename no longer fails with "The conversation history file has changed": Lectern reads the conversation again and retries once.'],
+      ['带制表符的消息发送后，「发送中」的气泡不再一直压在对话最底部、重复显示实时预览并常驻「已中断」提示。',
+        'A sent message with a tab no longer stays pinned below later turns, repeating the live preview with a lasting "Interrupted" banner.'],
     ],
   },
   {

@@ -35,6 +35,7 @@ import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import type { DirectoryTrustDecision, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, SubagentListing, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
 import { WorkspaceStore } from './store';
 import { commandPolicy } from '../shared/native-commands';
+import { samePrompt } from '../shared/native-prompt';
 import type { TerminalLink } from '../backend/terminal-link';
 import { diagnostic, errorDetails, getDiagnosticsInfo, summarize } from '../diagnostics';
 import { t } from '../shared/i18n';
@@ -1085,7 +1086,7 @@ export class Controller extends EventEmitter {
           watch.manualRecovery = false; this.manualRecoveries.delete(this.recoveryKey(watch.workspace, watch.sessionId)); this.settingRevision++;
         }
         const afterUser = watch.display.getMessages().filter(m => m.role === 'user').at(-1);
-        if (!(afterUser && afterUser.id !== beforeUser && afterUser.text.trim() === text.trim())) {
+        if (!(afterUser && afterUser.id !== beforeUser && samePrompt(text, afterUser.text))) {
           watch.display.optimisticUser(text);
           diagnostic.event('controller.optimistic_user', { inputCaptureId, text: summarize(text) });
         } else diagnostic.event('controller.optimistic_user.skipped', { reason: 'canonical-user-already-arrived', userId: afterUser.id, inputCaptureId });
