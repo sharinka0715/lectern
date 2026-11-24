@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { selectNativeScenario, validateNativeAnswer } from './native-dialogue.mjs';
+import { addFolder, openConversation, scanFolder } from './fixtures/sidebar-folders.mjs';
 
 const sourcePath = path.resolve(process.argv[2] || '');
 const results = path.resolve('test-results');
@@ -193,26 +194,13 @@ try {
   await settings.getByLabel('SSH 主机', { exact: true }).fill(host);
   await settings.getByRole('button', { name: '保存连接' }).click();
   await settings.waitFor({ state: 'detached' });
-  await page.getByRole('button', { name: `在 ${host} 添加项目文件夹`, exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '添加项目文件夹' }), folderName = `${host} · 继续验证`;
-  await dialog.getByLabel('名称', { exact: true }).fill(folderName);
-  await dialog.getByLabel('工作目录', { exact: true }).fill(cwd);
-  await dialog.getByRole('button', { name: '添加目录', exact: true }).click();
-  await dialog.waitFor({ state: 'hidden' });
-  const saved = await page.evaluate(() => window.desktop.listWorkspaces());
-  workspaceId = saved.find(workspace => workspace.kind === 'ssh' && workspace.host === host && workspace.cwd === cwd)?.id;
-  assert.ok(workspaceId);
-  // Expand the folder in the sidebar (the toggle, not the name: clicking the name opens a draft).
-  // A newly added folder lists no saved conversations until "扫描所有对话".
-  const folder = page.locator(`.workspace-row[data-workspace-id="${workspaceId}"] .workspace-toggle`);
-  if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
-  await page.getByRole('group', { name: `${folderName} 的会话`, exact: true }).getByRole('button', { name: '扫描所有对话', exact: true }).click();
-  const sourceRow = page.locator(`.session-row[data-workspace-id="${workspaceId}"][data-session-id="${sid}"]`);
-  await sourceRow.waitFor();
+  workspaceId = (await addFolder(page, host, { cwd, host, name: `${host} · 继续验证` })).id;
+  // A folder added through the dialog lists no saved conversations until 扫描所有对话.
+  await scanFolder(page, workspaceId);
   const discovery = await page.evaluate(id => window.desktop.discover(id), workspaceId);
   const history = discovery.sessions.find(session => session.id === sid);
   assert.ok(history?.path && !history.paneId, 'The source UUID must be an inactive history, not another active terminal');
-  await sourceRow.click();
+  await openConversation(page, workspaceId, sid);
   await page.waitForFunction(sid => window.__snapshot?.sessionId === sid && window.__snapshot.status === 'idle' && !window.__snapshot.paneId, sid);
   const initial = await page.evaluate(() => window.__snapshot);
   assert.equal(initial.messages.length, 2 * originalCount);

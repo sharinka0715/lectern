@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { openConversation, startConversation } from './fixtures/sidebar-folders.mjs';
 
 const sourcePath = process.argv[2] ? path.resolve(process.argv[2]) : undefined;
 if (sourcePath) assert.ok(sourcePath.startsWith(path.resolve('test-results') + '/native-ssh-tools-') && sourcePath.endsWith('/report.json'));
@@ -107,9 +108,7 @@ try {
   if (source) {
     const discovery = await page.evaluate(id => window.desktop.discover(id), workspaceId);
     assert.ok(discovery.sessions.some(s => s.id === sid && s.path && !s.paneId), 'Only reopen the inactive test-owned UUID');
-    const folder = page.locator(`.workspace-row[data-workspace-id="${workspaceId}"] .workspace-select`);
-    if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
-    await page.locator(`.session-row[data-session-id="${sid}"]`).click();
+    await openConversation(page, workspaceId, sid);
     await page.waitForFunction(sid => window.__snapshot?.sessionId === sid && window.__snapshot.status === 'idle' && !window.__snapshot.paneId, sid);
     const inherited = await page.evaluate(() => window.__snapshot.messages);
     assert.equal(inherited.length, 4);
@@ -123,7 +122,11 @@ try {
       }),
     })), expectedAnswers);
     await page.getByRole('button', { name: '续接会话', exact: true }).click();
-  } else await page.getByRole('button', { name: `在 ${workspaceName} 新建对话`, exact: true }).click();
+  } else {
+    // 新建对话 only opens a draft whose first message would start Claude Code with the default
+    // model; start the pane without a message (no request) and open it from the sidebar.
+    await startConversation(page, workspaceId);
+  }
   await page.waitForFunction(() => !!window.__snapshot?.paneId);
   const session = await page.evaluate(() => window.__snapshot); owned.push(session); sid = session.sessionId; report.sessionId = sid;
   await page.waitForFunction(() => window.__snapshot?.directoryTrust || window.__snapshot?.navigationStatus === 'idle');

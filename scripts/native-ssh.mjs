@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { selectNativeScenario, validateNativeAnswer } from './native-dialogue.mjs';
+import { addFolder, openConversation, scanFolder, startConversation } from './fixtures/sidebar-folders.mjs';
 
 const exec = promisify(execFile), host = process.env.LECTERN_SSH_HOST;
 assert.ok(host, 'Set LECTERN_SSH_HOST to an SSH alias for the test machine');
@@ -39,9 +40,10 @@ async function stopOwned(session) {
   if (pane === session.paneId && sid === session.sessionId && name.startsWith(`lectern-${sid.slice(0, 8)}-`)) await remote(`tmux kill-pane -t ${q(pane)}`);
 }
 async function newSession() {
-  const previous = await page.evaluate(() => window.__snapshot?.sessionId);
-  await page.getByRole('button', { name: `在 ${workspaceName} 新建对话`, exact: true }).click();
-  await page.waitForFunction(({ id, previous }) => window.__snapshot?.workspaceId === id && window.__snapshot.paneId && window.__snapshot.sessionId !== previous, { id: workspaceId, previous });
+  // 新建对话 only opens a draft whose first message would start Claude Code with the default
+  // model; start the pane without a message (no request) and open it from the sidebar.
+  const started = await startConversation(page, workspaceId);
+  await page.waitForFunction(({ id, sid }) => window.__snapshot?.workspaceId === id && window.__snapshot.sessionId === sid && !!window.__snapshot.paneId, { id: workspaceId, sid: started.id });
   const s = await page.evaluate(() => window.__snapshot); owned.push(s); return s;
 }
 async function waitReady(sid) {
@@ -120,13 +122,7 @@ try {
     window.desktop.onSnapshot(value => { window.__snapshot = value; window.__snapshots.push(value); });
   });
   // 测试选择已有样本；客户端只通过明确添加的文件夹读取历史。
-  for (const project of scan.projects.filter(p => p.exists && p.cwd !== cwd)) {
-    await page.getByRole('button', { name: `在 ${host} 添加项目文件夹`, exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: '添加项目文件夹', exact: true });
-    await dialog.getByLabel('工作目录', { exact: true }).fill(project.cwd);
-    await dialog.getByRole('button', { name: '添加目录', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
-  }
+  for (const project of scan.projects.filter(p => p.exists && p.cwd !== cwd)) await addFolder(page, host, { cwd: project.cwd, host });
   await page.screenshot({ path: path.join(root, 'remote-project-folders.png') });
   const imported = await page.evaluate(() => window.desktop.listWorkspaces());
   assert.ok(imported.every(w => w.kind === 'ssh' && w.host === host && !w.claudeDir));
@@ -136,6 +132,8 @@ try {
     if (!project.exists) continue;
     const id = imported.find(w => w.cwd === project.cwd)?.id;
     assert.ok(id, 'Remote history directory imported through GUI');
+    // A folder added through the dialog lists its saved conversations only after 扫描所有对话.
+    await scanFolder(page, id);
     const discovery = await page.evaluate(id => window.desktop.discover(id), id);
     assert.equal(discovery.sessions.filter(s => s.path).length, project.sessionCount);
     assert.ok(discovery.sessions.every(s => !s.paneId), 'Pre-existing non-Claude tmux panes must not bind to matching-directory histories');
@@ -157,9 +155,7 @@ try {
 
   // Resume one pre-existing, inactive user conversation without sending any
   // model request, then release only the newly created exact-bound pane.
-  const folder = page.locator(`.workspace-row[data-workspace-id="${originalProject.workspaceId}"] .workspace-select`);
-  if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
-  await page.locator(`.session-row[data-workspace-id="${originalProject.workspaceId}"][data-session-id="${sample.id}"]`).click();
+  await openConversation(page, originalProject.workspaceId, sample.id);
   await page.waitForFunction(sid => window.__snapshot?.sessionId === sid && !window.__snapshot.paneId, sample.id);
   await page.getByRole('button', { name: '续接会话', exact: true }).click();
   await page.waitForFunction(sid => window.__snapshot?.sessionId === sid && !!window.__snapshot.paneId, sample.id);
