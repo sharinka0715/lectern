@@ -45,21 +45,35 @@ async function seedArchive(workspace) {
   return { sessionId, file };
 }
 
-/** In the page: every element that starts fading in (`data-fade`) or out (`data-leaving`), and
- * when a leaving one goes. Elements get a number; `mark()` numbers what is shown now. */
+/** In the page: every element that starts fading in (`data-fade`) or out (`data-leaving`), the
+ * animations it got then, how they ended, and when a leaving one goes. Elements get a number;
+ * `mark()` numbers what is shown now. The animations are read from the page's own records, not
+ * from painted frames: a busy runner may paint none while one runs (see dockRoundTrip). */
 function installRecorder() {
   return page.evaluate(() => {
     const ids = new WeakMap();
     let next = 0;
     const id = el => ids.get(el) ?? (ids.set(el, ++next), next);
     const name = el => el ? el.tagName.toLowerCase() + [...el.classList].map(c => "." + c).join("") : "";
-    const log = { entered: [], leaving: [], gone: [] }, counts = new Map();
+    /** The CSS animations and transitions on the element now: name (or property), state, timing, first and last keyframe. */
+    const animations = el => el.getAnimations().map(animation => {
+      const timing = animation.effect.getTiming(), keyframes = animation.effect.getKeyframes();
+      const values = frame => frame && Object.fromEntries(Object.entries(frame).filter(([key]) => !["offset", "computedOffset", "easing", "composite"].includes(key)));
+      return { name: animation.animationName ?? animation.transitionProperty, state: animation.playState, duration: timing.duration,
+        easing: keyframes[0]?.easing === "linear" ? timing.easing : keyframes[0]?.easing, from: values(keyframes[0]), to: values(keyframes.at(-1)) };
+    });
+    const log = { entered: [], leaving: [], gone: [], ended: [] }, counts = new Map();
+    for (const type of ["animationend", "animationcancel"]) document.addEventListener(type, event => event.target instanceof Element &&
+      log.ended.push({ id: id(event.target), type, name: event.animationName, elapsed: event.elapsedTime, t: performance.now() }), true);
     new MutationObserver(records => {
       for (const r of records) {
         if (r.type === "attributes" && r.oldValue === null && r.target.hasAttribute(r.attributeName)) {
-          const el = r.target, entry = { id: id(el), el: name(el), parent: name(el.parentElement), text: el.textContent.slice(0, 30), t: performance.now() };
+          const el = r.target, entry = { id: id(el), el: name(el), parent: name(el.parentElement), text: el.textContent.slice(0, 30), t: performance.now(), animations: animations(el) };
           if (r.attributeName === "data-fade") { log.entered.push(entry); counts.set(entry.id, (counts.get(entry.id) ?? 0) + 1); }
-          else log.leaving.push({ ...entry, mode: el.getAttribute("data-leaving"), top: el.getBoundingClientRect().top });
+          else {
+            const box = el.getBoundingClientRect();
+            log.leaving.push({ ...entry, mode: el.getAttribute("data-leaving"), top: box.top, bottom: box.bottom, height: box.height, position: getComputedStyle(el).position });
+          }
         }
         if (r.type === "childList") for (const node of r.removedNodes)
           // React's removal comes first, with the element already put back: only the final one counts.
@@ -68,9 +82,9 @@ function installRecorder() {
     }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ["data-fade", "data-leaving"] });
     let marked = new Set();
     window.__fade = {
-      log, id,
+      log, id, animations,
       twice: () => [...counts].filter(([, count]) => count > 1).map(([key]) => key),
-      reset() { log.entered.length = log.leaving.length = log.gone.length = 0; },
+      reset() { log.entered.length = log.leaving.length = log.gone.length = log.ended.length = 0; },
       /** Numbers the messages and blocks shown now: none of them may fade in later. */
       mark() { marked = new Set([...document.querySelectorAll(".message, .message-content > *, .markdown > *, .markdown li")].map(id)); return marked.size; },
       remarked: () => log.entered.filter(entry => marked.has(entry.id)),
@@ -78,7 +92,7 @@ function installRecorder() {
   });
 }
 const fades = () => page.evaluate(() => ({ entered: window.__fade.log.entered, leaving: window.__fade.log.leaving, gone: window.__fade.log.gone,
-  twice: window.__fade.twice(), remarked: window.__fade.remarked() }));
+  ended: window.__fade.log.ended, twice: window.__fade.twice(), remarked: window.__fade.remarked() }));
 const reset = () => page.evaluate(() => window.__fade.reset());
 
 /** In the page, once per painted frame: how far the conversation is from its end, the input area's
@@ -106,6 +120,22 @@ function startFrames() {
   });
 }
 const stopFrames = () => page.evaluate(() => window.__frames.stop());
+/** In the page: each change to the input area's inline style (when, its min-height and the min-height
+ * transition it then runs, read at once) and the transition's events. The transition is the ease,
+ * so this says whether it eased whatever the runner paints meanwhile. */
+function watchDockEase() {
+  return page.evaluate(() => {
+    const dock = document.querySelector(".composer-area"), log = { styles: [], events: [] };
+    const types = ["transitionrun", "transitionstart", "transitionend", "transitioncancel"];
+    const observer = new MutationObserver(() => log.styles.push({ t: performance.now(), minHeight: dock.style.minHeight,
+      transitions: window.__fade.animations(dock).filter(animation => animation.name === "min-height") }));
+    observer.observe(dock, { attributes: true, attributeFilter: ["style"] });
+    const note = event => event.target === dock && event.propertyName === "min-height" &&
+      log.events.push({ type: event.type, t: performance.now(), elapsed: Math.round(event.elapsedTime * 1000) });
+    for (const type of types) dock.addEventListener(type, note);
+    window.__dockEase = () => { observer.disconnect(); for (const type of types) dock.removeEventListener(type, note); return log; };
+  });
+}
 const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 120)))));
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 /** The message at the bottom edge of the visible conversation (above the input area), as scroll-anchor-e2e reads it. */
@@ -204,11 +234,15 @@ try {
       return { top: box.top, bottom: box.bottom, dock: dock.height };
     }, selector);
     await startFrames();
+    await watchDockEase();
     await hide();
     await page.waitForFunction(selector => !document.querySelector(selector), selector);
+    // Until the leaving one is gone and the input area's ease is undone (FADE_LEAVE_MS + 40 after).
+    await page.waitForFunction(() => !document.querySelector(".composer-area > [data-leaving]") && !document.querySelector(".composer-area").style.minHeight);
     await settle();
-    const frames = await stopFrames(), after = await page.evaluate(() => document.querySelector(".composer-area").getBoundingClientRect().height);
-    return { before, after, frames, seen: await fades() };
+    const frames = await stopFrames(), ease = await page.evaluate(() => window.__dockEase());
+    const after = await page.evaluate(() => document.querySelector(".composer-area").getBoundingClientRect().height);
+    return { before, after, frames, ease, seen: await fades() };
   }
   const pill = await dockRoundTrip(() => writeFile(stateFile, "progress"), ".turn-progress", () => writeFile(stateFile, "ready"));
   const card = await dockRoundTrip(async () => {
@@ -218,20 +252,34 @@ try {
     await shot("permission-card.png");
     await page.locator("section.permission-card [data-permission-option=\"1\"]").click();
   });
-  for (const [name, { before, after, frames, seen }] of Object.entries({ pill, card })) {
-    const ghost = frames.flatMap(frame => frame.ghosts.filter(item => item.mode === "pin"));
-    const easing = frames.map(frame => frame.dock).filter(height => height < before.dock - 1 && height > after + 1);
-    // Where the pinned card was put back; a busy runner may draw no frame in its 180 ms fade.
-    const pinnedAt = seen.leaving.find(entry => entry.mode === "pin")?.top, pinnedTop = ghost[0]?.top ?? pinnedAt;
-    report[name] = { before, after, ghostTops: ghost.map(item => Math.round(item.top)), pinnedAt, dock: frames.map(frame => Math.round(frame.dock)), maxGap: maxGap(frames),
+  for (const [name, { before, after, frames, ease, seen }] of Object.entries({ pill, card })) {
+    // Whether it eased and faded where it was is read from the page's records: the transition and
+    // the animation it started, the style it held. Painted frames only show it when the window draws
+    // during those 180 ms: on a busy macOS runner (--jobs 2) frames once stopped right after the fade
+    // began and came back with the card gone (dock 497 … 497, 145: run 45348497143), the transition
+    // created and started all the same; stopping the GPU process for 400 ms there does the same here.
+    const pinned = seen.leaving.find(entry => entry.mode === "pin"), sink = pinned?.animations.find(item => item.name === "lectern-sink");
+    const gone = seen.gone.find(entry => entry.id === pinned?.id), at = ease.styles.findIndex(style => style.transitions.length);
+    const [eased] = ease.styles[at]?.transitions ?? [], held = at >= 0 && ease.styles[at + 1] ? ease.styles[at + 1].t - ease.styles[at].t : undefined;
+    const start = ease.styles[at]?.t ?? 0, ghost = frames.flatMap(frame => frame.ghosts.filter(item => item.mode === "pin"));
+    report[name] = { before, after, pinned: pinned && { top: pinned.top, position: pinned.position, animations: pinned.animations, lasted: gone && gone.t - pinned.t },
+      ease, held, ghostTops: ghost.map(item => Math.round(item.top)), maxGap: maxGap(frames),
+      // Painted frames (ms after the ease began: height), and how many fell between the two heights.
+      dock: frames.map(frame => [Math.round(frame.t - start), Math.round(frame.dock)]).filter(([t]) => t > -100 && t < 600),
+      framesEasing: frames.filter(frame => frame.dock < before.dock - 1 && frame.dock > after + 1).length,
       entered: seen.entered.map(entry => entry.el), leaving: seen.leaving.map(entry => [entry.el, entry.mode]) };
     assert.ok(seen.entered.some(entry => entry.parent.startsWith("div.composer-area")), `${name}: it fades in: ${report[name].entered}`);
-    assert.ok(seen.leaving.some(entry => entry.mode === "pin"), `${name}: it fades out pinned: ${JSON.stringify(report[name].leaving)}`);
+    assert.ok(pinned, `${name}: it fades out pinned: ${JSON.stringify(report[name].leaving)}`);
     assert.deepEqual(seen.leaving.filter(entry => entry.el.startsWith("article")), [], `${name}: no message left meanwhile`);
-    assert.ok(pinnedTop !== undefined && Math.abs(pinnedTop - before.top) <= 4, `${name}: where it was (${before.top} → ${pinnedTop})`);
-    // One frame between the two heights shows it eased (a jump has none); a busy macOS runner
-    // drops frames and showed only one (182, 179, 145) where a desktop shows several.
-    assert.ok(after < before.dock - 1 && easing.length >= 1, `${name}: the input area eases to its new height: ${report[name].dock}`);
+    assert.ok(pinned.position === "absolute" && Math.abs(pinned.top - before.top) <= 4, `${name}: out of the flow, where it was (${before.top} → ${pinned.top}, ${pinned.position})`);
+    assert.ok(sink?.state === "running" && sink.duration === 180 && sink.to.opacity === "0", `${name}: it fades out there: ${JSON.stringify(pinned.animations)}`);
+    assert.ok(gone && gone.t - pinned.t >= 150, `${name}: it stays for its fade, then goes: ${report[name].pinned.lasted}`);
+    // The ease: a min-height transition from the old height to the new one (a jump has none), held
+    // until the fade is over (FADE_LEAVE_MS + 40, by the clock), then the area lets go at its new height.
+    assert.ok(after < before.dock - 1 && eased?.state === "running" && eased.duration === 180 && eased.easing === "ease" &&
+      Math.abs(parseFloat(eased.from.minHeight) - before.dock) <= 1 && Math.abs(parseFloat(eased.to.minHeight) - after) <= 1,
+      `${name}: the input area eases to its new height: ${before.dock} → ${after}, ${JSON.stringify(ease)}`);
+    assert.ok(held >= 180 && ease.styles[at + 1].minHeight === "", `${name}: it holds the ease through the fade (${held} ms), then lets go: ${JSON.stringify(ease.styles)}`);
     assert.ok(maxGap(frames) <= 2, `${name}: the latest line stays just above the input area (${maxGap(frames)}px)`);
   }
   await page.locator(".message-assistant").filter({ hasText: "已允许并运行" }).waitFor();
@@ -264,12 +312,18 @@ try {
   assert.ok(blocks.every((entry, i) => i === 0 || entry.t - blocks[i - 1].t > 50), "each block when it appears, not all at once");
   assert.deepEqual(seen.leaving.filter(entry => entry.el.startsWith("article")), [], "the sent bubble becomes the saved one in place; the preview becomes the saved reply in place");
   assert.ok(maxGap(frames) <= 2, `the latest line stays in view while blocks fade in (${maxGap(frames)}px)`);
-  // The fade itself: a block starts nearly transparent and becomes opaque within the fade time.
+  // The fade itself: each block starts transparent and becomes opaque over 200 ms, the animation it
+  // got when it appeared, run to its end. (Opacities in painted frames for the report: a busy runner
+  // may paint a fade in only one or two frames.)
   const opacities = new Map();
   for (const frame of frames) for (const { id, opacity } of frame.fading) opacities.set(id, [...opacities.get(id) ?? [], opacity]);
-  const ramps = [...opacities.values()].filter(values => values.length >= 3);
-  report.ramps = ramps.slice(0, 4);
-  assert.ok(ramps.some(values => values[0] < 0.6 && values.at(-1) > values[0] + 0.2), "opacity rises over several frames: " + JSON.stringify(report.ramps));
+  report.ramps = [...opacities.values()].slice(0, 4);
+  const blockFades = blocks.map(entry => entry.animations.find(item => item.name === "lectern-fade-in"));
+  report.blockFades = blockFades.map((fade, i) => ({ ...fade, ended: seen.ended.filter(end => end.id === blocks[i].id).map(end => `${end.type} ${end.name} ${end.elapsed}`) }));
+  assert.ok(blockFades.every(fade => fade?.state === "running" && fade.duration === 200 && fade.from.opacity === "0" && fade.to.opacity === "1"),
+    "each block fades in from transparent: " + JSON.stringify(report.blockFades));
+  assert.ok(blocks.some(entry => seen.ended.some(end => end.id === entry.id && end.type === "animationend" && end.name === "lectern-fade-in")),
+    "the fade runs to its end: " + JSON.stringify(report.blockFades));
   await reset();
 
   // 6. Reading older messages while a reply streams in and fades in below: the line being read
@@ -336,13 +390,17 @@ try {
   assert.equal(await page.getByText("将被回退的提问", { exact: true }).count(), 0);
   assert.deepEqual(seen.leaving.map(entry => [entry.el.split(".").slice(0, 3).join("."), entry.mode]).sort().reverse(),
     [["article.message.message-user", "collapse"], ["article.message.message-assistant", "collapse"]], JSON.stringify(seen.leaving));
-  const both = frames.find(frame => frame.ghosts.length === 2)?.ghosts, user = seen.leaving.find(entry => entry.el.includes("message-user"));
-  assert.ok(both && both[0].id === user.id && both[0].bottom <= both[1].top + 1, "they stay in their order: the question above its reply");
+  // Where they were put back and the animation each got then (painted frames may be too few to
+  // show the collapse on a busy runner; their heights are in the report).
+  const user = seen.leaving.find(entry => entry.el.includes("message-user")), reply = seen.leaving.find(entry => entry.el.includes("message-assistant"));
+  assert.ok(user.height > 1 && reply.height > 1 && user.bottom <= reply.top + 1, "they stay in their order: the question above its reply: " + JSON.stringify(seen.leaving));
   const lasted = seen.gone.map(gone => gone.t - seen.leaving.find(entry => entry.id === gone.id).t);
   const heights = frames.flatMap(frame => frame.ghosts.filter(ghost => ghost.mode === "collapse").map(ghost => ghost.height));
-  report.rewound = { lasted, heights: heights.map(Math.round), maxGap: maxGap(frames) };
+  const collapses = seen.leaving.map(entry => entry.animations.find(item => item.name === "lectern-collapse"));
+  report.rewound = { lasted, collapses, heights: heights.map(Math.round), maxGap: maxGap(frames) };
   assert.ok(lasted.length === 2 && lasted.every(ms => ms >= 150 && ms < 600), "they stay for the fade, then go: " + lasted);
-  assert.ok(heights.some(height => height > 1 && height < Math.max(...heights) - 1), "the height collapses over several frames: " + report.rewound.heights);
+  assert.ok(collapses.every(fade => fade?.state === "running" && fade.duration === 180 && fade.from.height === "calc-size(auto, size)" && fade.to.height === "0px" && fade.to.opacity === "0"),
+    "the height collapses over the fade, from their own: " + JSON.stringify(collapses));
   assert.ok(maxGap(frames) <= 2, `the latest line stays in view while they collapse (${maxGap(frames)}px)`);
   assert.equal(await page.getByText("保留的回复", { exact: true }).count(), 1);
   // The same while reading older messages: what is being read stays where it is.
