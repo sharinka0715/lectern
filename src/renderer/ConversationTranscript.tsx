@@ -98,7 +98,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
         this.keepPosition(viewChanged);
       });
       this.resize.observe(viewport, { box: "border-box" });
-      if (this.area.current) this.fade = new FadeController(this.area.current, transcriptFades, { subtree: true, onLeave: this.noteFading });
+      if (this.area.current) this.fade = new FadeController(this.area.current, transcriptFades, { subtree: true, text: true, onLeave: this.noteFading });
       this.observeContent();
       this.observeDock();
     }

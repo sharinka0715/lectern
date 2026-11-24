@@ -1,7 +1,9 @@
 // npm run build && node scripts/content-fade-e2e.mjs [packaged-executable]
 // New content fades in, removed content fades out (src/renderer/content-fade.ts), offline with
 // the demo's mock Claude: a first open, another chat, the cache again and an older page show at
-// once; a streamed reply fades in block by block and never twice; a sent bubble becomes the saved
+// once; a streamed reply fades in block by block and never twice, and text added to a paragraph
+// already shown fades in as text (text-fade.ts), once, also when its Markdown changes shape, and copies
+// as it is meanwhile (the system clipboard: one at a time in test-all); a sent bubble becomes the saved
 // one in place; a rewound turn, the resume bar, a permission card and the progress pill fade out
 // where they were while the conversation keeps its latest line (or the line being read) in place;
 // with reduced motion nothing fades. Frames in test-results/content-fade-*/.
@@ -68,7 +70,8 @@ function installRecorder() {
     new MutationObserver(records => {
       for (const r of records) {
         if (r.type === "attributes" && r.oldValue === null && r.target.hasAttribute(r.attributeName)) {
-          const el = r.target, entry = { id: id(el), el: name(el), parent: name(el.parentElement), text: el.textContent.slice(0, 30), t: performance.now(), animations: animations(el) };
+          const el = r.target, entry = { id: id(el), el: name(el), parent: name(el.parentElement), text: el.textContent.slice(0, 30), t: performance.now(), animations: animations(el),
+            chars: window.__textFade?.replyChars(el) ?? 0 };
           if (r.attributeName === "data-fade") { log.entered.push(entry); counts.set(entry.id, (counts.get(entry.id) ?? 0) + 1); }
           else {
             const box = el.getBoundingClientRect();
@@ -91,9 +94,114 @@ function installRecorder() {
     };
   });
 }
+/** In the page: every span a text fade puts in (`data-text-fade`): its text, its delay (negative: a fade
+ * going on), the animation it got then, where its text is in its reply (visible characters, counted as
+ * text-fade.ts counts them) and the reply's visible text before and after the change that brought it. */
+function installTextRecorder() {
+  return page.evaluate(() => {
+    const visible = text => text.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "");
+    const blocks = message => [...message.querySelectorAll(":scope > .message-content > .markdown:not([data-fade-placeholder])")];
+    const replyText = message => blocks(message).map(block => visible(block.textContent)).join("");
+    const offsetOf = (message, node) => {
+      let count = 0;
+      for (const block of blocks(message)) for (let walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), text = walker.nextNode(); text; text = walker.nextNode()) {
+        if (text === node) return count;
+        count += visible(text.data).length;
+      }
+      return -1;
+    };
+    const log = { spans: [], snaps: [] }, shown = new WeakMap(), id = window.__fade.id;
+    new MutationObserver(records => {
+      const messages = new Set(), spans = [], t = performance.now();
+      for (const r of records) {
+        const message = (r.target instanceof Element ? r.target : r.target.parentElement)?.closest(".message");
+        if (message) messages.add(message);
+        for (const node of r.addedNodes) if (node instanceof HTMLElement && node.matches(".message")) messages.add(node);
+        for (const node of r.addedNodes) if (node instanceof HTMLElement && node.hasAttribute("data-text-fade")) spans.push(node);
+      }
+      for (const message of messages) {
+        if (!message.isConnected || message.matches(".message-user")) continue;
+        const text = replyText(message), last = shown.get(message);
+        if (text !== last?.text) { shown.set(message, { text, before: last?.text ?? "" }); log.snaps.push({ t, id: id(message), source: message.dataset.source, text }); }
+      }
+      for (const span of spans) {
+        const message = span.isConnected && span.closest(".message");
+        if (!message) continue;
+        const { text, before } = shown.get(message) ?? { text: replyText(message), before: "" };
+        log.spans.push({ t, id: id(span), message: id(message), source: message.dataset.source, text: span.textContent, chars: visible(span.textContent).length,
+          delay: parseFloat(span.style.animationDelay) || 0, offset: offsetOf(message, span.firstChild), parent: span.parentElement.tagName.toLowerCase(),
+          animations: window.__fade.animations(span), before, after: text });
+      }
+    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    window.__textFade = { log, visible, reset() { log.spans.length = log.snaps.length = 0; },
+      /** The visible characters of a reply's own text in this element (a block of it, or the message). */
+      replyChars: el => el.matches(".message") ? replyText(el).length : el.closest(".message-content > .markdown:not([data-fade-placeholder])") ? visible(el.textContent).length : 0 };
+  });
+}
+const textFades = () => page.evaluate(() => ({ spans: window.__textFade.log.spans, snaps: window.__textFade.log.snaps, left: document.querySelectorAll("[data-text-fade]").length }));
+/** The demo's replies (scripts/mock-claude.mjs): to "你好", and to a prompt with `mock-markdown`. */
+const HELLO = "你好！这是运行在真实 tmux 中的离线模拟会话。\n\n回复先从终端画面逐段出现，然后由 JSONL 正文在原气泡内完成对齐。中文与 emoji 🧭 都会完整保留。\n\n你可以关闭窗口再回来，继续这个会话。";
+const MARKDOWN = "先显示的文字，**这段加粗要到后面才闭合**，然后接着写完下去吧。\n\n1. 第一项：日本語のテキスト\n2. 第二项 emoji 🧭👨\u200d👩\u200d👧" +
+  "\n\n| 列 A | 列 B |\n| --- | --- |\n| 甲 | 乙 |\n\n```bash\necho 你好\n```\n\n最后一句。";
+const visibleText = text => text.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, "");
+const subsequence = (part, whole) => { let at = 0; for (const char of part) if ((at = whole.indexOf(char, at) + 1) === 0) return false; return true; };
+/**
+ * Text fades read against the reply's source (its Markdown as sent), independently of text-fade.ts:
+ * the rendered text is the source without its syntax, so each visible character is found in the
+ * source, in order. `refaded`: characters of a fresh fade (no delay) that the reply showed before
+ * (allowed only with a new one of the same grapheme cluster: an emoji sequence that grew); `orphans`:
+ * fades going on (negative delay) that do not continue an earlier fresh one of the same characters,
+ * from its own start.
+ */
+function readTextFades(spans, source) {
+  const src = visibleText(source), cluster = [], members = [];
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(src)) {
+    members.push([]);
+    for (let i = 0; i < segment.length; i++) { members.at(-1).push(cluster.length); cluster.push(members.length - 1); }
+  }
+  const embed = text => { const at = []; let j = 0; for (const unit of text.split("")) { while (j < src.length && src[j] !== unit) j++; at.push(j < src.length ? j++ : -1); } return at; };
+  const fresh = spans.filter(span => span.delay === 0), going = spans.filter(span => span.delay < 0), refaded = [], unknown = [];
+  for (const span of fresh) {
+    const before = new Set(embed(span.before)), after = embed(span.after);
+    if (span.offset < 0 || span.after.slice(span.offset, span.offset + span.chars) !== visibleText(span.text)) { unknown.push(span.text); continue; }
+    for (let k = span.offset; k < span.offset + span.chars; k++)
+      if (after[k] < 0) { unknown.push(span.text); break; }
+      else if (members[cluster[after[k]]].every(i => before.has(i))) refaded.push(`${src[after[k]]} in ${span.text}`);
+  }
+  const orphans = going.filter(span => !fresh.some(start => start.t < span.t && subsequence(visibleText(span.text), visibleText(start.text)) &&
+    Math.abs(-span.delay - (span.t - start.t)) <= 30)).map(span => `${span.text} ${span.delay}`);
+  return { fresh, going, refaded, unknown, orphans };
+}
+/** Selects the latest reply's text while some of it fades in and copies it as a reader would (Ctrl+C,
+ * the system clipboard): the clipboard, and what the page held when the copy happened (its `copy`
+ * event): the fading spans, the text of the reply's blocks, its paragraphs, items, cells and code. */
+async function copyWhileFading() {
+  for (let tries = 1; tries <= 20; tries++) {
+    await app.evaluate(({ clipboard }) => clipboard.writeText(""));
+    await page.waitForFunction(() => [...document.querySelectorAll(".message-assistant")].at(-1)?.querySelector("[data-text-fade]"), null, { timeout: 15000 });
+    await page.evaluate(() => {
+      const reply = [...document.querySelectorAll(".message-assistant")].at(-1), blocks = [...reply.querySelectorAll(":scope > .message-content > .markdown")];
+      document.querySelector(".conversation-scroll").focus({ preventScroll: true });
+      const range = document.createRange();
+      range.setStartBefore(blocks[0]);
+      range.setEndAfter(blocks.at(-1));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      window.__copied = undefined;
+      document.addEventListener("copy", () => { window.__copied = { fading: [...reply.querySelectorAll("[data-text-fade]")].map(span => span.textContent),
+        text: blocks.map(block => block.textContent).join(""), selected: getSelection().toString(),
+        pieces: [...reply.querySelectorAll(".markdown p, .markdown li, .markdown th, .markdown td, .markdown code")].map(el => el.textContent.trim()).filter(Boolean) }; },
+      { once: true, capture: true });
+    });
+    await page.keyboard.press("Control+C");
+    const clip = await app.evaluate(({ clipboard }) => clipboard.readText()), state = await page.evaluate(() => window.__copied);
+    if (state?.fading.length && clip) return { clip, tries, ...state };
+  }
+  throw new Error("could not copy the reply while its text was fading in");
+}
 const fades = () => page.evaluate(() => ({ entered: window.__fade.log.entered, leaving: window.__fade.log.leaving, gone: window.__fade.log.gone,
   ended: window.__fade.log.ended, twice: window.__fade.twice(), remarked: window.__fade.remarked() }));
-const reset = () => page.evaluate(() => window.__fade.reset());
+const reset = () => page.evaluate(() => { window.__fade.reset(); window.__textFade.reset(); });
 
 /** In the page, once per painted frame: how far the conversation is from its end, the input area's
  * height, how far the line being read (`window.__anchor`) is above the input area, the leaving
@@ -173,6 +281,7 @@ try {
   const row = id => page.locator(`.session-row[data-session-id="${id}"]`);
   await refreshFolderUntil(page, workspace.id, row(archive.sessionId));
   await installRecorder();
+  await installTextRecorder();
 
   // 1. A first open, another chat, and the cached one again: shown as they are, nothing fades.
   await row(archive.sessionId).click();
@@ -188,6 +297,7 @@ try {
   report.opened = { entered: seen.entered.length, leaving: seen.leaving.length };
   assert.deepEqual(seen.entered, [], "opening a chat, another one, or the cached one again fades nothing in");
   assert.deepEqual(seen.leaving, [], "switching chats fades nothing out");
+  assert.deepEqual((await textFades()).spans, [], "nor does any text in them");
   await shot("opened.png");
 
   // 2. An older page: inserted as it is. Only the jump-to-latest button fades in (and out when used).
@@ -202,6 +312,7 @@ try {
   await settle();
   seen = await fades();
   assert.deepEqual(seen.entered.filter(entry => !entry.el.includes("scroll-latest")), [], "an older page fades nothing in");
+  assert.deepEqual((await textFades()).spans, [], "an older page fades no text in");
   assert.ok(seen.entered.some(entry => entry.el.includes("scroll-latest")), "the jump-to-latest button fades in");
   await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector(".scroll-latest"));
@@ -324,6 +435,62 @@ try {
     "each block fades in from transparent: " + JSON.stringify(report.blockFades));
   assert.ok(blocks.some(entry => seen.ended.some(end => end.id === entry.id && end.type === "animationend" && end.name === "lectern-fade-in")),
     "the fade runs to its end: " + JSON.stringify(report.blockFades));
+  // Text added to a paragraph already shown fades in as text: each new stretch once, from transparent
+  // over 320 ms (the animation it got then); a fade still running when the preview changes again goes
+  // on (a negative delay), never from the start; nothing the reply showed before fades again, nothing
+  // when the saved reply replaces the preview; no span is left once the fades end.
+  let texts = await textFades(), read = readTextFades(texts.spans, HELLO);
+  const blockChars = seen.entered.reduce((sum, entry) => sum + entry.chars, 0), freshChars = read.fresh.reduce((sum, span) => sum + span.chars, 0);
+  const textEnded = seen.ended.filter(end => end.name === "lectern-text-in" && end.type === "animationend").length;
+  report.streamedText = { fresh: read.fresh.map(span => span.text), going: read.going.map(span => `${span.text} ${span.delay}`), blockChars, freshChars,
+    total: visibleText(HELLO).length, ended: textEnded, animation: read.fresh[0]?.animations, left: texts.left, refaded: read.refaded, unknown: read.unknown, orphans: read.orphans };
+  assert.ok(read.fresh.length >= 3, "text streamed into paragraphs already shown fades in: " + JSON.stringify(report.streamedText.fresh));
+  assert.ok(read.fresh.every(({ animations: [fade, ...more] }) => !more.length && fade?.name === "lectern-text-in" && fade.state === "running" && fade.duration === 320 &&
+    fade.from.opacity === "0" && fade.to.opacity === "1"), "each from transparent, over 320 ms: " + JSON.stringify(read.fresh.map(span => span.animations)));
+  assert.ok(textEnded > 0, "text fades run to their end");
+  assert.deepEqual(read.refaded, [], "text the reply showed before never fades in again");
+  assert.deepEqual(read.unknown, [], "every fading span is text of the reply, where the recorder found it");
+  assert.deepEqual(read.orphans, [], "a fade going on continues one that started earlier, from its own start");
+  // Each character came in once: in a block that faded in whole, or in one text fade (a stretch may
+  // have come in a block still fading: it does not fade twice).
+  assert.ok(freshChars + blockChars <= report.streamedText.total && freshChars + blockChars >= report.streamedText.total - 12, JSON.stringify(report.streamedText));
+  assert.deepEqual(texts.spans.filter(span => span.source !== "preview"), [], "the saved reply replacing the preview fades no text in");
+  assert.equal(texts.left, 0, "no span is left once the fades end");
+  await reset();
+
+  // 5b. Markdown that changes shape as it streams (mock-markdown): `**` closing a frame after it opens,
+  // a paragraph "1" becoming a list, a paragraph of pipes becoming a table, an emoji sequence, code.
+  // What was shown stays as it is, whatever element holds it now; only new characters fade, in the bold
+  // text, list items, cells and code too. Copied while its text fades, the reply gives its text as is.
+  await input.fill("mock-markdown 演示");
+  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  // Once the list is there (more text fades into it, the table and the code afterwards).
+  await page.locator('.message-assistant[data-source="preview"] .markdown ol > li').last().waitFor();
+  const copied = await copyWhileFading();
+  await shot("text-fading.png");
+  await page.waitForFunction(() => [...document.querySelectorAll(".message-assistant")].at(-1)?.getAttribute("data-source") === "jsonl" &&
+    [...document.querySelectorAll(".message-assistant")].at(-1).textContent.includes("最后一句"), null, { timeout: 30000 });
+  await settle();
+  texts = await textFades();
+  read = readTextFades(texts.spans, MARKDOWN);
+  const shapes = texts.snaps.filter(snap => snap.source === "preview").map(snap => snap.text);
+  report.shapedText = { fresh: read.fresh.map(span => `${span.parent}: ${span.text}`), going: read.going.length, refaded: read.refaded, unknown: read.unknown,
+    orphans: read.orphans, shapes: shapes.slice(0, 6), left: texts.left, copied: { ...copied, pieces: copied.pieces.length } };
+  assert.ok(shapes.some(text => text.includes("**这段加")) && shapes.at(-1).includes("这段加粗要到后面才闭合") && !shapes.at(-1).includes("*"),
+    "the bold text showed with its `**` first, then without: " + JSON.stringify(shapes));
+  assert.deepEqual(read.refaded, [], "text shown before does not fade again when the Markdown changes shape");
+  assert.deepEqual(read.unknown, [], "every fading span is text of the reply");
+  assert.deepEqual(read.orphans, [], "a fade going on continues one that started earlier, from its own start");
+  const parents = new Set(read.fresh.map(span => span.parent));
+  assert.ok(["strong", "li", "code"].every(tag => parents.has(tag)), "new text fades in bold text, list items and code too: " + JSON.stringify(report.shapedText.fresh));
+  assert.deepEqual(texts.spans.filter(span => span.source !== "preview"), [], "the saved reply replacing the preview fades no text in");
+  assert.equal(texts.left, 0, "no span is left once the fades end");
+  // The copy: the reply's text, every character once (the fading ones too), paragraphs, items, cells and
+  // code as they are, and what the reply's Markdown says so far.
+  assert.equal(visibleText(copied.clip), visibleText(copied.text), "the copy has the reply's text, every character once: " + JSON.stringify(copied));
+  assert.ok(copied.pieces.every(piece => copied.clip.includes(piece)), "paragraphs, items, cells and code copy as they are: " + JSON.stringify(copied));
+  assert.ok(copied.clip.includes("这段加粗要到后面才闭合") && copied.clip.includes("第一项"), "the bold text and the list are in it: " + copied.clip);
+  assert.ok(subsequence(visibleText(copied.clip), visibleText(MARKDOWN)), "what the reply says so far: " + copied.clip);
   await reset();
 
   // 6. Reading older messages while a reply streams in and fades in below: the line being read
@@ -359,6 +526,9 @@ try {
     "the message being read stays where it was, above the input area: " + JSON.stringify(after));
   seen = await fades();
   assert.ok(seen.entered.some(entry => entry.parent === "div.markdown"), "blocks of the new reply faded in");
+  // Its text faded in too (only opacity changes: the line being read stayed, above).
+  report.reading.textFades = (await textFades()).spans.filter(span => span.delay === 0).map(span => span.text);
+  assert.ok(report.reading.textFades.length, "text of the new reply faded in meanwhile");
   await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector(".scroll-latest"));
   await reset();
@@ -451,6 +621,7 @@ try {
   report.reducedMotion = { entered: seen.entered.length, leaving: seen.leaving.length };
   assert.deepEqual(seen.entered, [], "reduced motion: nothing fades in");
   assert.deepEqual(seen.leaving, [], "reduced motion: nothing fades out");
+  assert.deepEqual((await textFades()).spans, [], "reduced motion: no text fades in");
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
   // 9. A new chat: its first message fades in once (not again when the chat opens), then the reply.

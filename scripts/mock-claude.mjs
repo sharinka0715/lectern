@@ -380,6 +380,12 @@ async function goalTurn(condition) {
   endTurn();
 }
 
+/** The reply to a prompt with `mock-markdown`: at 12 characters a frame its Markdown changes shape as
+ * it streams (content-fade-e2e): `**` closes a frame after it opens, a paragraph "1" becomes a list, a
+ * paragraph of pipes becomes a table, an emoji sequence grows across frames, a code block fills. */
+const markdownReply = '先显示的文字，**这段加粗要到后面才闭合**，然后接着写完下去吧。\n\n1. 第一项：日本語のテキスト\n2. 第二项 emoji 🧭👨\u200d👩\u200d👧' +
+  '\n\n| 列 A | 列 B |\n| --- | --- |\n| 甲 | 乙 |\n\n```bash\necho 你好\n```\n\n最后一句。';
+
 async function answer(text) {
   busy = true;
   if (presence) setPresence('busy');
@@ -401,7 +407,7 @@ async function answer(text) {
     current = path.resolve(current, move[1]);
     append(record('user', [{ type: 'tool_result', tool_use_id: call.id, content: '' }]));
   }
-  const response = /hello|你好/i.test(text)
+  const response = text.includes('mock-markdown') ? markdownReply : /hello|你好/i.test(text)
     ? '你好！这是运行在真实 tmux 中的离线模拟会话。\n\n回复先从终端画面逐段出现，然后由 JSONL 正文在原气泡内完成对齐。中文与 emoji 🧭 都会完整保留。\n\n你可以关闭窗口再回来，继续这个会话。'
     : `已收到你的消息：${text}\n\n这段回复正通过 tmux 抓屏显示。模型请求、登录状态和会话文件都由目标机器上的 Claude Code 管理。\n\n**落盘后**，正文会在同一个气泡内补全，不会追加第二份回复。\n\n\`\`\`bash\ntmux capture-pane -p -J\n\`\`\``;
   const chars = [...response];

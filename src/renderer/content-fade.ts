@@ -11,7 +11,11 @@
  * place: neither fades. Nothing fades in a quiet batch (a conversation shown for
  * the first time or again, an older page, another reply detail) or with reduced
  * motion.
+ *
+ * In the conversation, text added to a reply that is already there fades in too (text-fade.ts).
  */
+import { TextFades } from './text-fade';
+
 export const FADE_ENTER_MS = 200;
 export const FADE_LEAVE_MS = 180;
 /** After a view first shows content: what arrives meanwhile (the read catching up) does not fade. */
@@ -40,7 +44,8 @@ export interface FadeRules<N> {
 }
 
 export interface FadeLeave<N> extends FadeRemoval<N> { parent: N; mode: LeaveMode }
-export interface FadePlan<N> { enter: N[]; leave: FadeLeave<N>[] }
+/** pairs: [removed, added] that are one element changing (both stay put; see pairKey). */
+export interface FadePlan<N> { enter: N[]; leave: FadeLeave<N>[]; pairs: [N, N][] }
 
 /**
  * What a batch of childList changes adds and removes for good, and which of those fade.
@@ -60,14 +65,14 @@ export function planFades<N>(records: readonly FadeRecord<N>[], rules: FadeRules
     if (event.added && now === event.parent) at(event.parent).added.push(node);
     else if (!event.added && now === null) at(event.parent).removed.push(event.removal);
   }
-  const plan: FadePlan<N> = { enter: [], leave: [] };
+  const plan: FadePlan<N> = { enter: [], leave: [], pairs: [] };
   for (const [parent, { added, removed }] of parents) {
     const paired = new Set<N>();
     for (const { node } of removed) {
       if (rules.placeholder(node)) continue;
       const key = rules.pairKey(node, parent);
       const match = key === undefined ? undefined : added.find(item => !paired.has(item) && rules.pairKey(item, parent) === key);
-      if (match !== undefined) paired.add(match).add(node);
+      if (match !== undefined) { paired.add(match).add(node); plan.pairs.push([node, match]); }
     }
     if (!live) continue;
     for (const node of added) if (!paired.has(node) && rules.enters(node, parent)) plan.enter.push(node);
@@ -141,6 +146,8 @@ interface FadeOptions {
   pinned?: (element: Element) => PinnedBox | undefined;
   /** After elements were put back to fade out. */
   onLeave?: (leaving: HTMLElement[]) => void;
+  /** Text added to a reply fades in (text-fade.ts): needs `subtree`. */
+  text?: boolean;
 }
 
 /** Applies the rules to one container (see the top of this file). */
@@ -151,10 +158,15 @@ export class FadeController {
   /** Elements put back to fade out (their own insertion and removal are not React's), and their timers. */
   private ghosts = new WeakSet<Node>();
   private timers = new Map<Element, number>();
+  private text?: TextFades;
 
   constructor(private root: Element, private rules: FadeRules<Node>, private options: FadeOptions) {
     this.observer = new MutationObserver(records => this.apply(records, this.settled));
-    this.observer.observe(root, { childList: true, subtree: options.subtree });
+    this.observer.observe(root, { childList: true, subtree: options.subtree, characterData: !!options.text });
+    if (options.text) this.text = new TextFades(root, {
+      sync: () => { const records = this.observer.takeRecords(); if (records.length) this.apply(records, this.settled); },
+      done: () => void this.observer.takeRecords(),
+    });
     root.addEventListener('animationend', this.finished);
     root.addEventListener('animationcancel', this.finished);
   }
@@ -178,6 +190,7 @@ export class FadeController {
 
   dispose() {
     this.observer.disconnect();
+    this.text?.dispose();
     this.root.removeEventListener('animationend', this.finished);
     this.root.removeEventListener('animationcancel', this.finished);
     for (const [ghost, timer] of this.timers) { window.clearTimeout(timer); ghost.remove(); }
@@ -208,11 +221,15 @@ export class FadeController {
       }
       if (added.length || removed.length) batch.push({ target: record.target, added, removed });
     }
-    if (!batch.length) return;
     const motion = live && !prefersReducedMotion();
     const plan = planFades(batch, this.rules, motion);
     for (const node of plan.enter) if (!this.known.has(node) && node instanceof Element) this.fadeIn(node);
     for (const record of batch) for (const node of record.added) this.known.add(node);
+    // After the blocks (a block fading in does not fade as text), before anything is put back.
+    if (this.text) {
+      this.text.update(records, plan.pairs, motion);
+      this.observer.takeRecords();
+    }
     if (!plan.leave.length) return;
     // Last removed first, each after the sibling it followed: consecutive ones keep their order.
     const leaving: HTMLElement[] = [];

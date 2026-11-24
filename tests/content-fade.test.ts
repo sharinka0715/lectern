@@ -22,7 +22,7 @@ test('appended messages and blocks fade in when the batch is live, not when it i
   const records: FadeRecord<Item>[] = [{ target: list, added: [message], removed: [] }, { target: reply, added: [paragraph], removed: [] },
     { target: paragraph, added: [bold], removed: [] }];
   assert.deepEqual(names(planFades(records, rules, true).enter), ['m2', 'p3'], 'an inline element inside a paragraph is not a block');
-  assert.deepEqual(planFades(records, rules, false), { enter: [], leave: [] });
+  assert.deepEqual(planFades(records, rules, false), { enter: [], leave: [], pairs: [] });
 });
 
 test('an addition taking a removed element\'s place changes in place; what comes after it is new', () => {
@@ -31,6 +31,8 @@ test('an addition taking a removed element\'s place changes in place; what comes
   const paragraph = item('p3', 'block'), ordered = item('ol', 'block', reply), next = item('p4', 'block', reply);
   const blocks = planFades([{ target: reply, added: [], removed: [removal(paragraph)] }, { target: reply, added: [ordered, next], removed: [] }], rules, true);
   assert.deepEqual(names(blocks.enter), ['p4']);
+  // The pair goes on as one element: its text (text-fade.ts) is not new either.
+  assert.deepEqual(blocks.pairs.map(names), [['p3', 'ol']]);
   // The "sending" bubble and the saved one are one user message; the reply that came with it is new.
   const sending = item('outgoing', 'message', null, 'user'), saved = item('turn:1:user', 'message', list, 'user');
   const reply1 = item('turn:1:assistant', 'message', list, 'assistant');
@@ -38,6 +40,9 @@ test('an addition taking a removed element\'s place changes in place; what comes
     { target: list, added: [saved, reply1], removed: [] }], rules, true);
   assert.deepEqual(names(messages.enter), ['turn:1:assistant']);
   assert.deepEqual(messages.leave, [], 'the sending bubble does not fade out under the saved one');
+  assert.deepEqual(messages.pairs.map(names), [['outgoing', 'turn:1:user']]);
+  assert.deepEqual(planFades([{ target: list, added: [], removed: [removal(sending)] }, { target: list, added: [saved], removed: [] }], rules, false).pairs.map(names),
+    [['outgoing', 'turn:1:user']], 'quiet batches pair too');
 });
 
 test('what replaces a placeholder is new, and the placeholder leaves at once', () => {
@@ -53,7 +58,7 @@ test('a moved element and one that came and went in the same batch do not fade',
     { target: list, added: [], removed: [removal(moved)] }, { target: list, added: [moved], removed: [] },
     { target: list, added: [passing], removed: [] }, { target: list, added: [], removed: [removal(passing)] },
   ], rules, true);
-  assert.deepEqual(plan, { enter: [], leave: [] });
+  assert.deepEqual(plan, { enter: [], leave: [], pairs: [] });
 });
 
 test('removed messages fade out where they were, in their order; many at once go at once', () => {

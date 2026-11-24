@@ -47,6 +47,8 @@ export const releaseNotes: ReleaseNote[] = [
         'New "Row spacing" setting under Appearance (80%–150%): the height and vertical padding of rows in the sidebar, menus, Settings, cards and the status bar, with the text size unchanged.'],
       ['设置「会话」新增可选开关（默认关闭）：用 Claude Code hooks 读取问答和权限框的原始数据，对话框高于终端时也能出卡。',
         'An optional Session setting, off by default, reads questions and permission prompts from Claude Code hooks, so even a dialog taller than the terminal gets a card.'],
+      ['回复流式输出时，接在已有段落后面的新文字逐段柔和淡入；已经显示过的文字不再闪动，实时预览换成会话记录、Markdown 重新排版时也不会。',
+        "New text streaming into a reply's paragraphs fades in softly; text already shown never fades again, even when the live preview becomes the saved reply."],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',

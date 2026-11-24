@@ -68,7 +68,7 @@ export const windowsSteps = new Set([
 export const oneAtATime = new Set([
   'e2e', 'workbench-ui-e2e', 'history-pagination-e2e', 'host-check-e2e', 'sidebar-split-e2e', 'manual-ui-e2e',
   'artifacts-ui-e2e', 'chat-image-thumbnail-e2e', 'session-rename-ui-e2e', 'context-menu-e2e', 'attachment-ui-e2e',
-  'composer-chips-e2e',
+  'composer-chips-e2e', 'content-fade-e2e',
 ]);
 
 /** With --jobs, steps that run with nothing beside them, after the others (one after another,
