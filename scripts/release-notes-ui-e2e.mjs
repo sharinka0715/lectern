@@ -28,7 +28,9 @@ try {
   const index = headings.indexOf(`v${version}当前版本`);
   assert.ok(index === 0 || (index === 1 && /^v\d+\.\d+\.\d+待发布$/.test(headings[0])), 'the running version comes first, after at most one pending release, and is marked');
   const current = dialog.locator('.release-note').nth(index);
-  assert.deepEqual(await current.locator('h4').allTextContents(), ['新功能', '问题修复']);
+  // Features first and fixes last; "变化" (behaviour changes) only when the version lists any.
+  const sections = (await current.locator('h4').allTextContents()).join(',');
+  assert.ok(['新功能,问题修复', '新功能,变化,问题修复'].includes(sections), sections);
   assert.ok(await current.locator('ol').first().locator('li').count() > 0);
   assert.equal(await current.locator('ol').first().evaluate(list => getComputedStyle(list.querySelector('li')).listStyleType), 'decimal', 'numbered');
   await mkdir(path.resolve('test-results'), { recursive: true });
