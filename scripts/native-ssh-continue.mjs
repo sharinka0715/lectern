@@ -1,5 +1,9 @@
 // Opt-in continuation of a test-owned SSH conversation. Inherits one or two
 // completed requests, installs nothing, and never selects Opus/Default.
+// After `npm run build`: node scripts/native-ssh-continue.mjs test-results/native-ssh-<time>/report.json
+// (a report of `npm run test:native:ssh`, or of an earlier continuation). It reconnects to that
+// report's real SSH host (keys, tmux, logged-in claude) and sends the remaining 1–2 real model
+// requests, so it is manual only: not in package.json or test:all.
 import assert from 'node:assert/strict';
 import { _electron } from './fixtures/electron.mjs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -183,27 +187,32 @@ try {
   page = await app.firstWindow(); page.setDefaultTimeout(45000); page.on('pageerror', error => errors.push(String(error)));
   await page.waitForFunction(() => !!window.desktop);
   await page.evaluate(() => { window.__snapshots = []; window.desktop.onSnapshot(snapshot => { window.__snapshot = snapshot; window.__snapshots.push(snapshot); }); });
-  // Add the machine, then the folder on it.
+  // Add the machine (saving a new machine closes the settings dialog), then the folder on it.
   await page.getByRole('button', { name: '添加 SSH 机器', exact: true }).click();
   const settings = page.getByRole('dialog', { name: '设置', exact: true });
   await settings.getByLabel('SSH 主机', { exact: true }).fill(host);
   await settings.getByRole('button', { name: '保存连接' }).click();
-  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await settings.waitFor({ state: 'detached' });
   await page.getByRole('button', { name: `在 ${host} 添加项目文件夹`, exact: true }).click();
-  const folder = page.getByRole('dialog', { name: '添加项目文件夹' });
-  await folder.getByLabel('名称', { exact: true }).fill(`${host} · 继续验证`);
-  await folder.getByLabel('工作目录', { exact: true }).fill(cwd);
-  await folder.getByRole('button', { name: '添加目录', exact: true }).click();
-  await folder.waitFor({ state: 'hidden' });
+  const dialog = page.getByRole('dialog', { name: '添加项目文件夹' }), folderName = `${host} · 继续验证`;
+  await dialog.getByLabel('名称', { exact: true }).fill(folderName);
+  await dialog.getByLabel('工作目录', { exact: true }).fill(cwd);
+  await dialog.getByRole('button', { name: '添加目录', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
   const saved = await page.evaluate(() => window.desktop.listWorkspaces());
   workspaceId = saved.find(workspace => workspace.kind === 'ssh' && workspace.host === host && workspace.cwd === cwd)?.id;
   assert.ok(workspaceId);
+  // Expand the folder in the sidebar (the toggle, not the name: clicking the name opens a draft).
+  // A newly added folder lists no saved conversations until "扫描所有对话".
+  const folder = page.locator(`.workspace-row[data-workspace-id="${workspaceId}"] .workspace-toggle`);
+  if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
+  await page.getByRole('group', { name: `${folderName} 的会话`, exact: true }).getByRole('button', { name: '扫描所有对话', exact: true }).click();
+  const sourceRow = page.locator(`.session-row[data-workspace-id="${workspaceId}"][data-session-id="${sid}"]`);
+  await sourceRow.waitFor();
   const discovery = await page.evaluate(id => window.desktop.discover(id), workspaceId);
   const history = discovery.sessions.find(session => session.id === sid);
   assert.ok(history?.path && !history.paneId, 'The source UUID must be an inactive history, not another active terminal');
-  const folder = page.locator(`.workspace-row[data-workspace-id="${workspaceId}"] .workspace-select`);
-  if (await folder.getAttribute('aria-expanded') !== 'true') await folder.click();
-  await page.locator(`.session-row[data-workspace-id="${workspaceId}"][data-session-id="${sid}"]`).click();
+  await sourceRow.click();
   await page.waitForFunction(sid => window.__snapshot?.sessionId === sid && window.__snapshot.status === 'idle' && !window.__snapshot.paneId, sid);
   const initial = await page.evaluate(() => window.__snapshot);
   assert.equal(initial.messages.length, 2 * originalCount);
