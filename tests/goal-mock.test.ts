@@ -12,9 +12,17 @@ import type { Workspace } from '../src/shared/types';
 // indicator ticks every 25 ms (LECTERN_MOCK_GOAL_TICK_MS) so that every guarded key meets a changed row.
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 test('with the goal indicator ticking above the input box: /goal clear during a reply, an inline switch, the stop key', { skip: process.platform === 'win32', timeout: 90_000 }, async t => {
-  const saved = { tick: process.env.LECTERN_MOCK_GOAL_TICK_MS, pace: process.env.LECTERN_MOCK_STREAM_MS };
-  process.env.LECTERN_MOCK_GOAL_TICK_MS = '25'; process.env.LECTERN_MOCK_STREAM_MS = '60';
-  t.after(() => { for (const [key, value] of [['LECTERN_MOCK_GOAL_TICK_MS', saved.tick], ['LECTERN_MOCK_STREAM_MS', saved.pace]] as const)
+  // Split inside the indicator and bring a timer width change close to the switch.
+  const mockEnv = {
+    LECTERN_MOCK_GOAL_TICK_MS: '25',
+    LECTERN_MOCK_STREAM_MS: '60',
+    LECTERN_MOCK_GOAL_EVAL_MS: process.env.LECTERN_MOCK_GOAL_EVAL_MS ?? '250',
+    LECTERN_MOCK_CHUNK_BYTES: process.env.LECTERN_MOCK_CHUNK_BYTES ?? '216',
+    LECTERN_MOCK_CHUNK_MS: process.env.LECTERN_MOCK_CHUNK_MS ?? '10',
+  };
+  const saved = Object.keys(mockEnv).map(key => [key, process.env[key]] as const);
+  Object.assign(process.env, mockEnv);
+  t.after(() => { for (const [key, value] of saved)
     if (value === undefined) delete process.env[key]; else process.env[key] = value; });
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-goal-mock-')));
   const workspace: Workspace = { id: 'goal-' + randomUUID().slice(0, 6), name: 'Goal', kind: 'local', cwd: root, claudeDir: join(root, 'config') };

@@ -123,6 +123,18 @@ const stateFile = path.join(config, 'screen-state');
 const replyRow = text => `\x1b[97m⏺\x1b[39m ${text.replace(/\n/g, '\n  ')}`;
 const noted = text => text.replace(/^⏺ /u, '\x1b[37m⏺\x1b[39m ');
 const callBullet = blink => `\x1b[2m${blink ? ' ' : '⏺'}\x1b[0m`;
+const chunkBytes = Number(process.env.LECTERN_MOCK_CHUNK_BYTES), chunkMs = Number(process.env.LECTERN_MOCK_CHUNK_MS);
+const chunkWait = Number.isSafeInteger(chunkBytes) && chunkBytes > 0 && Number.isFinite(chunkMs) && chunkMs > 0
+  ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
+function writeFrame(frame) {
+  if (!chunkWait) { process.stdout.write(frame); return; }
+  // Simulate a PTY delivering one frame in pieces without interleaving two draws.
+  const bytes = Buffer.from(frame);
+  for (let start = 0; start < bytes.length; start += chunkBytes) {
+    if (start > 0) Atomics.wait(chunkWait, 0, 0, chunkMs);
+    process.stdout.write(bytes.subarray(start, start + chunkBytes));
+  }
+}
 const draw = () => {
   const lines = ['╭─ Claude Code · offline fixture ─╮', '  Local simulation · no model requests', ''];
   // The last four messages, with the goal's own rows among them (notes).
@@ -167,8 +179,8 @@ const draw = () => {
   // as the cleared one would (erased after each row and around a bare line feed). Clearing first
   // let a read on a slow macOS runner, where the pty hands a frame over in pieces, catch the redraw
   // half done and refuse a key over rows that never changed.
-  if (typeof fixtureAgents === 'number' || permission || goal || goalCleared) process.stdout.write('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J');
-  else process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
+  if (typeof fixtureAgents === 'number' || permission || goal || goalCleared) writeFrame('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J');
+  else writeFrame('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Claude Code's own session record (<config>/sessions/<pid>.json), where Lectern reads the native

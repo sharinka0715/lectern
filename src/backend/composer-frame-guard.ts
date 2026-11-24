@@ -93,23 +93,33 @@ export function animatedLabelGuard(viewport: string): { viewport: string; filter
 // ticks every second for a minute and the notices in front of it are cut anew each time, so
 // the whole row changes. A row ending in the indicator, directly above a rule, is compared
 // as empty here and on the target (C-locale awk, one row held back to see the next).
-const goalRow = /(?:^ *| · )◎ \/goal (?:active(?: \([0-9]+[smhd]\))?|paused) *$/u;
+const activeTimerPrefix = '◎ /goal active (';
+const goalTimerPrefixes = new Set([activeTimerPrefix]);
+// At a one-column timer width change (9s to 10s, or 59s to 1m), a partial
+// overwrite leaves the new prefix and the old suffix, e.g. "acttive (9s)".
+for (let i = 0; i < activeTimerPrefix.length; i++) {
+  const before = activeTimerPrefix.slice(0, i), after = activeTimerPrefix.slice(i);
+  goalTimerPrefixes.add(before + after[0] + after);
+  if (i > 0) goalTimerPrefixes.add(before + after.slice(1)); // Keep the goal glyph.
+}
+const goalTimerPattern = [...goalTimerPrefixes].map(prefix => prefix.replace(/\(/g, '[(]')).join('|');
+const goalRow = new RegExp(`(^ *| · )(◎ /goal (active|paused)|(${goalTimerPattern})[0-9]+[smhd][)]) *$`, 'u');
 const goalPlain = (row: string) => row.replace(/\x1b\[[0-9;:]*m/g, '').replace(/ /g, ' ');
 const goalRowAwk = `{ s = $0; gsub(/\\033\\[[0-9;:]*m/, "", s); gsub(/\\302\\240/, " ", s) }
   NR > 1 { if (held && s ~ /^ *─/) print ""; else print prev }
-  { prev = $0; held = (s ~ /^ *◎ \\/goal (active( [(][0-9]+[smhd][)])?|paused) *$/ || s ~ / · ◎ \\/goal (active( [(][0-9]+[smhd][)])?|paused) *$/) }
+  { prev = $0; held = (s ~ /${goalRow.source}/) }
   END { if (NR) print prev }`;
 /** `rows` of a capture split at '\n' (its trailing newline leaves a last empty element). */
 function goalRowsBlanked(rows: string[]): string[] {
   let out: string[] | undefined;
   for (let i = 0; i + 2 < rows.length; i++) {
-    if (goalRow.test(goalPlain(rows[i]).trimEnd()) && /^ *─/u.test(goalPlain(rows[i + 1]))) (out ??= [...rows])[i] = '';
+    if (goalRow.test(goalPlain(rows[i])) && /^ *─/u.test(goalPlain(rows[i + 1]))) (out ??= [...rows])[i] = '';
   }
   return out ?? rows;
 }
 /** A capture with the goal indicator's row blanked (comparing two reads of a frame). */
 export function goalRowText(viewport: string): string {
-  return viewport.includes('/goal ') ? goalRowsBlanked(viewport.split('\n')).join('\n') : viewport;
+  return viewport.includes('◎') ? goalRowsBlanked(viewport.split('\n')).join('\n') : viewport;
 }
 
 /**

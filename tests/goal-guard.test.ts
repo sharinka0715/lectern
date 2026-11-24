@@ -56,6 +56,28 @@ test('a settings paste into the idle box with the goal and the tmux advisory on 
   }
 });
 
+test('a partially repainted goal timer is blanked on either side of the key guard', () => {
+  const native = capture('2.1.331', 'notice');
+  const withIndicator = (text: string) => native.replace('◎ /goal active', text);
+  const read = withIndicator('◎ /goal active (98s)');
+  const guard = wholeFrame(read);
+  for (const indicator of [
+    '◎ /goal acttive (98s)', '◎◎ /goal active (98s)', '◎ /goal active ((98s)',  // One more digit.
+    '◎ /goal ative (59s)', '◎ /goal active 59s)',  // Seconds give way to one minute.
+  ]) {
+    const partial = withIndicator(indicator);
+    assert.equal(goalRowText(partial), goalRowText(read), indicator);
+    assert.equal(onTarget(guard.filter, partial), guard.expected, indicator);
+    const readDuringPaint = wholeFrame(partial);
+    assert.equal(onTarget(readDuringPaint.filter, read), readDuringPaint.expected, indicator);
+    assert.notEqual(onTarget(readDuringPaint.filter, typeInto(read, 'x')), readDuringPaint.expected, indicator);
+  }
+  const otherNotice = withIndicator('◎ /goal stopped (98s)');
+  assert.notEqual(onTarget(guard.filter, otherNotice), guard.expected);
+  const noMarker = withIndicator('/goal active (98s)');
+  assert.notEqual(onTarget(guard.filter, noMarker), guard.expected);
+});
+
 test('without a goal the guard is unchanged; two reads a tick apart are one stable frame', () => {
   const plain = ['● done', '', '─'.repeat(40), '❯ ', '─'.repeat(40), '  ⏵⏵ auto mode on (shift+tab to cycle)', ''].join('\n');
   assert.deepEqual(wholeFrame(plain), { filter: '', expected: plain });
