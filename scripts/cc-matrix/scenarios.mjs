@@ -92,12 +92,22 @@ const settingTrigger = kind => `.session-settings:not(.draft-settings) [data-set
 async function pickSetting({ page, note }, kind, wanted) {
   await page.waitForFunction(selector => !document.querySelector(selector)?.disabled, settingTrigger(kind), { timeout: 30_000 });
   await page.locator(settingTrigger(kind)).click();
-  const menu = page.locator(`.session-settings:not(.draft-settings) [data-setting-menu="${kind}"]`);
-  await menu.locator('.setting-option').first().waitFor({ timeout: 30_000 });
-  const options = await menu.locator('.setting-option').evaluateAll(els => els.map(el => ({ id: el.dataset.optionId, text: el.textContent, current: el.dataset.current === 'true', disabled: el.disabled })));
+  const menuSelector = `.session-settings:not(.draft-settings) [data-setting-menu="${kind}"]`;
+  const menu = page.locator(menuSelector);
+  const patterns = [wanted].flat();
+  const choose = options => patterns.map(pattern => options.find(o => !o.current && !o.disabled && pattern.test(o.text))).find(Boolean);
+  // The menu can show cached rows while a poll still sees the rename in progress.
+  const { options, status } = await poll(() => page.evaluate(selector => {
+    const menu = document.querySelector(selector);
+    if (!menu) return { options: [], status: ['menu is closed'] };
+    return {
+      options: [...menu.querySelectorAll('.setting-option')].map(el => ({ id: el.dataset.optionId, text: el.textContent, current: el.dataset.current === 'true', disabled: el.disabled })),
+      status: [...menu.querySelectorAll('[role="status"], [role="alert"]')].map(el => el.textContent.trim()),
+    };
+  }, menuSelector), ({ options }) => !!choose(options), 30_000);
   note(`${kind}-options`, options.map(o => o.text.slice(0, 40)));
-  const option = [wanted].flat().map(pattern => options.find(o => !o.current && !o.disabled && pattern.test(o.text))).find(Boolean);
-  assert.ok(option, `no ${wanted} option among ${JSON.stringify(options)}`);
+  const option = choose(options);
+  assert.ok(option, `no ${wanted} option among ${JSON.stringify(options)}\nMenu status: ${JSON.stringify(status)}`);
   await menu.locator(`.setting-option[data-option-id="${option.id}"]`).click();
   await menu.waitFor({ state: 'detached', timeout: 30_000 }).catch(() => {});
   return option;
