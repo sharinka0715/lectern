@@ -27,7 +27,8 @@ createRoot(document.querySelector('main')).render(<Composer/>);`;
   const page=await app.firstWindow(); page.setDefaultTimeout(5000);
   const input=page.locator('textarea'), list=page.getByRole('listbox'), active=page.locator('[role=option][aria-selected=true]');
   const resolve = (prefix, names, kind='file') => page.evaluate(({prefix,names,kind})=>window.pending.get(prefix).resolve(names.map(value=>({value,kind,source:'workspace'}))),{prefix,names,kind});
-  const pending = prefix=>page.waitForFunction(p=>window.pending.has(p),prefix);
+  // The hidden window can stop producing animation frames while IPC still arrives.
+  const pending = prefix=>page.waitForFunction(p=>window.pending.has(p),prefix,{polling:50});
   // Only allow-listed built-ins are offered; interactive ones such as /help or /config are not.
   await input.fill('/'); await list.waitFor(); assert.match(await active.textContent(),/\/compact/);
   assert.equal(await list.getByText('/help', { exact: true }).count(), 0);
