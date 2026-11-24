@@ -33,6 +33,11 @@ export const sel = {
   taskColumn: '[data-task-column]',
   taskRow: id => `[data-task-column] .task-column-list button[data-task-key="${id}"]`,
   taskDetail: id => `[data-task-column] [data-task-detail="${id}"]`,
+  // /goal: the capsule above the input box (a <details>: data-goal-status, -phase, -condition,
+  // -source), the clear button inside it (the app asks first) and the goal's event rows in the chat.
+  goal: '[data-goal-status]:not([data-leaving])',
+  goalClear: '[data-goal-clear]:not([data-leaving])',
+  goalEvent: kind => `[data-goal-event="${kind}"]:not([data-leaving])`,
 };
 
 /** Workspaces the app starts with: one per folder, all on this machine, sharing

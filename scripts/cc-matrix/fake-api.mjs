@@ -13,6 +13,17 @@
 //   fail it instead). A script may also fail its request: { status: 529 } (an error
 //   envelope), { reset: true } (connection dropped), { hangMs } (no answer until the
 //   client gives up) or { refuseMs } (the server stops listening for that long).
+// - The /goal evaluator (a Stop prompt hook: no tools, the system prompt "You are evaluating a
+//   stop-condition hook in Claude Code", a last user message with `Condition: <condition>`) is
+//   its own kind, 'goal', recognised by all three together right after the safety check: it
+//   would otherwise be a side request, and no side request has that system prompt (nor does a
+//   compaction or a main-loop request), so the other kinds keep what they had. A `ccm-goal:<plan>`
+//   marker in the condition answers it: one of no, yes, impossible, bad per evaluation of that
+//   condition, the last repeating (`ccm-goal:no-yes`: not met, then met; `bad` is not JSON, a
+//   failed check); without one, "insufficient evidence" as the real evaluator says. The '@goal'
+//   script can answer instead. The turn the hook continues ("Stop hook feedback:\n[<condition>]:
+//   <reason>") carries the condition and its `ccm:` marker: the main script runs again from step
+//   0 and gets `feedback` (that reason) and `feedbacks` (the hook's feedback for it so far).
 // - Server-side checks are never run: an endpoint other than *.anthropic.com is a
 //   gateway to Claude Code, and this one does not pass auto mode's server check through.
 //   `refuseBeta(pattern)` also makes it refuse requests that carry a matching beta
@@ -52,6 +63,8 @@ function kindOf(body) {
   const lastText = textOf(last?.content);
   // Auto mode's safety check ("You are a security monitor for autonomous AI coding agents").
   if (/security monitor for autonomous AI coding agents/i.test(systemOf(body))) return 'classifier';
+  // The /goal evaluator: a prompt Stop hook asked whether the user's condition holds (all three signs).
+  if (!tools.length && /You are evaluating a stop-condition hook in Claude Code/.test(systemOf(body)) && /^Condition: /m.test(lastText)) return 'goal';
   // The compaction prompt (not a task notification, whose XML also has a <summary> tag).
   if (!/<task-notification>/.test(lastText) && /create a detailed summary of the conversation|summary of the conversation so far|an <analysis> block followed by a <summary> block/i.test(lastText)) return 'compact';
   // Subagents cannot start subagents: only the main loop is offered Agent (Task before).
@@ -71,8 +84,38 @@ function locate(messages) {
   }
 }
 
+const textBlocks = content => typeof content === 'string' ? [content]
+  : Array.isArray(content) ? content.flatMap(part => part?.type === 'text' ? [part.text] : part?.type === 'tool_result' ? [textOf(part.content)] : []) : [];
+const FEEDBACK = /Stop hook feedback:\n\[([^\n]*?)\]: ([^\n<]*)/g;
+
+/** The /goal Stop hook's feedback to script `name` (its condition carries the marker): how many
+ * times so far, and its reason when the newest text with the marker is one (the hook continued the
+ * turn). The API merges consecutive user messages, so the newest message may also hold older text. */
+function stopFeedback(messages, found) {
+  const mine = text => [...text.matchAll(FEEDBACK)].filter(match => match[1].includes(`ccm:${found.name}`));
+  const feedbacks = messages.filter(message => message.role === 'user').flatMap(message => textBlocks(message.content)).reduce((sum, text) => sum + mine(text).length, 0);
+  const newest = textBlocks(messages[found.index].content).filter(text => text.includes(`ccm:${found.name}`)).at(-1) ?? '';
+  return { feedbacks, feedback: mine(newest).at(-1)?.[2].trim() };
+}
+
+const GOAL_PLAN = /\bccm-goal:([a-z]+(?:-[a-z]+)*)/;
+const GOAL_ANSWERS = {
+  no: { ok: false, reason: 'the transcript does not show the last step yet' },
+  yes: { ok: true, reason: 'the transcript shows every step done' },
+  impossible: { ok: false, impossible: true, reason: 'the condition contradicts itself' },
+};
+/** The evaluator's answer to the `count`th check of `condition`: from its `ccm-goal:` plan, or
+ * what the real evaluator says when the transcript proves nothing. `bad` is not JSON. */
+export function goalAnswer(condition, count) {
+  const plan = GOAL_PLAN.exec(condition)?.[1].split('-');
+  const word = plan ? plan[Math.min(count, plan.length) - 1] : undefined;
+  if (word === 'bad') return 'The matrix answers this goal check without JSON.';
+  return JSON.stringify(GOAL_ANSWERS[word] ?? { ok: false, reason: 'insufficient evidence in transcript' });
+}
+
 export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
-  const scripts = new Map(), gates = new Map();
+  // goalChecks: how many times the /goal evaluator was asked about each condition.
+  const scripts = new Map(), gates = new Map(), goalChecks = new Map();
   const requests = [], unknown = [], external = [];
   const sockets = new Set();
   let sequence = 0, refusedBeta;
@@ -111,7 +154,15 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
       return json(res, { type: 'error', error: { type: 'invalid_request_error', message: `Unexpected value(s) \`${refused}\` for the \`anthropic-beta\` header. Please consult our documentation at docs.anthropic.com or try again without the header.` } }, 400);
     }
     let plan;
-    if (script) plan = await script({ step: found.step, body, messages, kind, last: messages.at(-1), toolResults: toolResults(messages) });
+    if (script) plan = await script({ step: found.step, body, messages, kind, last: messages.at(-1), toolResults: toolResults(messages), ...stopFeedback(messages, found) });
+    // The /goal evaluator: the condition's `ccm-goal:` plan, or the '@goal' script (see goalAnswer).
+    else if (kind === 'goal') {
+      const condition = /^Condition: ([\s\S]*?)(?:\n\nARGUMENTS:|$)/m.exec(textOf(messages.at(-1)?.content))?.[1].trim() ?? '';
+      const count = goalChecks.set(condition, (goalChecks.get(condition) ?? 0) + 1).get(condition);
+      Object.assign(entry, { condition, check: count });
+      const answer = () => goalAnswer(condition, count);
+      plan = scripts.has('@goal') ? await scripts.get('@goal')({ condition, count, answer, body, messages, kind }) : { text: answer() };
+    }
     // A test can hold or replace the compaction answer with the '@compact' script.
     else if (kind === 'compact' && scripts.has('@compact')) plan = await scripts.get('@compact')({ body, messages, kind });
     else if (kind === 'compact') plan = { blocks: [{ type: 'text', text: '<summary>\n1. Primary Request and Intent: the compatibility matrix exercised compaction.\n2. Pending Tasks: none.\n</summary>' }] };

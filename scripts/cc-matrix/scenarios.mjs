@@ -66,6 +66,11 @@ export const FEATURES = [
   { id: 'auto-mode-resume', title: 'A resumed session starts in auto mode (status bar)' },
   { id: 'rename-inactive', title: 'Rename a closed session (temporary resume)' },
   { id: 'attachment', title: 'Image attachment (@path) sent and shown' },
+  { id: 'goal-lifecycle', title: '/goal sent from a new chat: not met (capsule, event row) while the continued turn runs, then met; the transcript has the setting sentinel, not met, met' },
+  { id: 'goal-clear-busy', title: '/goal cleared from the capsule while a reply runs: only the clearing sentinel, capsule cleared, the native footer gone, no check after' },
+  { id: 'goal-failed', title: '/goal the evaluator calls impossible: capsule and event row failed' },
+  { id: 'goal-check-error', title: '/goal check without a usable answer: still active and retrying (capsule, event row), then /goal clear from the chat box' },
+  { id: 'goal-resume', title: 'A conversation closed with its /goal active and resumed from Lectern: capsule still active, the native footer back' },
   { id: 'isolation', title: 'No request left the sandbox' },
   { id: 'cleanup', title: 'Nothing left running after the run' },
 ];
@@ -190,6 +195,42 @@ export async function prepareFolders(sandbox) {
     onboard: { id: 'ccm-onboard', name: 'ccm-onboard', cwd: onboard, claudeDir: onboardConfig },
     server: { id: 'ccm-server', name: 'ccm-server', cwd: server, claudeDir: serverConfig },
   };
+}
+
+// /goal (Claude Code 2.1.139+, so every release here). The native footer right of the line above
+// the input box while a goal is active: "◎ /goal active (12s)" (2.1.326+ also "◎ /goal paused").
+const GOAL_FOOTER = /(?:^\s*|· )◎ \/goal (?:active|paused)\b/m;
+/** The goal_status attachments in a session's transcript, in order. */
+async function goalRecords(sandbox, id) {
+  const file = id && (await sandbox.projectFiles()).find(name => name.includes(id));
+  return file ? (await readJsonl(file)).filter(r => r.type === 'attachment' && r.attachment?.type === 'goal_status').map(r => r.attachment) : [];
+}
+/** What the goal capsule and the chat's goal event rows show. */
+const goalShown = page => page.evaluate(([capsule, rows]) => {
+  const el = document.querySelector(capsule);
+  return { status: el?.dataset.goalStatus ?? null, phase: el?.dataset.goalPhase ?? null, condition: el?.dataset.goalCondition ?? null,
+    source: el?.dataset.goalSource ?? null, history: !!el?.hasAttribute('data-goal-history'),
+    events: [...document.querySelectorAll(rows)].map(row => row.dataset.goalEvent) };
+}, [sel.goal, '[data-goal-event]:not([data-leaving])']);
+/** Wait until the capsule shows `wanted` ({ status, phase, condition }); the error says what it showed. */
+async function waitGoal(page, wanted, timeout = 60_000) {
+  await page.waitForFunction(([selector, want]) => {
+    const el = document.querySelector(selector);
+    return !!el && Object.entries(want).every(([key, value]) => el.dataset[`goal${key[0].toUpperCase()}${key.slice(1)}`] === value);
+  }, [sel.goal, wanted], { timeout })
+    .catch(async error => { throw new Error(`goal capsule ${JSON.stringify(await goalShown(page))}, wanted ${JSON.stringify(wanted)}: ${error.message.split('\n')[0]}`); });
+}
+async function waitGoalEvent(page, kind, timeout = 30_000) {
+  await page.locator(sel.goalEvent(kind)).first().waitFor({ timeout })
+    .catch(async error => { throw new Error(`no goal event row "${kind}" (${JSON.stringify(await goalShown(page))}): ${error.message.split('\n')[0]}`); });
+}
+/** A new chat whose first message, sent from the chat box, sets the goal; resolves with its session id
+ * once the capsule shows the goal (`wanted` adds the status or phase to wait for). */
+async function startGoal({ ui, page }, folder, condition, wanted = { status: 'active' }) {
+  await ui.openDraft(folder.name);
+  await ui.send(`/goal ${condition}`);
+  await waitGoal(page, { condition, ...wanted }, 90_000);
+  return ui.activeSessionId();
 }
 
 export const SCENARIOS = [
@@ -1378,6 +1419,158 @@ export const SCENARIOS = [
         await page.locator(sel.taskDetail(watch)).locator('.task-output', { hasText: 'ccm-monitor-2' }).waitFor({ timeout: 40_000 });
       });
       await page.locator(`${sel.taskColumn} .task-column-bar button`).click();
+    },
+  },
+  {
+    // Lectern sends /goal from the chat box and shows the goal as a capsule above the input box and as
+    // event rows in the chat. The fake evaluator answers from the condition's `ccm-goal:` plan
+    // (fake-api.mjs); the main scripts answer the first turn and the turn the goal's feedback continues,
+    // held at a gate where a row needs the goal to stay put. Each row is its own chat and keeps its own
+    // evidence (goal.<row>.failure.json), so one failing row does not hide the others. Not here: the
+    // check-in while background work runs (at least a minute, CLAUDE_CODE_GOAL_CHECKIN_MINUTES).
+    id: 'goal',
+    features: ['goal-lifecycle', 'goal-clear-busy', 'goal-failed', 'goal-check-error', 'goal-resume'],
+    timeoutMs: 360_000,
+    async run(ctx) {
+      const { ui, page, api, sandbox, folders, check, note } = ctx;
+      // Step two is long (13 KB), as a goal's work is: the transcript then outgrows the first page read on
+      // every release, not only where Claude Code's own snapshot records already do (the reopen check).
+      api.script('goal-life', ({ feedback }) => feedback ? { gate: 'goal-life-2', text: `${paragraph.repeat(90)}\n\nStep two done (ccm-goal-step-two).` } : { text: 'Step one done (ccm-goal-step-one).' });
+      api.script('goal-clear', () => ({ gate: 'goal-clear', text: 'Held until released (ccm-goal-clear-reply).' }));
+      api.script('goal-fail', () => ({ text: 'Tried the impossible (ccm-goal-fail-reply).' }));
+      api.script('goal-error', () => ({ text: `${paragraph.repeat(90)}\n\nDid the work (ccm-goal-error-reply).` }));
+      api.script('goal-resume', ({ feedback }) => feedback ? { gate: 'goal-resume', text: 'Still at it (ccm-goal-resume-two).' } : { text: 'Started (ccm-goal-resume-one).' });
+      const checks = condition => api.requests.filter(r => r.kind === 'goal' && r.condition === condition).length;
+      const held = name => poll(() => api.waiting(name), n => n >= 1, 30_000).then(n => assert.ok(n >= 1, `the request held at ${name} reached the fake API`));
+      const screen = (test, ms = 20_000) => poll(() => ui.screen(), test, ms, 300);
+      const records = (id, done = () => true) => poll(() => goalRecords(sandbox, id), done);
+      // Reopened as after a restart: a fresh read from the newest page (reloading the window; leaving and
+      // coming back shows the cached reader). Claude Code writes some 110 KB of snapshot records after the
+      // first prompt, so that page can start at the `/goal` command, after the setting record before it.
+      const reopen = async reply => { await page.reload(); await ui.waitReply(reply, { timeout: 30_000 }); };
+      const failures = [];
+      let id;
+      const row = async (feature, gates, fn) => {
+        id = undefined;
+        try { await check(feature, fn); } catch (error) {
+          failures.push(`${feature}: ${String(error?.message ?? error).split('\n')[0]}`);
+          const evidence = { error: String(error?.stack ?? error), shown: await goalShown(page).catch(() => null), screen: (await ui.screen().catch(() => '')).split('\n'),
+            goalRecords: await goalRecords(sandbox, id ?? await ui.activeSessionId(2_000)).catch(() => []), transcript: await ui.transcript().catch(() => []), requests: api.requests.slice(-12) };
+          await writeFile(path.join(ctx.dir, `goal.${feature}.failure.json`), JSON.stringify(evidence, null, 2));
+          await page.screenshot({ path: path.join(ctx.dir, `goal.${feature}.failure.png`) }).catch(() => {});
+        } finally {
+          for (const gate of gates) api.release(gate);
+          await ui.closeChat().catch(() => {});
+        }
+      };
+      await row('goal-lifecycle', ['goal-life-2'], async () => {
+        const condition = 'Finish both steps ccm:goal-life ccm-goal:no-yes';
+        id = await startGoal(ctx, folders.main, condition);
+        await waitGoalEvent(page, 'set');
+        // Checked once, not met: the goal's feedback continues the turn, held here.
+        await waitGoal(page, { status: 'active', phase: 'not-met' });
+        await waitGoalEvent(page, 'not-met');
+        await held('goal-life-2');
+        // Seen now: the long step two scrolls it out of the pane.
+        assert.match(await screen(s => /◯ Goal not yet met/.test(s)), /◯ Goal not yet met/);
+        api.release('goal-life-2');
+        await waitGoal(page, { status: 'met', condition });
+        await waitGoalEvent(page, 'met');
+        const list = await records(id, list => list.some(r => r.met && !r.sentinel));
+        note('lifecycle-records', list.map(r => ({ met: r.met, sentinel: r.sentinel, iterations: r.iterations })));
+        assert.deepEqual(list.map(r => [r.met, !!r.sentinel, !!r.failed]), [[false, true, false], [false, false, false], [true, false, false]], 'set, not met, met');
+        assert.equal(list[2].iterations, 2);
+        const shown = await screen(s => /✔ Goal achieved/.test(s) && !GOAL_FOOTER.test(s));
+        assert.match(shown, /✔ Goal achieved/);
+        assert.doesNotMatch(shown, GOAL_FOOTER, 'the native footer is gone');
+        await reopen('ccm-goal-step-two');
+        await waitGoal(page, { status: 'met', condition });
+        for (const kind of ['set', 'not-met', 'met']) await waitGoalEvent(page, kind, 15_000).catch(error => { throw new Error(`reopened: ${error.message}`); });
+      });
+      await row('goal-clear-busy', ['goal-clear'], async () => {
+        const condition = 'Stop once cleared ccm:goal-clear ccm-goal:yes';
+        id = await startGoal(ctx, folders.main, condition);
+        await held('goal-clear');
+        await page.locator(sel.stop).waitFor({ timeout: 30_000 });
+        assert.match(await screen(s => GOAL_FOOTER.test(s)), GOAL_FOOTER, 'the native footer shows the goal');
+        // The reply still runs: clear from the opened capsule, confirmed in the app's dialog.
+        if (!await page.locator(sel.goalClear).first().isVisible()) await page.locator(`${sel.goal} > summary`).first().click();
+        await page.waitForFunction(selector => document.querySelector(selector)?.disabled === false, sel.goalClear, { timeout: 30_000 });
+        await page.locator(sel.goalClear).first().click();
+        await page.locator('dialog.confirm-action[open] .danger-button').click();
+        await waitGoal(page, { status: 'cleared', condition });
+        await waitGoalEvent(page, 'cleared');
+        const last = (await records(id, list => list.at(-1)?.met === true)).at(-1);
+        assert.deepEqual([last?.met, last?.sentinel, last?.condition], [true, true, condition], `the clearing sentinel: ${JSON.stringify(last)}`);
+        assert.doesNotMatch(await screen(s => !GOAL_FOOTER.test(s)), GOAL_FOOTER, 'the native footer is gone');
+        assert.equal(api.requests.filter(r => r.script === 'goal-clear' && r.done).length, 0, 'cleared while the reply ran');
+        api.release('goal-clear');
+        await ui.waitReply('ccm-goal-clear-reply');
+        await ui.waitStatus('idle', 30_000);
+        assert.equal(checks(condition), 0, 'no goal check once cleared');
+      });
+      await row('goal-failed', [], async () => {
+        const condition = 'Reach what cannot be reached ccm:goal-fail ccm-goal:impossible';
+        id = await startGoal(ctx, folders.main, condition, { status: 'failed' });
+        await waitGoalEvent(page, 'failed');
+        const last = (await records(id, list => list.at(-1)?.failed)).at(-1);
+        assert.deepEqual([last?.met, last?.failed, last?.iterations], [false, true, 1], `the failed record: ${JSON.stringify(last)}`);
+        // "Goal could not be achieved" up to 2.1.325, "Goal couldn't be achieved" from 2.1.326.
+        const shown = await screen(s => /✘ Goal could(?:n't| not) be achieved/.test(s) && !GOAL_FOOTER.test(s));
+        assert.match(shown, /✘ Goal could(?:n't| not) be achieved/);
+        assert.doesNotMatch(shown, GOAL_FOOTER, 'the native footer is gone');
+      });
+      await row('goal-check-error', [], async () => {
+        // The evaluator's answer is not JSON: the goal stays active, Claude Code retries in a minute.
+        const condition = 'Judge this with a broken check ccm:goal-error ccm-goal:bad';
+        id = await startGoal(ctx, folders.main, condition);
+        await waitGoal(page, { status: 'active', phase: 'retrying' });
+        await waitGoalEvent(page, 'retry');
+        const shown = await screen(s => /the goal check could not complete/.test(s));
+        assert.match(shown, /Goal still active · the goal check could not complete/);
+        assert.match(shown, GOAL_FOOTER, 'the native footer still shows the goal');
+        const last = (await records(id)).at(-1);
+        assert.deepEqual([last?.met, last?.sentinel], [false, true], `a failed check writes no goal_status: ${JSON.stringify(last)}`);
+        await reopen('ccm-goal-error-reply');
+        await waitGoal(page, { status: 'active', phase: 'retrying', condition }).catch(error => { throw new Error(`reopened: ${error.message}`); });
+        await waitGoalEvent(page, 'retry', 15_000);
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('/goal clear');
+        await waitGoal(page, { status: 'cleared', condition });
+        const cleared = (await records(id, list => list.at(-1)?.met === true)).at(-1);
+        assert.deepEqual([cleared?.met, cleared?.sentinel], [true, true], `the clearing sentinel: ${JSON.stringify(cleared)}`);
+        assert.doesNotMatch(await screen(s => !GOAL_FOOTER.test(s)), GOAL_FOOTER, 'the native footer is gone');
+      });
+      await row('goal-resume', ['goal-resume'], async () => {
+        const condition = 'Keep at it across a resume ccm:goal-resume ccm-goal:no';
+        id = await startGoal(ctx, folders.main, condition);
+        await waitGoal(page, { status: 'active', phase: 'not-met' });
+        await held('goal-resume');
+        const before = await goalRecords(sandbox, id);
+        // Closed while the goal's continued turn runs: Lectern stops Claude Code (TERM) and keeps the
+        // chat as history (ui.closeChat would also kill a pane still there after 0.8 s).
+        await page.locator('.toolbar-button[aria-label="关闭当前对话"]').click();
+        await page.locator('dialog.confirm-action[open] button[type="submit"]').click();
+        await page.locator('.resume-bar:not([data-leaving])').waitFor({ timeout: 30_000 });
+        api.release('goal-resume');
+        const last = (await goalRecords(sandbox, id)).at(-1);
+        assert.ok(last && last.met === false && !last.failed, `still active when closed: ${JSON.stringify(last)}`);
+        // Closed, the goal still active in the transcript is shown as history (no clear button).
+        await waitGoal(page, { status: 'active', history: 'true', condition });
+        await page.locator('.resume-bar:not([data-leaving]) button').first().click();
+        await ui.ready(60_000);
+        const argv = await ui.claudeArgv();
+        assert.equal(argv[argv.indexOf('--resume') + 1], id, 'claude --resume <session>');
+        await waitGoal(page, { status: 'active', condition });
+        assert.match(await screen(s => GOAL_FOOTER.test(s)), GOAL_FOOTER, 'Claude Code restored the goal');
+        // Live again: no longer history, the clear button back.
+        await page.waitForFunction(selector => { const el = document.querySelector(selector); return el && !el.hasAttribute('data-goal-history'); }, sel.goal, { timeout: 30_000 })
+          .catch(async error => { throw new Error(`the resumed goal still shows as history (${JSON.stringify(await goalShown(page))}): ${error.message.split('\n')[0]}`); });
+        assert.equal(await page.locator(sel.goalClear).count(), 1, 'the clear button is back');
+        note('resume-records', { before: before.length, after: (await goalRecords(sandbox, id)).length });
+      });
+      if (failures.length) throw new Error(`goal rows failed: ${failures.join('; ')}`);
+      // end of goal rows
     },
   },
   // end of SCENARIOS

@@ -68,3 +68,34 @@ test('compatibility matrix fake API: the safety check can be answered or failed 
     assert.deepEqual(api.requests.filter((r: { kind: string }) => r.kind === 'classifier').map((r: { failed?: unknown }) => r.failed ?? null), [null, 529, 'reset', 'hang', 'refused']);
   } finally { await api.close(); }
 });
+
+test('compatibility matrix fake API: the /goal evaluator answers from the condition, the continued turn gets the feedback', async () => {
+  const api = await startFakeApi();
+  try {
+    const post = async (body: object) => (await fetch(`${api.url}/v1/messages`, { method: 'POST', body: JSON.stringify({ model: 'm', max_tokens: 128000, ...body }) })).json();
+    const system = [{ type: 'text', text: 'You are a Claude agent.' }, { type: 'text', text: 'You are evaluating a stop-condition hook in Claude Code. Read the conversation transcript carefully.' }];
+    const evaluate = async (condition: string) => (await post({ system, messages: [{ role: 'user', content: [{ type: 'text', text: `Based on the conversation transcript above, has the following stopping condition been satisfied?\n\nCondition: ${condition}\n\nARGUMENTS: {}` }] }] })).content[0].text;
+    const plan = 'Two steps ccm:g ccm-goal:no-yes';
+    assert.deepEqual(JSON.parse(await evaluate(plan)), { ok: false, reason: 'the transcript does not show the last step yet' });
+    assert.equal(JSON.parse(await evaluate(plan)).ok, true);
+    assert.equal(JSON.parse(await evaluate(plan)).ok, true, 'the last answer repeats');
+    assert.equal(JSON.parse(await evaluate('Never ccm-goal:impossible')).impossible, true);
+    const broken = await evaluate('Broken ccm-goal:bad');
+    assert.throws(() => JSON.parse(broken), 'a failed check: not JSON');
+    assert.equal(JSON.parse(await evaluate('No plan')).reason, 'insufficient evidence in transcript');
+    // Without all three signs it stays what it was: a side request, a main-loop request.
+    assert.equal((await post({ system, messages: [{ role: 'user', content: 'Write a title' }] })).content[0].text, 'Compatibility check');
+    api.script('@goal', ({ count, answer }: { count: number; answer: () => string }) => count === 1 ? { text: 'not JSON' } : { text: answer() });
+    assert.equal(await evaluate('Scripted ccm-goal:yes'), 'not JSON');
+    assert.deepEqual(api.requests.filter((r: { kind: string }) => r.kind === 'goal').map((r: { condition: string; check: number }) => [r.condition.split(' ')[0], r.check]),
+      [['Two', 1], ['Two', 2], ['Two', 3], ['Never', 1], ['Broken', 1], ['No', 1], ['Scripted', 1]]);
+    const seen: unknown[] = [];
+    api.script('g', ({ step, feedback, feedbacks }: { step: number; feedback?: string; feedbacks: number }) => { seen.push([step, feedback ?? null, feedbacks]); return { text: 'ok' }; });
+    const tools = [{ name: 'Agent' }, { name: 'Bash' }];
+    const set = [{ role: 'user', content: [{ type: 'text', text: '<command-args>Two ccm:g</command-args>' }, { type: 'text', text: 'A session-scoped Stop hook is now active with condition: "Two ccm:g".' }] }];
+    const fed = [...set, { role: 'assistant', content: 'one' }, { role: 'user', content: '<system-reminder>\nStop hook feedback:\n[Two ccm:g]: step two is missing\n</system-reminder>' }];
+    await post({ tools, messages: set });
+    await post({ tools, messages: fed });
+    assert.deepEqual(seen, [[0, null, 0], [0, 'step two is missing', 1]]);
+  } finally { await api.close(); }
+});
