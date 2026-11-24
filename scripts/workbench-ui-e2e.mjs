@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, realpath, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { _electron } from "./fixtures/electron.mjs";
+import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 
 const root = await realpath(
   await mkdtemp(path.join(os.tmpdir(), "lectern-desk-")),
@@ -100,9 +100,7 @@ async function launch() {
   page = await app.firstWindow();
   page.setDefaultTimeout(11000);
   page.on("pageerror", (e) => errors.push(e.message));
-  await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setContentSize(1440, 920),
-  );
+  await resizeWindow(app, page, 1440, 920);
   await page.locator(".sidebar-tree .workspace-row").first().waitFor();
 }
 async function expectText(view, i) {

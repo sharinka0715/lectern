@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { _electron } from '../fixtures/electron.mjs';
+import { _electron, resizeWindow } from '../fixtures/electron.mjs';
 import { SESSION_PREFIX } from './sandbox.mjs';
 
 // Elements fading out stay a moment with data-leaving (inert, hidden from roles): never count or click them.
@@ -59,7 +59,7 @@ export async function launchApp(sandbox, { output, executable } = {}) {
   page.setDefaultTimeout(30_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1480, 940)).catch(() => {});
+  await resizeWindow(app, page, 1480, 940).catch(() => {});
   return { app, page, errors };
 }
 

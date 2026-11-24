@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 
 const results = path.resolve('test-results');
 await mkdir(results, { recursive: true });
@@ -38,7 +38,7 @@ try {
   page.setDefaultTimeout(20_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setContentSize(1480, 940));
+  await resizeWindow(app, page, 1480, 940);
   await page.locator('.message-assistant').first().waitFor();
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-session-live') === 'true');
   const sid = await page.locator('.session-row.active').getAttribute('data-session-id');

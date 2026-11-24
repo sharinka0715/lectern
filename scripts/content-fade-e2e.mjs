@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { _electron } from "./fixtures/electron.mjs";
+import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tcf-")));
@@ -276,7 +276,7 @@ try {
   page.setDefaultTimeout(20000);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1320, 840));
+  await resizeWindow(app, page, 1320, 840);
   const live = page.locator('.session-row.active[data-session-live="true"]');
   await live.waitFor();
   const liveId = await live.getAttribute("data-session-id");

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node
 import { waitUntil } from "./fixtures/loopback-ssh.mjs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { _electron } from "./fixtures/electron.mjs";
+import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tbr-")));
@@ -129,7 +129,7 @@ try {
   page.setDefaultTimeout(20000);
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1320, 840));
+  await resizeWindow(app, page, 1320, 840);
   const resume = page.getByRole("button", { name: "续接会话", exact: true });
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
   const row = id => page.locator('.session-row[data-session-id="' + id + '"]');

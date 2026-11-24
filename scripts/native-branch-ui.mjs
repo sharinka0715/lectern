@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 import { nativeBranchFixture } from '../tests/helpers/native-branch-fixture.ts';
 
 const {root, cwd, ws, env: fixture, originalId, ids} = await nativeBranchFixture(36);
@@ -28,7 +28,7 @@ async function nextBranch() {
 try {
   tmux('new-session','-d','-s','fixture-owner','-c',cwd,'sleep','160'); tmux('set-option','-g','focus-events','on');
   app=await _electron.launch({env,args:['.']}); page=await app.firstWindow(); page.setDefaultTimeout(30000);
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1440,900));
+  await resizeWindow(app, page, 1440, 900);
   await page.waitForFunction(()=>!!window.desktop);
   await page.evaluate(()=>{window.__observed={}; window.desktop.onSnapshot(s=>window.__observed[s.sessionId]=s);});
   stage='resume fixture'; await row(originalId).click(); await button(pane('primary'),'续接会话').click(); await ready(originalId);

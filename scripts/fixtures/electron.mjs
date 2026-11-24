@@ -13,7 +13,8 @@
 // reported on stderr together with the app's own recent stderr (Chromium's GPU and
 // compositor errors land there), so a run that needed it says why. A screenshot that
 // works the first time is taken exactly as before.
-import { _electron as playwrightElectron } from 'playwright';
+import { setTimeout as delay } from 'node:timers/promises';
+import { _electron as playwrightElectron, errors } from 'playwright';
 
 export const RETRIES = 3;
 const NO_FRAME = /Unable to capture screenshot/;
@@ -57,6 +58,69 @@ export function guardScreenshots(page) {
   guard(Object.getPrototypeOf(page), p => p);
   guard(Object.getPrototypeOf(page.locator('html')), locator => locator.page());
   return page;
+}
+
+async function beforeDeadline(deadline, action) {
+  const remaining = Math.ceil(deadline - performance.now());
+  if (remaining <= 0) throw new errors.TimeoutError('Window resize deadline exceeded');
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new errors.TimeoutError('Window resize deadline exceeded')), remaining);
+  });
+  try { return await Promise.race([action(remaining), timeout]); }
+  finally { clearTimeout(timer); }
+}
+
+/** Resize a ready window and wait for its renderer to receive the requested size. */
+export async function resizeWindow(app, page, width, height) {
+  const started = performance.now();
+  const readyBy = started + 10_000, resizeBy = started + 12_000;
+  let phase = 'waiting for a visible window and a loaded page';
+  let resends = 0;
+  try {
+    // firstWindow() can return before the page load and native window setup finish.
+    await beforeDeadline(readyBy, timeout => page.waitForLoadState('load', { timeout }));
+    while (!await beforeDeadline(readyBy, () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible()))) {
+      await beforeDeadline(readyBy, remaining => delay(Math.min(remaining, 50)));
+    }
+
+    phase = 'waiting for the renderer dimensions';
+    for (let attempt = 0; ; attempt++) {
+      await beforeDeadline(resizeBy, () => {
+        resends = attempt;
+        return app.evaluate(({ BrowserWindow }, [width, height]) => {
+          BrowserWindow.getAllWindows()[0].setContentSize(width, height);
+        }, [width, height]);
+      });
+      try {
+        const match = await beforeDeadline(resizeBy, remaining => page.waitForFunction(
+          ([width, height]) => innerWidth === width && innerHeight === height,
+          [width, height], { polling: 50, timeout: Math.min(remaining, 1000) },
+        ));
+        await match.dispose();
+        return;
+      } catch (error) {
+        if (!(error instanceof errors.TimeoutError) || performance.now() >= resizeBy) throw error;
+      }
+    }
+  } catch (cause) {
+    if (!(cause instanceof errors.TimeoutError)) throw cause;
+    const diagnosticsBy = performance.now() + 500;
+    const [native, renderer] = await Promise.allSettled([
+      beforeDeadline(diagnosticsBy, () => app.evaluate(({ BrowserWindow, screen }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        return {
+          isVisible: win?.isVisible() ?? null,
+          getContentSize: win?.getContentSize() ?? null,
+          getBounds: win?.getBounds() ?? null,
+          workAreaSize: screen.getPrimaryDisplay().workAreaSize,
+        };
+      })),
+      beforeDeadline(diagnosticsBy, () => page.evaluate(() => ({ innerWidth, innerHeight }))),
+    ]);
+    const describe = result => result.status === 'fulfilled' ? JSON.stringify(result.value) : String(result.reason);
+    throw new Error(`Timed out resizing to ${width}x${height} while ${phase}. Resends=${resends}, window=${describe(native)}, page=${describe(renderer)}`, { cause });
+  }
 }
 
 /** Playwright's `_electron`, with screenshots guarded in every window of the launched app. */

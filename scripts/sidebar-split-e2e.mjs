@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 
 const output = path.resolve('test-results', 'sidebar-split');
 await rm(output, { recursive: true, force: true });
@@ -123,7 +123,7 @@ async function run(locale) {
     app = await _electron.launch({ executablePath: process.argv[2], args: process.argv[2] ? [] : ['.'], env });
     page = await app.firstWindow();
     page.setDefaultTimeout(11000);
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
+    await resizeWindow(app, page, 1440, 900);
     // Light, whatever the system's theme. The app saves its whole state at every change (the first
     // folder opening at launch is one), which on a slow machine can overwrite this before the reload.
     for (let attempt = 1; ; attempt++) {

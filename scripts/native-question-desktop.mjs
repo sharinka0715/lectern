@@ -6,7 +6,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 import { createQuestionProbe } from './native-question-probe.mjs';
 
 const fixture = await createQuestionProbe();
@@ -58,7 +58,7 @@ try {
     // Linux: the display that xvfb-run provides (the probe's environment starts empty).
     env:{...env,...Object.fromEntries(['DISPLAY','XAUTHORITY'].filter(k=>process.env[k]).map(k=>[k,process.env[k]])),LECTERN_LOCALE:'zh-CN',LECTERN_USER_DATA:profile,LECTERN_DIAGNOSTIC_CONTENT:'0',LECTERN_LOG_DIR:path.join(root,'diagnostics')}});
   page=await app.firstWindow(); page.setDefaultTimeout(20000);
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1280,900));
+  await resizeWindow(app, page, 1280, 900);
   await page.locator(`.session-row[data-session-id="${session}"]`).click();
   const card=page.getByRole('region',{name:'原生问答'});
   const button=name=>card.getByRole('button',{name,exact:true});

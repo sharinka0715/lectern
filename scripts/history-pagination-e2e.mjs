@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, writeFile, appendFile, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { _electron } from "./fixtures/electron.mjs";
+import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "lectern-history-pages-")));
 const profile = path.join(root, "profile");
@@ -170,7 +170,7 @@ try {
   page.setDefaultTimeout(20000);
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1500, 950));
+  await resizeWindow(app, page, 1500, 950);
   await historySize(3, 0.125);
   await page.reload();
   await historySize(0.125);

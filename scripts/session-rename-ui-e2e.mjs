@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { _electron } from "./fixtures/electron.mjs";
+import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "trn-")));
@@ -26,7 +26,7 @@ try {
   page.setDefaultTimeout(30000);
   const pageErrors = [];
   page.on("pageerror", error => pageErrors.push(error.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 880));
+  await resizeWindow(app, page, 1440, 880);
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
   assert.ok(workspace.claudeDir.startsWith(root + path.sep) && workspace.cwd.startsWith(root + path.sep));
   const liveId = await page.locator('.session-row.active[data-status="idle"]').getAttribute("data-session-id");

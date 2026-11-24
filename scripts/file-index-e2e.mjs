@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 
 const measureOnly = process.env.FILE_INDEX_MEASURE_ONLY === '1';
 const ttlMs = 8000, bigFiles = 120_000;
@@ -116,7 +116,7 @@ try {
   page.setDefaultTimeout(20000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 860));
+  await resizeWindow(app, page, 1280, 860);
 
   // Selecting a saved conversation indexes its folder, before anything is typed.
   // (The app opens a new chat in the first folder at launch; the second one starts collapsed.)

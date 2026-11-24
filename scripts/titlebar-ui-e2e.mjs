@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-titlebar-')));
 const profile = path.join(root, 'profile');
@@ -57,13 +57,6 @@ async function prepareProjects() {
   const toAdd = workspaces.pop();
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify(workspaces));
   return toAdd;
-}
-
-async function resize(width, height) {
-  await app.evaluate(({ BrowserWindow }, [width, height]) => {
-    BrowserWindow.getAllWindows()[0].setContentSize(width, height);
-  }, [width, height]);
-  await page.waitForFunction(([width, height]) => innerWidth === width && innerHeight === height, [width, height]);
 }
 
 async function activeProject(view, project) {
@@ -141,7 +134,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   const [design, development, collaboration, empty] = projects;
   const back = button(titlebar(), '后退'), forward = button(titlebar(), '前进');
-  await resize(1280, 800);
+  await resizeWindow(app, page, 1280, 800);
   await activeProject('primary', design);
   const normal = await checkLayout();
   const projectX = (await switcher().boundingBox()).x;
@@ -226,7 +219,7 @@ try {
   await button(pane('secondary'), '收起会话活动').click();
   await page.locator('.activity-float').waitFor({ state: 'detached' });
 
-  await resize(850, 600);
+  await resizeWindow(app, page, 850, 600);
   await page.locator('.split-workspace.divided[data-direction="rows"]').waitFor();
   await activeProject('secondary', collaboration);
   await button(pane('secondary'), '浏览工作目录').click();

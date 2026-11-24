@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-conversation-ui-'));
 const results = path.resolve('test-results');
@@ -20,7 +20,7 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.setDefaultTimeout(18000);
-  await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].setContentSize(1270, 910));
+  await resizeWindow(app, page, 1270, 910);
   await page.locator('.session-row.active[data-session-live="true"]').waitFor();
   const { workspace, session } = await page.evaluate(async () => {
     const [workspace] = await window.desktop.listWorkspaces();
