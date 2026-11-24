@@ -26,6 +26,7 @@ const env = { ...process.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, TMUX_TMPDIR
   // paragraphs arrive together. Even 0.5 s (250 ms) was not always enough there.
   LECTERN_MOCK_STREAM_MS: "500" };
 delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+const primary = process.platform === "darwin" ? "Meta" : "Control";
 let app, page;
 const report = {};
 
@@ -172,14 +173,15 @@ function readTextFades(spans, source) {
     subsequence(visibleText(span.text), visibleText(start.text))))).map(span => `${span.text} ${span.delay} ${span.at}`);
   return { fresh, going, refaded, unknown, orphans };
 }
-/** Selects the latest reply's text while some of it fades in and copies it as a reader would (Ctrl+C,
+/** Selects the latest reply's text while some of it fades in and copies it as a reader would (Cmd+C or Ctrl+C,
  * the system clipboard): the clipboard, and what the page held when the copy happened (its `copy`
  * event): the fading spans, the text of the reply's blocks, its paragraphs, items, cells and code. */
 async function copyWhileFading() {
+  let lastAttempt;
   for (let tries = 1; tries <= 20; tries++) {
     await app.evaluate(({ clipboard }) => clipboard.writeText(""));
     await page.waitForFunction(() => [...document.querySelectorAll(".message-assistant")].at(-1)?.querySelector("[data-text-fade]"), null, { timeout: 15000 });
-    await page.evaluate(() => {
+    const fadingBeforeCopy = await page.evaluate(() => {
       const reply = [...document.querySelectorAll(".message-assistant")].at(-1), blocks = [...reply.querySelectorAll(":scope > .message-content > .markdown")];
       document.querySelector(".conversation-scroll").focus({ preventScroll: true });
       const range = document.createRange();
@@ -192,12 +194,14 @@ async function copyWhileFading() {
         text: blocks.map(block => block.textContent).join(""), selected: getSelection().toString(),
         pieces: [...reply.querySelectorAll(".markdown p, .markdown li, .markdown th, .markdown td, .markdown code")].map(el => el.textContent.trim()).filter(Boolean) }; },
       { once: true, capture: true });
+      return reply.querySelectorAll("[data-text-fade]").length;
     });
-    await page.keyboard.press("Control+C");
+    await page.keyboard.press(`${primary}+C`);
     const clip = await app.evaluate(({ clipboard }) => clipboard.readText()), state = await page.evaluate(() => window.__copied);
     if (state?.fading.length && clip) return { clip, tries, ...state };
+    lastAttempt = { clipboardEmpty: !clip, copyEventReceived: !!state, fadingSpans: state?.fading.length ?? fadingBeforeCopy };
   }
-  throw new Error("could not copy the reply while its text was fading in");
+  throw new Error(`could not copy the reply while its text was fading in (last attempt ${JSON.stringify(lastAttempt)})`);
 }
 const fades = () => page.evaluate(() => ({ entered: window.__fade.log.entered, leaving: window.__fade.log.leaving, gone: window.__fade.log.gone,
   ended: window.__fade.log.ended, twice: window.__fade.twice(), remarked: window.__fade.remarked() }));
