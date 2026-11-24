@@ -168,6 +168,9 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     const childPath = join(alias, remoteChild);
     assert.deepEqual(await backend.listWorkspaceDirectories(endpoint, childPath), { path: childPath, directories: ['.hidden'] });
     await assert.rejects(backend.listWorkspaceDirectories(endpoint, join(alias, artifactName)));
+    const created = "-新目录 ' one";
+    assert.equal(await backend.createWorkspaceDirectory(endpoint, childPath, created), join(childPath, created));
+    assert.deepEqual(await backend.listWorkspaceDirectories(endpoint, childPath), { path: childPath, directories: [created, '.hidden'] });
     const session = await backend.createSession(workspace);
     let ready = false, lastState: unknown;
     for (let i = 0; i < 30; i++) { const state = await backend.readSession(workspace, session.id); lastState = state; if (state.active && state.screen.includes('offline fixture')) { ready = true; break; } await wait(50); }

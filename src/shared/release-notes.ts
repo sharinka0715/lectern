@@ -35,6 +35,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.3',
+    features: [
+      ['添加项目时，可在目录选择器里直接新建本机或 SSH 文件夹，并选为工作目录。',
+        'When adding a project, create a folder on your computer or an SSH host directly from the picker and use it as the working directory.'],
+    ],
+    fixes: [],
+  },
+  {
     version: '0.2.2',
     features: [
       ['输入框里加入的文件、图片和从 @ 补全选中的文件都留在原位，显示为写着文件名的整体卡片，可整体选中、剪切粘贴和撤销。',

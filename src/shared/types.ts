@@ -522,6 +522,7 @@ export interface DesktopAPI {
   /** Start scanning a folder's saved conversations (see Workspace.historyScan). */
   enableHistoryScan(id: string): Promise<Workspace>;
   listWorkspaceDirectories(target: WorkspaceEndpoint, path: string, offset?: number): Promise<WorkspaceDirectoryPage>;
+  createWorkspaceDirectory(target: WorkspaceEndpoint, parentPath: string, name: string): Promise<string>;
   /** `/effort ultracode on|off` in this session only; resolves to the verified state. */
   setUltracode(workspaceId: string, sessionId: string, on: boolean): Promise<boolean>;
   /** Options for Claude processes Lectern starts later (dynamic workflows for Ultracode,
