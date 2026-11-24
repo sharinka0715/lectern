@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { MAX_TEXT_EDITS, TEXT_FADE_MS, alignShown, graphemeEdge, planTextFades, visibleOffsets, visibleText, type Fading } from '../src/renderer/text-fade';
+import { MAX_TEXT_EDITS, TEXT_FADE_MS, alignShown, alignWork, graphemeEdge, planTextFades, visibleOffsets, visibleText, type Fading } from '../src/renderer/text-fade';
 
 // What fades when the visible text went from `before` to `after` (both as rendered, whitespace and all).
 const fresh = (before: string, after: string, fading: Fading[] = [], now = 1000) => {
@@ -82,10 +82,13 @@ test('texts too different to tell apart show as they are', () => {
   assert.equal(alignShown(a, b), undefined);
   assert.deepEqual(planTextFades(a, b, [{ from: 0, to: 10, at: 990 }], 1000), [], 'nothing fades, not even a fade that was running');
   assert.deepEqual(alignShown(a, 'y'.repeat(MAX_TEXT_EDITS / 2) + a), [{ from: 0, to: MAX_TEXT_EDITS / 2, length: 2000 }], 'fewer edits are worked out');
-  // A long reply growing at its end is cheap: the common start is skipped before any diff.
-  const long = '这一段文字足够长。'.repeat(20000), started = performance.now();
+  // A long reply changing at its end costs only its tail: the common start is skipped before any diff
+  // (counted, not timed: a busy machine takes longer either way).
+  const long = '这一段文字足够长。'.repeat(20000), before = alignWork.units;
   assert.deepEqual(planTextFades(long, long + '新的', [], 1000), [{ from: long.length, to: long.length + 2, at: 1000 }]);
-  assert.ok(performance.now() - started < 50, `${performance.now() - started} ms`);
+  assert.equal(alignWork.units, before, 'text added at the end: no diff at all');
+  assert.deepEqual(fresh(long + '**落盘', long + '落盘后'), ['后']);
+  assert.equal(alignWork.units - before, '**落盘'.length + '落盘后'.length, 'its Markdown changed at the end: only that tail is diffed');
 });
 
 test('the stylesheet fades text for as long as the code expects, only its opacity', () => {

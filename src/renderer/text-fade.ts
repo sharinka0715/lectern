@@ -41,6 +41,10 @@ export interface Kept { from: number; to: number; length: number }
 /** Characters [from, to) of the visible text, fading in since `at` (performance.now()). */
 export interface Fading { from: number; to: number; at: number }
 
+/** Characters handed to the diff after the common start, all alignments so far: a reply growing at its
+ * end costs none, a change near its end only that tail (tests read it instead of timing it). */
+export const alignWork = { units: 0 };
+
 /**
  * The characters of `next` that are those of `shown`, in order: the common start, then the longest
  * common subsequence of the rest (Myers' O(ND) diff). Ties keep the earlier characters, so text
@@ -52,6 +56,7 @@ export function alignShown(shown: string, next: string, maxEdits = MAX_TEXT_EDIT
   while (start < end && shown.charCodeAt(start) === next.charCodeAt(start)) start++;
   const kept: Kept[] = start ? [{ from: 0, to: 0, length: start }] : [];
   if (start === shown.length || start === next.length) return kept;
+  alignWork.units += shown.length + next.length - 2 * start;
   const rest = commonRuns(shown.slice(start), next.slice(start), maxEdits);
   if (!rest) return undefined;
   for (const run of rest) kept.push({ from: run.from + start, to: run.to + start, length: run.length });
@@ -252,7 +257,8 @@ export class TextFades {
     for (const part of parts) {
       if (part.start > cursor) rest.push(document.createTextNode(data.slice(cursor, part.start)));
       const span = document.createElement('span'), elapsed = Math.round(now - part.at);
-      span.setAttribute('data-text-fade', '');
+      // When the fade started (performance.now(), ms): a fade going on keeps it.
+      span.setAttribute('data-text-fade', String(Math.round(part.at)));
       if (elapsed > 0) span.style.animationDelay = `-${elapsed}ms`;
       span.textContent = data.slice(part.start, part.end);
       this.started.set(span, part.at);
