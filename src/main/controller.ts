@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import { isDeepStrictEqual } from 'node:util';
 import type { TurnAction } from '../shared/turn-controls';
 import { checkpointPosition, RewindRecordChanged, type RewindTarget } from '../backend/native-turn-controls';
 import { canInterruptTurn, readRewind, turnComposer } from '../core/turn-controls';
@@ -32,7 +34,7 @@ import { earlyPermission, observePermission, pendingToolId, permissionDialog, ty
 import { PermissionInputUnconfirmed } from '../backend/native-permission-actions';
 import type { PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
-import { QuestionInputUnconfirmed } from '../backend/native-question-actions';
+import { QuestionFocusTranscriptChanged, QuestionInputUnconfirmed } from '../backend/native-question-actions';
 import { TranscriptChangedNoKeys } from '../backend/native-settings';
 import { answeredQuestionId, earlyQuestion, observeQuestion, ownQuestion, pendingQuestionId, type OwnedQuestion, type WatchedQuestion } from './session-question';
 import { SessionSettingsCache, type SessionSettingsHandle } from './session-settings-cache';
@@ -1002,31 +1004,59 @@ export class Controller extends EventEmitter {
     this.schedulePoll(watch, stalePicker ? 0 : delay, stalePicker || soonFresh);
     });
   }
-  /** Answering checks the record a card was read with (transcriptVersionGuard), so a click while
-   * Claude Code appends to the transcript is refused before any key (TranscriptChangedNoKeys). That
-   * is how a card read off the screen alone met its call (2.1.300 and 2.1.310 write it about 170 ms
-   * after the dialog, longer on a slow disk), and how any card met the request, title and mode records
-   * written around a call. The click was lost: the card came back with a new token. Nothing was
-   * sent, so the card stays unconsumed; read again, and when the read keeps the same card (the same
-   * screen, the same call or now its call; observeQuestion, observePermission: token kept, newer
-   * position) send the same answer once more. Another screen, call or an answered question is a new
-   * card or none, and the refusal stands. */
-  private async rereadOnRefusal(workspaceId: string, sessionId: string, card: () => WatchedQuestion | WatchedPermission | undefined,
-    answer: () => Promise<void>): Promise<void> {
-    const before = card();
+  /** A permission refused before dispatch can use a newer position on the same card. */
+  private async rereadOnPermissionRefusal(workspaceId: string, sessionId: string, answer: () => Promise<void>): Promise<void> {
+    const before = this.watch?.permission;
     try { return await answer(); }
     catch (error) {
       if (!(error instanceof TranscriptChangedNoKeys) || !before || before.consumed) throw error;
       await this.refresh(workspaceId, sessionId);
-      const same = card() === before && !before.consumed;
+      const same = this.watch?.permission === before && !before.consumed;
       diagnostic.event('controller.card.reread', { sessionId, toolUseId: before.owner, same });
       if (!same) throw error;
       return answer();
     }
   }
   async answerQuestion(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
-    return this.rereadOnRefusal(workspaceId, sessionId, () => this.watch?.question,
-      () => this.answerQuestionOnce(workspaceId, sessionId, paneId, panePid, token, action));
+    const watch = this.watch, before = watch?.question;
+    const answer = (currentToken: string) => this.answerQuestionOnce(workspaceId, sessionId, paneId, panePid, currentToken, action);
+    try { return await answer(token); }
+    catch (error) {
+      if (!(error instanceof TranscriptChangedNoKeys) || !watch || !before || before.consumed) throw error;
+      const ready = await this.questionAfterRecordChange(watch, before, error);
+      if (!ready) throw error;
+      return answer(ready.snapshot.token);
+    }
+  }
+  private async questionAfterRecordChange(watch: Watch, before: WatchedQuestion, error: TranscriptChangedNoKeys) {
+    const checkpoint = error instanceof QuestionFocusTranscriptChanged ? error.screen : undefined;
+    const { owner, position } = before;
+    const revision = this.settingRevision;
+    let previous: WatchedQuestion | undefined, previousOffset: number | undefined;
+    let same = false;
+    // A hook can offer the question while the reply and call are still being written.
+    // Rebind once after two matching reads, with the full transcript and pane guards.
+    for (let read = 0; read < 3; read++) {
+      if (read) await delay(50);
+      if (this.watch !== watch || this.turnBusy || this.settingRevision !== revision) break;
+      await this.refresh(watch.workspace.id, watch.sessionId);
+      const card = watch.question;
+      same = this.watch === watch && this.settingRevision === revision && !watch.failures && !!card && !card.consumed && !card.unconfirmed
+        && (checkpoint ? !!owner && card.owner === owner && card.handle === before.handle
+          && card.snapshot.interactionId === before.snapshot.interactionId
+          && isDeepStrictEqual(card.asked, before.asked) && isDeepStrictEqual(card.screen, checkpoint) : card === before);
+      if (!same || !card?.position || !position || card.position.inode !== position.inode || card.position.inode === 'missing'
+          || card.position.offset < (previousOffset ?? position.offset)) break;
+      // The new card points at the last verified row. The driver starts there
+      // and sends only the moves and confirmation that remain.
+      if (card === previous && card.position.offset === previousOffset) {
+        diagnostic.event('controller.card.reread', { sessionId: watch.sessionId, toolUseId: card.owner, same, stable: true, movedFocus: !!checkpoint });
+        return card;
+      }
+      previous = card;
+      previousOffset = card.position.offset;
+    }
+    diagnostic.event('controller.card.reread', { sessionId: watch.sessionId, toolUseId: owner, same, stable: false, movedFocus: !!checkpoint });
   }
   private async answerQuestionOnce(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: QuestionAction) {
     const watch = this.watch;
@@ -1049,7 +1079,7 @@ export class Controller extends EventEmitter {
       await this.backend.answerQuestion(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent, current.asked);
     } catch (error) {
       if (error instanceof QuestionInputUnconfirmed) current.unconfirmed = true;
-      // Refused before any key: the card stands unless the next read says otherwise (rereadOnRefusal).
+      // The refused key was never sent. Recovery verifies any earlier focus change separately.
       if (error instanceof TranscriptChangedNoKeys) current.consumed = false;
       throw error;
     } finally {
@@ -1060,7 +1090,7 @@ export class Controller extends EventEmitter {
     }
   }
   async answerPermission(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: PermissionAction) {
-    return this.rereadOnRefusal(workspaceId, sessionId, () => this.watch?.permission,
+    return this.rereadOnPermissionRefusal(workspaceId, sessionId,
       () => this.answerPermissionOnce(workspaceId, sessionId, paneId, panePid, token, action));
   }
   private async answerPermissionOnce(workspaceId: string, sessionId: string, paneId: string, panePid: number, token: string, action: PermissionAction) {

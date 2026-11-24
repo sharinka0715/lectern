@@ -3,13 +3,13 @@ import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { Backend, ReadResult } from '../src/backend';
-import { QuestionInputUnconfirmed } from '../src/backend/native-question-actions';
+import { performQuestionAction, QuestionInputUnconfirmed, type QuestionKey } from '../src/backend/native-question-actions';
 import { TranscriptChangedNoKeys } from '../src/backend/native-settings';
 import { Controller } from '../src/main/controller';
 import type { WorkspaceStore } from '../src/main/store';
 import type { SessionSnapshot } from '../src/shared/types';
 
-const {single, other} = JSON.parse(readFileSync(new URL('./fixtures/native-contracts/question-2.1.326.json', import.meta.url),'utf8')).scenarios;
+const {single, other, chat} = JSON.parse(readFileSync(new URL('./fixtures/native-contracts/question-2.1.326.json', import.meta.url),'utf8')).scenarios;
 const frames = {start: single.screens.start as string, focus: other.screens.focus as string};
 const session = 'session-q';
 const workspace = {id:'local', kind:'local', cwd:'/tmp'};
@@ -124,13 +124,13 @@ async function earlyQuestionSession(native: {status?: 'waiting'|'idle'|'busy'; w
   const fixture = (name: string) => readFileSync(new URL(`./fixtures/question-early/${name}.txt`, import.meta.url), 'utf8');
   const dialog = fixture('2.1.330-single'), multi = fixture('2.1.330-multi');
   const prompt = {type:'user', uuid:'u1', parentUuid:null, sessionId:session, message:{role:'user', content:'Ask me first'}};
-  const state = {records:[prompt] as unknown[], screen:dialog, offset:400, native};
+  const state = {records:[prompt] as unknown[], screen:dialog, offset:400, native, hooks: undefined as ReadResult['dialogHooks']};
   const backend = {
     resetRead(){}, dispose(){}, readSession: async (): Promise<ReadResult> => {
       const jsonl = Buffer.from(state.records.map(record=>JSON.stringify(record)+'\n').join('')); state.records = [];
       return {session:{id:session,title:'Question',mapping:'exact',paneId:'%5',status:'waiting'},panePid:42, viewport:state.screen, screen:state.screen,
         nativeStatus:state.native.status, nativeWaitingFor:state.native.waitingFor, active:true, jsonl, reset:false, hasMore:false,
-        transcriptPosition:{inode:'7', offset:state.offset}};
+        transcriptPosition:{inode:'7', offset:state.offset}, dialogHooks:state.hooks};
     },
   } as unknown as Backend;
   const answered: unknown[][] = [];
@@ -294,6 +294,61 @@ test('被拒后重读仍是同一张卡（追加的只是请求、标题等记�
     assert.deepEqual(answered.positions, [400]);
     assert.equal(answered.after, undefined, 'a late frame of the answered question is no card');
   }
+});
+
+test('a hook question can resume at the verified focus after its call is appended between Down and Enter', async t => {
+  for (const outcome of ['stable', 'still writing', 'focus changed', 'call answered', 'refused again']) await t.test(outcome, async () => {
+    const { controller, backend, state, poll, call, result, dialog } = await earlyQuestionSession();
+    const input = (call.message.content[1] as { input: { questions: unknown[] } }).input;
+    state.hooks = { folder:true, started:{at:1,source:'startup'}, rejected:0, records:[
+      {event:'PreToolUse', seq:1, at:1, toolName:'AskUserQuestion', toolUseId:'toolu_ask', input},
+    ] };
+    const reads: number[] = [], positions: number[] = [], sent: QuestionKey[] = [];
+    let refused = false;
+    const readSession = backend.readSession.bind(backend);
+    backend.readSession = async (...args) => {
+      const read = await readSession(...args);
+      if (refused) {
+        reads.push(read.transcriptPosition!.offset);
+        if (reads.length === 1) {
+          state.offset = 760;
+          state.records = outcome === 'call answered' ? [call, result] : [call];
+          if (outcome === 'focus changed') state.screen = dialog;
+        } else if (outcome === 'still writing') state.offset += 120;
+      }
+      return read;
+    };
+    backend.answerQuestion = async (_workspace, _id, paneId, panePid, expected, action, _runtime, position, check, asked) => {
+      positions.push(position!.offset);
+      await performQuestionAction({
+        frame: async () => ({paneId,panePid,viewport:state.screen,nativeStatus:'waiting',nativeWaitingFor:'input needed'}),
+        pasteQuestion: async () => assert.fail('no paste expected'),
+        questionKey: async key => {
+          if (key === 'Enter' && !refused) {
+            refused = true;
+            state.offset = 520;
+            state.records = [{...call, message:{...call.message, content:[call.message.content[0]]}}];
+            throw new TranscriptChangedNoKeys();
+          }
+          if (key === 'Enter' && outcome === 'refused again') throw new TranscriptChangedNoKeys();
+          sent.push(key);
+          state.screen = key === 'Down' ? dialog.replace('❯ 1. Tea', '  1. Tea').replace('  2. Juice', '❯ 2. Juice') : chat.screens.composer;
+        },
+      }, paneId, panePid, expected, action, check, asked);
+    };
+    try {
+      const card = (await poll()).question!;
+      assert.equal(card.toolUseId, 'toolu_ask', 'the hook names the call before the transcript does');
+      const click = controller.answerQuestion(workspace.id, session, '%5', 42, card.token, {kind:'activate', number:2});
+      if (outcome === 'stable') await click;
+      else await assert.rejects(click, TranscriptChangedNoKeys);
+      const rebind = outcome === 'stable' || outcome === 'refused again';
+      assert.deepEqual(positions, rebind ? [400, 760] : [400]);
+      assert.deepEqual(sent, outcome === 'stable' ? ['Down', 'Enter'] : ['Down']);
+      if (rebind) assert.deepEqual(reads.slice(0,3), [520, 760, 760], 'the reply and call can arrive in different reads');
+      if (outcome === 'still writing') assert.deepEqual(reads.slice(0,3), [520, 760, 880]);
+    } finally { await controller.dispose(); }
+  });
 });
 
 test('Claude Code 没在等回答时，没有调用的问答样画面不出卡；代码块里的菜单也不出卡', async () => {

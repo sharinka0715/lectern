@@ -22,6 +22,10 @@ export interface QuestionDriver {
 export class QuestionInputUnconfirmed extends Error {
   constructor(cause?: unknown) { super(t('native.questionUnconfirmed'), { cause }); }
 }
+/** Focus moved and was verified, but the next key was refused before dispatch. */
+export class QuestionFocusTranscriptChanged extends TranscriptChangedNoKeys {
+  constructor(readonly screen: NativeQuestionScreen) { super(); }
+}
 const changed = () => new Error(t('native.questionChanged'));
 const unsupported = () => new Error(t('native.questionUnsupported'));
 const focusedIndex = (s: NativeQuestionScreen) => s.options.findIndex(o => o.focused);
@@ -95,6 +99,7 @@ export async function performQuestionAction(driver: QuestionDriver, paneId: stri
   if (!initial || !equal(initial, expected)) throw changed();
   let current: NativeQuestionScreen = initial;
   let awaitingEffect = false;
+  let movedFocus = false;
   // 原生菜单外的正文也可能重绘。只有目标明确回执「尚未发送」，且重新采样后
   // 仍是相同的题目、编辑值、焦点和进程，才能再次尝试派发这一个输入。
   const dispatch = async (send: () => Promise<void>) => {
@@ -105,8 +110,13 @@ export async function performQuestionAction(driver: QuestionDriver, paneId: stri
       catch (error) {
         if (!(error instanceof NavigationKeyNotSent)) throw error;
         awaitingEffect = false;
-        // The transcript changed: nothing was sent, and the same guard would refuse it again.
-        if (error instanceof TranscriptChangedNoKeys || attempt === 2) throw error;
+        // An updated transcript needs a fresh binding. Keep the last verified focus so
+        // the caller can continue the same action at that row, without repeating an arrow.
+        if (error instanceof TranscriptChangedNoKeys) {
+          if (movedFocus) throw new QuestionFocusTranscriptChanged(current);
+          throw error;
+        }
+        if (attempt === 2) throw error;
         if (!equal((await inspect()).screen, current)) throw changed();
       }
     }
@@ -136,6 +146,7 @@ export async function performQuestionAction(driver: QuestionDriver, paneId: stri
       const before = current, delta = Math.sign(index - at);
       await key(delta < 0 ? 'Up' : 'Down');
       await settle(after => focusMoved(before, after, at + delta));
+      movedFocus = true;
       at += delta;
     }
   };
