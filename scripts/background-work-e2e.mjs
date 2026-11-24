@@ -4,7 +4,7 @@
 // ends. The sidebar then says "回复完成" and shows both kinds of running work,
 // including when another chat is selected. "关闭对话" asks first and names that
 // work; cancelling keeps it running. Then the finished subagent is resumed with
-// SendMessage: it runs again (activity card, "后台运行中") until it notifies
+// SendMessage: it runs again (activity card, "回复完成") until it notifies
 // again. No real model.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -122,7 +122,7 @@ try {
   await replyComplete.waitFor();
   await bothRunning.waitFor();
   report.row = { label: await replyComplete.innerText(), title: await row.getAttribute('title') };
-  assert.match(report.row.title, /终端|子代理/);
+  assert.match(report.row.title, /回复完成.*(?:终端|子代理)/);
   assert.match(await row.getAttribute('aria-label'), /回复完成.*子代理 1 · 后台任务 1/);
   assert.equal(await row.locator('.session-status-dot.state-background').count(), 1);
 
@@ -136,17 +136,23 @@ try {
   const unread = row.locator('.state-unread');
   await unread.waitFor();
   assert.equal(await row.locator('.state-background').count(), 1);
+  assert.equal(await row.locator('.session-status-dot').count(), 1);
+  assert.ok(await unread.evaluate(dot => {
+    const style = getComputedStyle(dot);
+    return style.backgroundColor === 'rgba(0, 0, 0, 0)' && style.boxShadow.includes('inset') && style.animationName !== 'none';
+  }), 'The background dot stays hollow and pulses when it is unread');
   assert.equal(await row.getAttribute('data-background'), 'true');
   assert.match(await row.getAttribute('aria-label'), /回复完成.*子代理 1 · 后台任务 1.*未读/);
   await row.click();
   await activeBackground.waitFor();
   await unread.waitFor({ state: 'detached' });
-  const topbar = page.locator('.connection-status', { hasText: /后台运行中/ });
+  const topbar = page.locator('.connection-status', { hasText: /回复完成/ });
   await topbar.waitFor();
   report.topbar = await topbar.innerText();
   // The app started this session in auto mode.
   assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
-  assert.match(report.topbar, /后台运行中/);
+  assert.match(report.topbar, /回复完成/);
+  assert.match(await topbar.getAttribute('title'), /回复完成.*(?:终端|子代理)/);
   // Closing asks first and names the work it would stop; cancelling keeps it all running.
   const closeButton = page.getByRole('button', { name: '关闭当前对话', exact: true });
   const closeAt = await closeButton.boundingBox();
@@ -154,7 +160,7 @@ try {
   await closeButton.click();
   await confirmDialog.waitFor();
   report.closeDetail = await confirmDialog.locator('.confirm-action-detail').innerText();
-  assert.match(report.closeDetail, /以下仍在运行，将被停止：.*(终端|子代理)/);
+  assert.match(report.closeDetail, /回复完成。以下仍在运行，将被停止：.*(终端|子代理)/);
   assert.equal(await page.evaluate(() => document.activeElement?.textContent), '取消');
   await page.keyboard.press('Escape');
   await confirmDialog.waitFor({ state: 'detached' });
@@ -189,9 +195,9 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll('.message-assistant')].map(el => el.textContent).join('').split('收到后台结果。').length >= 3 &&
     !document.querySelector('.session-row.active[data-background]'), null, { timeout: 45000 });
   report.after = { label: await row.locator('.session-state-label').innerText().catch(() => ''), topbar: await page.locator('.connection-status').innerText() };
-  assert.doesNotMatch(report.after.topbar, /后台运行中/);
+  assert.doesNotMatch(report.after.topbar, /回复完成/);
   assert.equal(await row.locator('.session-background-label').count(), 0);
-  // A status change ("后台运行中" → idle) does not move the buttons either.
+  // A status change ("回复完成" → idle) does not move the buttons either.
   assert.deepEqual(await closeButton.boundingBox(), closeAt, 'a status change moved 关闭对话');
   const agentCard = async () => (await page.evaluate(() => window.__bgSnapshot?.activity ?? [])).find(item => item.kind === 'agent');
   report.agentDone = await agentCard();
@@ -208,11 +214,11 @@ try {
     await page.waitForFunction(() => window.__bgSnapshot?.activity?.some(item => item.kind === 'agent' && item.status === 'running' && item.resumes === 1), null, { timeout: 30000 });
     report.agentResumed = await agentCard();
     assert.equal(report.agentResumed.taskId, report.agentDone.taskId);
-    // The reply is done; the resumed subagent keeps the chat in "后台运行中".
+    // The resumed subagent keeps the chat in "回复完成".
     await activeBackground.waitFor();
     await replyComplete.waitFor();
     await agentRunning.waitFor();
-    assert.match(await page.locator('.connection-status').innerText(), /后台运行中/);
+    assert.match(await page.locator('.connection-status').innerText(), /回复完成/);
     assert.equal(await page.locator('.activity-toolbar-count').innerText(), '1');
     await page.screenshot({ path: path.join(output, 'resumed.png') });
     releaseResumed();

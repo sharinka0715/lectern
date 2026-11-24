@@ -8,10 +8,11 @@ export interface CloseConfirmation { title: string; message: string; confirmLabe
  * dialog names what that stops, the reply in progress and the background work
  * the activity state still sees running, with counts.
  */
-export function closeConfirmation(replying: boolean, work?: BackgroundCounts): CloseConfirmation {
+export function closeConfirmation(replying: boolean, work?: BackgroundCounts, replyComplete = !replying): CloseConfirmation {
   const running = [replying && t('app.closeConfirmReply'), ...backgroundParts(work)].filter((part): part is string => !!part);
+  const detail = running.length ? t('app.closeConfirmStops', { what: joinList(running) }) : undefined;
   return {
     title: t('app.closeConfirmTitle'), message: t('app.closeConfirmMessage'), confirmLabel: t('app.closeChat'), danger: true,
-    ...(running.length && { detail: t('app.closeConfirmStops', { what: joinList(running) }) }),
+    ...(detail && { detail: replyComplete && !replying ? t('app.closeConfirmAfterReply', { state: t('app.replyComplete'), detail }) : detail }),
   };
 }

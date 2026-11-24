@@ -148,7 +148,7 @@ export function sessionSidebarState(session: SessionInfo, { observation, ...opti
       counts?.unknownShells ? t('sidebar.runningTasksUnknown') : '',
     ].filter(Boolean);
     return {
-      ...state, label: t('sidebar.replyComplete'), detail: withUnread(t('sidebar.backgroundDetail', { work: background })),
+      ...state, label: t('app.replyComplete'), detail: withUnread(t('sidebar.backgroundDetail', { work: background })),
       dot: 'background', background: true, backgroundLabel: categories.join(' · ') || background,
     };
   }

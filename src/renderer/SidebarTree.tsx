@@ -116,8 +116,7 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
   selected: boolean;
   /** The split pane without the focus shows it: pale blue, apart from the focused pane's. */
   splitOpen?: boolean;
-  /** Machine and folder in full, read out and in the tooltip. With it the row takes two lines
-   * (the lists across projects): the title line, then the quieter `origin` below it. */
+  /** Machine and folder in full, on their own line in the lists across projects. */
   origin?: string;
   onSelect(workspace: Workspace, id: string): void;
   onRename(target: { workspaceId: string; session: SessionInfo }): void;
@@ -133,12 +132,15 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
   const inOtherPane = !selected && !!splitOpen;
   const splitNote = inOtherPane && t('sidebar.splitOpen');
   const unreadNote = state.unread && state.label !== t('sidebar.unread') && t('sidebar.unread');
-  const line = <>
+  const backgroundNote = state.backgroundLabel && !state.detail.includes(state.backgroundLabel) && state.backgroundLabel;
+  const unreadRing = state.dot === 'background' && state.unread;
+  const name = <>
     <span className="session-title">{title}</span>
     {identity && <small>{identity}</small>}
+  </>;
+  const status = <>
     <span className="session-state-label">{state.label}</span>
-    {state.unread && state.dot !== 'unread' && <span className="session-status-dot state-unread" aria-hidden="true" />}
-    {state.dot && <span className={`session-status-dot state-${state.dot}`} aria-hidden="true" />}
+    {state.dot && <span className={`session-status-dot state-${state.dot}${unreadRing ? ' state-unread' : ''}`} aria-hidden="true" />}
   </>;
   return (
     <div className="session-row-wrap">
@@ -167,7 +169,7 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
         aria-current={selected ? "page" : undefined}
         aria-label={[title, identity, origin, state.label, state.backgroundLabel, unreadNote, state.loading && t('sidebar.loading'), splitNote].filter(Boolean).join(t('sidebar.ariaJoin'))}
         aria-busy={state.loading || undefined}
-        title={[titleText, origin, splitNote, session.id, branch, state.detail, waitingFirstRecord].filter(Boolean).join("\n")}
+        title={[titleText, origin, splitNote, session.id, branch, state.detail, backgroundNote, waitingFirstRecord].filter(Boolean).join("\n")}
         data-workspace-id={workspace.id}
         data-session-id={session.id}
         data-session-live={state.live}
@@ -180,10 +182,13 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
         data-split-open={inOtherPane || undefined}
       >
         {origin || state.backgroundLabel ? <>
-          <span className="session-line">{line}</span>
-          {origin && <small className="session-origin">{origin}</small>}
-          {state.backgroundLabel && <span className="session-background-label">{state.backgroundLabel}</span>}
-        </> : line}
+          <span className="session-lines">
+            <span className="session-line">{name}</span>
+            {origin && <small className="session-origin">{origin}</small>}
+            {state.backgroundLabel && <span className="session-background-label">{state.backgroundLabel}</span>}
+          </span>
+          <span className="session-row-status">{status}</span>
+        </> : <>{name}{status}</>}
       </button>
       <button
         type="button"

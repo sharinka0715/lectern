@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from './fixtures/electron.mjs';
 import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 
@@ -16,9 +17,22 @@ try {
   page = await app.firstWindow(); page.setDefaultTimeout(25000);
   const nativeWindow = await app.browserWindow(page);
   const focusWindow = async () => {
-    await app.evaluate(({app}) => app.focus({steal:true}));
-    await nativeWindow.evaluate(w => { w.show(); w.focus(); });
-    assert.ok(await nativeWindow.evaluate(w => w.isVisible() && !w.isMinimized() && w.isFocused()), 'fixture owns native focus');
+    // Visibility and focus can settle after the first request following a hide.
+    const deadline = performance.now() + 5000;
+    for (let retries = 0; ; retries++) {
+      await app.evaluate(({app}) => app.focus({steal:true}));
+      await nativeWindow.evaluate(w => { w.show(); w.focus(); });
+      const state = await nativeWindow.evaluate(w => ({
+        isVisible: w.isVisible(), isMinimized: w.isMinimized(), isFocused: w.isFocused(),
+      }));
+      const ownsFocus = state.isVisible && !state.isMinimized && state.isFocused;
+      const remaining = deadline - performance.now();
+      if (ownsFocus || remaining <= 0) {
+        assert.ok(ownsFocus, `fixture owns native focus after ${retries} retries (${JSON.stringify(state)})`);
+        return;
+      }
+      await delay(Math.min(250, remaining));
+    }
   };
   await focusWindow();
   // The chevron collapses the list; the folder name itself opens a new chat.
@@ -70,6 +84,7 @@ try {
   const unread = archived.locator('.state-unread');
   await mark('标记为未读');
   await unread.waitFor();
+  // The manual mark survives putting the window away and reopening it.
   assert.equal(await nativeWindow.evaluate(w => { w.hide(); return w.isVisible(); }), false);
   await focusWindow();
   await page.reload();

@@ -45,7 +45,7 @@ test('a checked folder lists exactly what its probe found, with titles and activ
   assert.equal(quitTitle(bare), '对话 s-bare-a');
   assert.equal(bare.backgroundUnknown, true);
   assert.equal(quitActivityText(named), '正在回复 · 后台：2 个终端、1 个监控');
-  assert.equal(quitActivityText(bare), '空闲 · 后台：有任务在运行');
+  assert.equal(quitActivityText(bare), '回复完成 · 后台：有任务在运行');
   assert.ok(list.sessions.every(session => !session.unconfirmed));
 });
 

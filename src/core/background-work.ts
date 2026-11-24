@@ -35,7 +35,7 @@ export function backgroundCounts(activity: readonly SessionActivity[], pending?:
   };
 }
 
-/** The sidebar's and title bar's "后台运行中" detail, after Claude's reply. */
+/** The sidebar and title bar show this detail after Claude's reply. */
 export function backgroundSummary(activity: readonly SessionActivity[], pending?: PendingBackground, native?: string, since?: number, listed = false): string | undefined {
   const parts = backgroundParts(backgroundCounts(activity, pending, native, since, listed));
   if (!parts.length) return;

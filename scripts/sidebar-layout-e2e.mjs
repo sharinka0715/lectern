@@ -99,43 +99,105 @@ async function checkRows() {
   return rows;
 }
 
-// The lists across projects give each conversation two lines: the title line (state and dot on
-// its right, as in the tree), then the machine and folder in smaller text. The knot on the tree
-// line, the end of that line and the rename button sit on the title line.
-async function measureTwoLineRows() {
-  return page.locator('.sidebar-global .session-row').evaluateAll(rows => rows.map((row, index) => {
+async function measureMultilineRows(locator) {
+  return locator.evaluateAll(rows => rows.map(row => {
     const lines = element => {
       const range = document.createRange();
       range.selectNodeContents(element);
       return new Set([...range.getClientRects()].filter(rect => rect.height > 0).map(rect => Math.round(rect.top))).size;
     };
-    const first = row.querySelector('.session-line'), title = first.querySelector('.session-title'), second = row.querySelector('.session-origin');
-    const box = row.getBoundingClientRect(), firstBox = first.getBoundingClientRect(), secondBox = second.getBoundingClientRect();
-    const middle = firstBox.top + firstBox.height / 2 - box.top;
-    const knot = getComputedStyle(row, '::before'), line = getComputedStyle(row.parentElement, '::before');
-    const rename = row.parentElement.querySelector('.session-rename').getBoundingClientRect();
+    const wrap = row.parentElement, box = row.getBoundingClientRect();
+    const first = row.querySelector('.session-line'), title = first.querySelector('.session-title');
+    const origin = row.querySelector('.session-origin'), counts = row.querySelector('.session-background-label');
+    const firstBox = first.getBoundingClientRect(), originBox = origin?.getBoundingClientRect(), countsBox = counts?.getBoundingClientRect();
+    const stateBox = row.querySelector('.session-state-label').getBoundingClientRect();
+    const dotBox = row.querySelector('.session-status-dot')?.getBoundingClientRect();
+    const renameBox = wrap.querySelector('.session-rename').getBoundingClientRect();
+    const center = rect => rect.top + rect.height / 2 - box.top;
+    const knotCenter = () => {
+      const style = getComputedStyle(row, '::before');
+      return parseFloat(style.top) + parseFloat(style.height) / 2;
+    };
+    const knot = knotCenter();
+    const wasLoading = row.hasAttribute('data-loading');
+    row.setAttribute('data-loading', 'true');
+    const loadingKnot = knotCenter();
+    if (!wasLoading) row.removeAttribute('data-loading');
+    const lineBottom = parseFloat(getComputedStyle(wrap, '::before').bottom);
+    const nextWrap = wrap.nextElementSibling;
+    const lineGap = nextWrap?.matches('.session-row-wrap')
+      ? nextWrap.getBoundingClientRect().top + parseFloat(getComputedStyle(nextWrap, '::before').top) - (wrap.getBoundingClientRect().bottom - lineBottom)
+      : null;
+    const rowEnd = box.right - parseFloat(getComputedStyle(row).paddingRight);
+    const textBoxes = [title.getBoundingClientRect(), originBox, countsBox].filter(Boolean);
     return {
-      id: row.dataset.sessionId, height: box.height, first: firstBox.height, second: secondBox.height,
-      titleFont: parseFloat(getComputedStyle(title).fontSize), originFont: parseFloat(getComputedStyle(second).fontSize),
-      titleLines: lines(title), originLines: lines(second), origin: second.textContent,
-      stacked: firstBox.top >= box.top - 0.5 && firstBox.bottom <= secondBox.top + 0.5 && secondBox.bottom <= box.bottom + 0.5,
-      knot: parseFloat(knot.top) + parseFloat(knot.height) / 2 - middle,
-      rename: rename.top + rename.height / 2 - box.top - middle,
-      // The tree line of the last row ends at its knot.
-      lineEnd: index === rows.length - 1 ? box.height - parseFloat(line.bottom) - middle : 0,
-      truncated: getComputedStyle(second).textOverflow === 'ellipsis' && second.scrollWidth > second.clientWidth,
+      id: row.dataset.sessionId, height: box.height, first: firstBox.height, second: originBox?.height,
+      titleFont: parseFloat(getComputedStyle(title).fontSize), originFont: origin && parseFloat(getComputedStyle(origin).fontSize),
+      titleLines: lines(title), originLines: origin && lines(origin),
+      stacked: originBox && firstBox.top >= box.top - 0.5 && firstBox.bottom <= originBox.top + 0.5 && originBox.bottom <= box.bottom + 0.5,
+      truncated: origin && getComputedStyle(origin).textOverflow === 'ellipsis' && origin.scrollWidth > origin.clientWidth,
+      titleCenter: center(firstBox), knot, loadingKnot, rename: center(renameBox),
+      state: stateBox.height ? center(stateBox) : null, dot: dotBox ? center(dotBox) : null,
+      lineEnd: wrap.matches(':not(:has(~ .session-row-wrap))') ? box.height - lineBottom : null, lineGap,
+      textRight: Math.max(...textBoxes.map(rect => rect.right)),
+      stateLeft: stateBox.height ? stateBox.left : null, stateGap: stateBox.height && dotBox ? dotBox.left - stateBox.right : null,
+      dotLeft: dotBox?.left ?? null, dotRight: dotBox?.right ?? null, rowEnd, renameRight: box.right - renameBox.right,
+      counts: countsBox?.height, countsTop: countsBox && countsBox.top - box.top,
+      countsFont: counts && parseFloat(getComputedStyle(counts).fontSize), overflow: counts && getComputedStyle(counts).textOverflow,
+      fullRowTarget: countsBox && row.draggable && document.elementFromPoint(box.left + 9, box.top + center(countsBox))?.closest('.session-row') === row,
     };
   }));
 }
 
-function checkTwoLineRows(rows, why) {
-  assert.ok(rows.length > 0, why);
+function checkMultilineAlignment(row, size) {
+  const shown = `at ${size}px: ${JSON.stringify(row)}`;
+  const near = (actual, expected, label) => assert.ok(Math.abs(actual - expected) <= 1, `${label}, ${shown}`);
+  near(row.titleCenter, 15 * size / 18, 'The title is centered 15 scaled units from the top');
+  for (const key of ['knot', 'loadingKnot', 'lineEnd', 'state', 'dot', 'rename']) {
+    if (row[key] !== null) near(row[key], row.height / 2, `${key} is centered on the whole row`);
+  }
+  if (row.lineGap !== null) near(row.lineGap, 0, 'The tree line reaches the next row');
+  near(row.renameRight, 3, 'The rename button keeps its end inset');
+  if (row.dotRight !== null) near(row.dotRight, row.rowEnd, 'The dot stays in its column');
+  if (row.stateGap !== null) near(row.stateGap, 7, 'The state keeps its gap to the dot');
+  if (row.stateLeft !== null) {
+    assert.ok(row.textRight <= row.stateLeft, `Every text line ends before the state label, ${shown}`);
+  } else {
+    near(row.textRight, row.dotLeft === null ? row.rowEnd : row.dotLeft - 7, 'Text fills the space before the dot when the state label is hidden');
+  }
+}
+
+function checkTwoLineRows(rows, size) {
+  assert.ok(rows.length > 0);
   for (const row of rows) {
-    const shown = `${why}: ${JSON.stringify(row)}`;
+    const shown = `at ${size}px: ${JSON.stringify(row)}`;
     assert.ok(row.stacked && row.titleLines === 1 && row.originLines === 1, `Two lines, the title above machine · folder, ${shown}`);
     assert.ok(row.originFont < row.titleFont, `The second line is in smaller text, ${shown}`);
-    assert.ok([row.knot, row.rename, row.lineEnd].every(offset => Math.abs(offset) <= 1), `Knot, rename button and line end on the title line, ${shown}`);
+    checkMultilineAlignment(row, size);
   }
+}
+
+async function checkBackgroundRow(row, withOrigin, size) {
+  const [geometry] = await measureMultilineRows(row);
+  const at = (key, units) => assert.ok(geometry[key] !== null && Math.abs(geometry[key] - units * size / 18) <= 1,
+    `${key} at ${size}px should be ${units} scaled units: ${JSON.stringify(geometry)}`);
+  at('height', withOrigin ? 62 : 46);
+  at('first', 20);
+  if (withOrigin) at('second', 16);
+  else assert.equal(geometry.second, undefined);
+  at('counts', 16);
+  at('countsTop', withOrigin ? 41 : 25);
+  assert.ok([geometry.state, geometry.dot, geometry.lineEnd].every(value => value !== null), 'The background row has a status, dot and tree line endpoint');
+  checkMultilineAlignment(geometry, size);
+  assert.ok(geometry.countsFont < geometry.titleFont, 'The count is in caption text');
+  assert.equal(geometry.overflow, 'ellipsis');
+  assert.ok(geometry.fullRowTarget, 'The draggable row covers the count line');
+  const label = '子代理 2 · 后台任务 1';
+  assert.equal(await row.locator('.session-state-label').innerText(), '回复完成');
+  assert.equal(await row.locator('.session-background-label').innerText(), label);
+  assert.ok((await row.getAttribute('title')).includes(label));
+  assert.ok((await row.getAttribute('aria-label')).includes(label));
+  return geometry;
 }
 
 async function setFontSize(size) {
@@ -210,6 +272,9 @@ async function checkBackgroundReplyStatus() {
   await writeFile(stateFile, 'ready');
   await liveRow.locator('.session-status-dot.state-idle').waitFor();
   await expectGlobalOrder('priority', historyId, liveId);
+  const [idleRow] = await measureMultilineRows(liveRow);
+  assert.equal(idleRow.state, null, 'An idle row only shows the dot');
+  checkMultilineAlignment(idleRow, 18);
   assert.equal(await otherRow.getAttribute('aria-current'), 'page', 'The original reply settles without switching back');
 }
 
@@ -222,7 +287,11 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   };
   const remoteChat = { id: randomUUID(), title: '远程发布记录', updatedAt: remoteUpdatedAt,
     paneId: '%93', mapping: 'exact', status: 'working', path: '/srv/fixture/chat.jsonl' };
-  const remote = { workspace: remoteWorkspace, sessions: [remoteChat], panes: [] };
+  const backgroundChat = { id: randomUUID(), title: '检查后台任务',
+    updatedAt: new Date(Date.parse(remoteUpdatedAt) - 48 * 60 * 60 * 1000).toISOString(),
+    paneId: '%94', mapping: 'exact', status: 'idle', path: '/srv/fixture/background.jsonl', background: '子代理 2 · 后台任务 1' };
+  const remote = { workspace: remoteWorkspace, sessions: [remoteChat, backgroundChat], panes: [] };
+  const backgroundRow = sessionRow(backgroundChat.id);
   const remoteReply = '远程工作目录里的回复。';
   await app.evaluate(({ ipcMain }, { local, remote, remoteReply, reply }) => {
     const replace = (name, handler) => {
@@ -253,7 +322,7 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   assert.equal(await page.locator('.sidebar-global').count(), 0, 'A new profile opens the project tree');
 
   await selectSort('recent');
-  await expectGlobalOrder('recent', sessionId, remoteChat.id, olderId);
+  await expectGlobalOrder('recent', sessionId, remoteChat.id, olderId, backgroundChat.id);
   // Two lines: the title, then the machine (named as its sidebar heading) and the folder. The
   // long local folder name is cut short there; the hover tip and spoken label have it in full.
   const localOrigin = `本地 · ${local.workspace.name}`, remoteOrigin = `${remoteWorkspace.host} · ${remoteWorkspace.name}`;
@@ -262,15 +331,18 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   assert.ok((await sessionRow(remoteChat.id).getAttribute('title')).includes(`\n${remoteOrigin}\n`));
   assert.ok((await sessionRow(sessionId).getAttribute('title')).includes(`\n${localOrigin}\n`));
   assert.ok((await sessionRow(sessionId).getAttribute('aria-label')).includes(localOrigin));
-  assert.equal(await sessionRow(remoteChat.id).locator('.session-line .session-state-label').innerText(), '回复中', 'The state stays on the title line');
-  const twoLines = await measureTwoLineRows();
-  checkTwoLineRows(twoLines, 'at 18px');
+  assert.equal(await sessionRow(remoteChat.id).locator('.session-state-label').innerText(), '回复中');
+  const ordinaryRows = page.locator('.sidebar-global .session-row:not([data-background])');
+  const twoLines = await measureMultilineRows(ordinaryRows);
+  const recentBackground = { at18: await checkBackgroundRow(backgroundRow, true, 18) };
+  checkTwoLineRows(twoLines, 18);
   assert.ok(twoLines.every(row => Math.abs(row.height - 46) <= 1), `Two-line rows are 46px at 18px: ${JSON.stringify(twoLines)}`);
   assert.equal(twoLines.find(row => row.id === sessionId).truncated, true, 'A long machine · folder line ends in an ellipsis');
-  // Both lines follow the interface font size.
+  // The text lines and both alignment centers follow the interface font size.
   await setFontSize(14);
-  const smaller = await measureTwoLineRows();
-  checkTwoLineRows(smaller, 'at 14px');
+  const smaller = await measureMultilineRows(ordinaryRows);
+  recentBackground.at14 = await checkBackgroundRow(backgroundRow, true, 14);
+  checkTwoLineRows(smaller, 14);
   for (const [index, row] of smaller.entries()) for (const key of ['height', 'first', 'second']) {
     const expected = twoLines[index][key] * 14 / 18;
     assert.ok(Math.abs(row[key] - expected) <= 1, `${key} at 14px: ${row[key]}px, expected ${expected.toFixed(2)}px (${twoLines[index][key]}px at 18px)`);
@@ -284,21 +356,22 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   await page.keyboard.press('End');
   assert.equal(await priorityItem.evaluate(item => item === document.activeElement), true);
   await page.keyboard.press('Enter');
-  await expectGlobalOrder('priority', remoteChat.id, sessionId, olderId);
+  await expectGlobalOrder('priority', remoteChat.id, backgroundChat.id, sessionId, olderId);
+  const priorityBackground = await checkBackgroundRow(backgroundRow, true, 18);
   const global = page.locator('.sidebar-global');
   await global.getByRole('heading', { name: '进行中', exact: true }).waitFor();
   await global.getByRole('heading', { name: '其他会话', exact: true }).waitFor();
   assert.deepEqual(await global.locator('.sort-group-heading, .session-row').evaluateAll(items => items.map(item => (
     item.classList.contains('session-row') ? item.dataset.sessionId : item.textContent
-  ))), ['进行中', remoteChat.id, '其他会话', sessionId, olderId]);
+  ))), ['进行中', remoteChat.id, backgroundChat.id, '其他会话', sessionId, olderId]);
   assert.equal(await sessionRow(sessionId).getAttribute('aria-current'), 'page', 'Sorting keeps the current chat selected');
   await page.reload();
-  await expectGlobalOrder('priority', remoteChat.id, sessionId, olderId);
+  await expectGlobalOrder('priority', remoteChat.id, backgroundChat.id, sessionId, olderId);
   assert.equal(await sessionRow(sessionId).getAttribute('aria-current'), 'page');
 
   const filter = page.getByRole('textbox', { name: '筛选项目和对话', exact: true });
   await filter.fill(remoteWorkspace.name);
-  await expectGlobalOrder('priority', remoteChat.id);
+  await expectGlobalOrder('priority', remoteChat.id, backgroundChat.id);
   await filter.clear();
   await sessionRow(remoteChat.id).click();
   await page.getByText(remoteReply, { exact: true }).waitFor();
@@ -312,12 +385,18 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   assert.equal(await sessionRow(remoteChat.id).count(), 0);
   await remoteFolder.locator('.workspace-toggle').click();
   assert.equal(await sessionRow(remoteChat.id).getAttribute('aria-current'), 'page');
-  // 按项目 keeps one line per conversation.
-  const treeRows = await page.locator('.sidebar-tree .session-row').evaluateAll(rows => rows.map(row => ({
+  // The project tree keeps one line for conversations without background work.
+  const treeRows = await page.locator('.sidebar-tree .session-row:not([data-background])').evaluateAll(rows => rows.map(row => ({
     height: row.getBoundingClientRect().height, twoLines: !!row.querySelector('.session-line, .session-origin') })));
   assert.ok(treeRows.length >= 2 && treeRows.every(row => row.height <= 30 && !row.twoLines), `The project tree keeps one-line rows: ${JSON.stringify(treeRows)}`);
+  const projectBackground = { at18: await checkBackgroundRow(backgroundRow, false, 18) };
+  await setFontSize(14);
+  projectBackground.at14 = await checkBackgroundRow(backgroundRow, false, 14);
+  await setFontSize(18);
   await checkSupersededDiscovery(local, remote, remoteChat);
-  return { at18: twoLines[0], at14: smaller[0] };
+  const [at18, at14] = [twoLines, smaller].map(rows => rows.find(row => row.id === remoteChat.id));
+  assert.ok([at18, at14].every(row => row.state !== null && row.dot !== null), 'Both font sizes measure the visible state and dot');
+  return { at18, at14, background: { recent: recentBackground, priority: priorityBackground, project: projectBackground } };
 }
 
 async function checkSupersededDiscovery(local, remote, chat) {

@@ -18,7 +18,6 @@ export const sidebar = {
   savedHistory: ['已保存的历史，可续接', 'Saved history; can be resumed'],
   endedNoHistory: ['会话已结束，尚无历史记录', 'The conversation ended before any history was saved'],
   runningIdle: ['正在运行，等待输入', 'Running, waiting for input'],
-  replyComplete: ['回复完成', 'Reply complete'],
   runningAgents: ['子代理 {count}', '{count, plural, one {# subagent} other {# subagents}}'],
   runningTasks: ['后台任务 {count}', '{count, plural, one {# background task} other {# background tasks}}'],
   runningTasksUnknown: ['后台任务运行中', 'Background tasks running'],

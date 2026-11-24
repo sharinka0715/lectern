@@ -53,8 +53,8 @@ export const releaseNotes: ReleaseNote[] = [
         'When adding a project, create a folder on your computer or an SSH host directly from the picker and use it as the working directory.'],
       ['在侧栏右键可将会话标记为已读或未读，未读标记会保留到再次打开会话或手动清除。',
         'Right-click a conversation in the sidebar to mark it as read or unread, with a manual unread mark lasting until you reopen the conversation or clear it.'],
-      ['主回复完成后，侧栏会同时显示回复已完成和仍在运行的子代理或后台任务，并保留未读标记。',
-        'When the main reply finishes, the sidebar shows reply completion alongside any running subagents or background tasks and keeps the unread mark.'],
+      ['主回复结束后若还有子代理或后台任务在运行，侧栏和顶栏显示「回复完成」，侧栏另起一行显示计数并保留未读标记。',
+        'If subagents or background tasks still run when the main reply finishes, the sidebar and title bar show "Reply complete", and the sidebar shows the counts on a separate line and keeps the unread mark.'],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',

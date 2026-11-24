@@ -127,7 +127,8 @@ The dot after a conversation in the sidebar shows its state:
 | Orange | Waiting for your input, a permission or a prompt |
 | Red | A connection or session problem |
 | Blue | An unread reply or a conversation you marked as unread |
-| Pulsing green ring | The reply is complete and background work is still running |
+| Pulsing green ring | "Reply complete" with background work still running |
+| Pulsing blue ring | "Reply complete" with background work still running and an unread mark |
 
 Right-click a conversation to mark it as read or unread. Reopening the conversation from the sidebar clears a manual unread mark.
 
