@@ -5,6 +5,7 @@
 // draft there marks its folder, and one pane alone marks nothing. The list across all
 // projects (sorted by recency) marks the two the same way and keeps the blue one past its
 // first page. Screenshots (Chinese and English, light; one dark) in test-results/sidebar-split/.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -75,9 +76,10 @@ async function rowColors(element, text) {
 async function run(locale) {
   const L = locales[locale];
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-sidebar-split-')));
+  const privateServer = createPrivateTmux(root);
   const profile = path.join(root, 'profile'), claudeDir = path.join(root, 'config');
-  const env = { ...process.env, LECTERN_LOCALE: locale, CLAUDE_CONFIG_DIR: claudeDir, TMUX_TMPDIR: root, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
-  delete env.TMUX; delete env.TMUX_PANE; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+  const env = { ...privateServer.env, LECTERN_LOCALE: locale, CLAUDE_CONFIG_DIR: claudeDir, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
+  delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
   const chats = ['01', '02', '03', '04', '05', '06', '07'].map(L.chat);
   const designs = await history(claudeDir, path.join(root, 'designs'), chats, L.reply);
   await history(claudeDir, path.join(root, 'notes'), [L.note(1), L.note(2)], L.reply);
@@ -275,6 +277,7 @@ async function run(locale) {
     throw error;
   } finally {
     await app?.close();
+    privateServer.killAll();
     await rm(root, { recursive: true, force: true });
   }
 }

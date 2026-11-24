@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -66,20 +67,21 @@ test('the receipt of an inline command is read only under that exact typed line'
   assert.equal(readSettingReceipt(frame('/model sonnet', receipt), 'model', ['old line'], '/model haiku'), undefined);
 });
 
-async function withFixture(t: { skip(message: string): void }, aliases: boolean, body: (backend: Backend, workspace: Workspace, capture: (pane: string) => Promise<string>, socket: string) => Promise<void>) {
+async function withFixture(t: { skip(message: string): void }, aliases: boolean, body: (backend: Backend, workspace: Workspace, capture: (pane: string) => Promise<string>, privateServer: ReturnType<typeof isolateTmux>) => Promise<void>) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-inline-')));
   const workspace: Workspace = { id: 'inline-' + randomUUID().slice(0, 6), name: 'Inline', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'inline-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath,
     claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config'), ...(aliases ? ['--alias-models'] : [])] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
-    const capture = async (pane: string) => (await runCommand(workspace, ['tmux', '-L', socket, 'capture-pane', '-p', '-t', pane].map(quoteShell).join(' '))).stdout.toString();
-    await body(backend, workspace, capture, socket);
+    const capture = async (pane: string) => (await runCommand(workspace, ['tmux', ...privateServer.args('capture-pane', '-p', '-t', pane)].map(quoteShell).join(' '))).stdout.toString();
+    await body(backend, workspace, capture, privateServer);
   } finally {
     await backend.dispose();
-    await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -202,11 +204,11 @@ test('with subagents listed and ticking below the input box, the stop key is not
   const pace = process.env.LECTERN_MOCK_STREAM_MS;
   process.env.LECTERN_MOCK_STREAM_MS = '250';
   t.after(() => { if (pace === undefined) delete process.env.LECTERN_MOCK_STREAM_MS; else process.env.LECTERN_MOCK_STREAM_MS = pace; });
-  await withFixture(t, true, async (backend, workspace, capture, socket) => {
+  await withFixture(t, true, async (backend, workspace, capture, privateServer) => {
     await listAgents(workspace, 'ready agents:7@40');
     const session = await backend.createSession(workspace), paneId = session.paneId!;
     for (let i = 0; i < 120 && !(await capture(paneId)).includes('↓ 2 more'); i++) await pause(25);
-    const pid = Number((await runCommand(workspace, ['tmux', '-L', socket, 'display-message', '-p', '-t', paneId, '#{pane_pid}'].map(quoteShell).join(' '))).stdout.toString());
+    const pid = Number((await runCommand(workspace, ['tmux', ...privateServer.args('display-message', '-p', '-t', paneId, '#{pane_pid}')].map(quoteShell).join(' '))).stdout.toString());
     await backend.sendMessage(workspace, session.id, 'a reply to stop while the subagent timers tick');
     for (let i = 0; i < 120 && !(await capture(paneId)).includes('esc to interrupt'); i++) await pause(25);
     // A read of a redraw half done (40 ms ticks, see above) is refused before any key is sent: once more then.

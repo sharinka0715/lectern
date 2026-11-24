@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -140,6 +141,7 @@ process.stdin.on('data',data=>{const text=data.toString();fs.appendFileSync(repo
 `);
   const workspace = { ...base, cwd };
   fixtureClaudeConfig(config);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] });
   const waitTrust = async (id: string) => {
     for (let count = 0; count < 30; count++) { const read = await backend.readSession(workspace, id); if (read.directoryTrust) return read.directoryTrust; await new Promise(resolve => setTimeout(resolve, 30)); }
@@ -199,7 +201,7 @@ process.stdin.on('data',data=>{const text=data.toString();fs.appendFileSync(repo
     assert.equal(keysAfterEdit.flat().includes(13), false, 'a real configuration change during navigation still blocks Enter');
   } finally {
     await backend.dispose();
-    await runCommand(workspace, `tmux -L ${quoteShell(socket)} kill-server 2>/dev/null || true`);
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

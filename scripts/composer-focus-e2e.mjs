@@ -8,6 +8,7 @@
 // answered gives it to the box, as does a model picked from the box's menu; text typed while a new
 // chat starts stays in it; in a split, the other pane's reply and permission card leave this pane's
 // box alone; a question card that replaced the box gives it back with its caret.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -20,14 +21,15 @@ const { parseQuestionScreen } = await tsImport("../src/core/question-screen.ts",
 const { scenarios } = JSON.parse(await readFile(new URL("../tests/fixtures/native-contracts/question-2.1.326.json", import.meta.url), "utf8"));
 // A short name: the demo's tmux socket lives below it, and macOS allows 104 bytes for a socket path.
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tcfo-")));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve("test-results", "composer-focus");
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 // Files written into the folder during the run show in the @ list soon.
-const env = { ...process.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, TMUX_TMPDIR: root, LECTERN_FILE_INDEX_TTL_MS: "300",
+const env = { ...privateServer.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, LECTERN_FILE_INDEX_TTL_MS: "300",
   LECTERN_USER_DATA: path.join(root, "profile"), LECTERN_NODE_BINARY: process.execPath,
   LECTERN_LOG_DIR: path.join(output, "diagnostics"), LECTERN_DIAGNOSTIC_CONTENT: "0" };
-delete env.TMUX; delete env.TMUX_PANE; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const step = name => console.log(`[composer-focus] ${name}`);
 let app, page;
 
@@ -312,6 +314,7 @@ try {
   await page?.screenshot({ path: path.join(output, "failure.png") }).catch(() => {});
   throw error;
 } finally {
-  await app?.close().catch(() => {});
+  await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

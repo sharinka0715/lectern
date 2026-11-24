@@ -7,6 +7,7 @@
 // Claude Code shows this notice where it may fall back to its own, billed safety check: with
 // telemetry at its default level, or, as here without any outside connection,
 // CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1 in its environment (scripts/cc-matrix/probe-classifier-failure.mjs).
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
@@ -18,6 +19,7 @@ import { _electron } from './fixtures/electron.mjs';
 import { answerAutoModeCheck, isAutoModeCheck } from './fixtures/auto-mode-check.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-native-dialog-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 // One reply with a checked call per prompt (a pipeline goes to auto mode's check), then plain text.
 const plans = { '先查一下': 'first.txt', '再查一次': 'second.txt' };
@@ -62,8 +64,8 @@ try {
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: 'dialog-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'gateway', name: '网关', kind: 'local', cwd }]));
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1' };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1' };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   // Lectern's default: nothing moves auto mode's check off the server.
   delete env.CLAUDE_CODE_AUTO_MODE_SERVER;
   const version = /(\d+)\.(\d+)\.(\d+)/.exec(execFileSync('claude', ['--version']).toString())?.slice(1).map(Number) ?? [0, 0, 0];
@@ -73,7 +75,7 @@ try {
   await app.evaluate(({ shell }) => { globalThis.openedLinks = []; shell.openExternal = async url => { globalThis.openedLinks.push(url); }; });
   const page = await app.firstWindow();
   page.setDefaultTimeout(30000);
-  const tmux = (...a) => { try { return execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root }, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); } catch { return ''; } };
+  const tmux = (...a) => { try { return privateServer.tmux(...a); } catch (error) { if (error.status === 1) return ''; throw error; } };
   const paneId = () => tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').find(line => / lectern-/.test(line))?.split(' ')[0];
   const transcript = async () => {
     const projects = path.join(config, 'projects');
@@ -158,8 +160,8 @@ try {
     console.log(JSON.stringify({ ok: true, claude: ran ?? version.join('.'), deferred, cancelled: true, continued: true }));
   }
 } finally {
-  await app?.close().catch(() => {});
-  try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}
+  await app?.close();
+  privateServer.kill();
   server.close();
   for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(r => setTimeout(r, 300)); } }
 }

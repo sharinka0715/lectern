@@ -12,8 +12,8 @@
 //
 // Logs go to test-results/test-all/<step>.log, a summary to summary.txt/json.
 // tmux is isolated: TMUX/TMUX_PANE are unset and TMUX_TMPDIR points at a fresh
-// private directory (a subdirectory per step) whose servers (and only those) are
-// killed at the end, so the suite never talks to the developer's own tmux server.
+// private directory per step. Each step closes its sockets before the suite
+// removes its private directories.
 // On Linux without a display the whole run is re-executed under xvfb-run.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, createWriteStream } from 'node:fs';
@@ -22,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ANNOTATIONS_PER_STEP, annotation, inGitHubActions, tailSummary } from './gh-annotations.mjs';
 import { oneAtATime, runsAlone, shardOf, skipReason } from './test-all-plan.mjs';
+import { createPrivateTmux, privateTmux } from './fixtures/private-tmux.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
@@ -128,10 +129,10 @@ const logs = path.join(results, 'test-all');
 rmSync(logs, { recursive: true, force: true });
 mkdirSync(logs, { recursive: true });
 
-// Private tmux: every server any step starts lives below this directory.
+// Parent for the tmux directories inherited by the steps.
 const tmuxRoot = mkdtempSync(path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 'lectern-test-all-'));
-const baseEnv = { ...process.env, TMUX_TMPDIR: tmuxRoot, LECTERN_LOCALE: 'zh-CN', FORCE_COLOR: '0' };
-delete baseEnv.TMUX; delete baseEnv.TMUX_PANE; delete baseEnv.ELECTRON_RUN_AS_NODE; delete baseEnv.LECTERN_DEV_URL;
+const baseEnv = { ...process.env, LECTERN_LOCALE: 'zh-CN', FORCE_COLOR: '0' };
+delete baseEnv.ELECTRON_RUN_AS_NODE; delete baseEnv.LECTERN_DEV_URL;
 delete baseEnv.LECTERN_SHOW_TEST_WINDOWS;
 // A CLAUDE_CODE_AUTO_MODE_SERVER of the developer's own (inherited, e.g., from a Claude Code
 // session) would decide where auto mode checks actions for every real CLI the suite starts;
@@ -141,21 +142,14 @@ delete baseEnv.CLAUDE_CODE_AUTO_MODE_SERVER;
 // Each step gets its own directory below it (<tmuxRoot>/<step number>), so steps that
 // run at the same time (--jobs) never share a tmux server.
 function killPrivateTmux() {
-  if (process.platform === 'win32') return;
-  const env = { ...baseEnv };
-  const sockets = [];
-  const list = dir => { try { return readdirSync(dir); } catch { return []; } };
-  for (const step of list(tmuxRoot)) {
-    for (const dir of list(path.join(tmuxRoot, step))) {
-      if (!dir.startsWith('tmux-')) continue;
-      for (const socket of list(path.join(tmuxRoot, step, dir))) sockets.push(path.join(tmuxRoot, step, dir, socket));
-    }
+  if (process.platform !== 'win32' && existsSync(tmuxRoot)) {
+    for (const step of readdirSync(tmuxRoot)) privateTmux(path.join(tmuxRoot, step), { env: baseEnv }).killAll();
   }
-  for (const socket of sockets) spawnSync('tmux', ['-S', socket, 'kill-server'], { env, stdio: 'ignore', timeout: 10_000 });
   rmSync(tmuxRoot, { recursive: true, force: true });
 }
 
 const running = new Set();
+let cancelled = false;
 function stopChild(child, signal = 'SIGTERM') {
   if (!child?.pid) return;
   try {
@@ -165,8 +159,10 @@ function stopChild(child, signal = 'SIGTERM') {
 }
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
+    if (cancelled) return;
+    cancelled = true;
     for (const child of running) stopChild(child);
-    setTimeout(() => { for (const child of running) stopChild(child, 'SIGKILL'); killPrivateTmux(); process.exit(130); }, 2000);
+    setTimeout(() => { for (const child of running) stopChild(child, 'SIGKILL'); }, 2000).unref();
   });
 }
 
@@ -175,12 +171,11 @@ function runStep(step, attempt) {
   const out = createWriteStream(log);
   const started = Date.now();
   const limit = (step.timeout ?? timeoutMinutes) * 60_000;
-  const tmux = path.join(tmuxRoot, String(step.number));
-  mkdirSync(tmux, { recursive: true });
-  return new Promise(resolve => {
+  const tmux = createPrivateTmux(path.join(tmuxRoot, String(step.number)), { env: { ...baseEnv, ...step.env } });
+  return new Promise((resolve, reject) => {
     out.write(`$ ${step.command.join(' ')}\n`);
     const child = spawn(step.command[0], step.command.slice(1), {
-      cwd: root, env: { ...baseEnv, TMUX_TMPDIR: tmux, ...step.env }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root, env: tmux.env, stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32', shell: process.platform === 'win32',
     });
     running.add(child);
@@ -213,6 +208,7 @@ function runStep(step, attempt) {
       if (process.platform !== 'win32') { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }
       const seconds = (Date.now() - started) / 1000;
       out.end(`\n[test-all] exit ${code} after ${seconds.toFixed(1)} s\n`);
+      try { tmux.killAll(); } catch (error) { reject(error); return; }
       if (partial.startsWith('::error')) annotations.push(partial.trimEnd());
       resolve({ ok: code === 0 && !timedOut, code, seconds, timedOut, tail, log, notes: [...notes], annotations });
     });
@@ -247,7 +243,7 @@ async function runOne(step) {
   let result = await runStep(step, 0);
   const first = result;
   let attempts = 1;
-  while (!result.ok && step.e2e && attempts <= (step.retries ?? 0)) {
+  while (!cancelled && !result.ok && step.e2e && attempts <= (step.retries ?? 0)) {
     console.log(`↻ ${step.name} failed (exit ${result.code}), retry ${attempts}`);
     result = await runStep(step, attempts++);
   }
@@ -271,7 +267,7 @@ const active = new Map();
 let build = selected.some(step => step.name === 'build') ? 'pending' : 'passed';
 try {
   while (pending.length || active.size) {
-    if (build === 'failed') pending.length = 0;
+    if (cancelled || build === 'failed') pending.length = 0;
     const busy = [...active.values()];
     const together = pending.filter(step => jobs === 1 || !runsAlone.has(step.name));
     const ready = step => (!step.e2e || build === 'passed') && !(oneAtATime.has(step.name) && busy.some(other => oneAtATime.has(other.name)));
@@ -285,8 +281,11 @@ try {
     else break;
   }
 } finally {
+  // Other steps can still be closing if one step's cleanup threw.
+  await Promise.allSettled(active.keys());
   killPrivateTmux();
 }
+if (cancelled) process.exit(130);
 summary.sort((a, b) => a.number - b.number);
 const failed = summary.filter(s => !s.ok);
 const flaky = summary.filter(s => s.flaky);

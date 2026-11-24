@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -79,7 +80,8 @@ test('with the setting on a conversation\'s launch records its hooks, the poll r
   const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'dialoghooks-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
-  const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
+  const privateServer = isolateTmux(socket);
+  const tmux = (...args: string[]) => ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' ');
   const options = { claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] };
   const backend = new Backend(options), reopened = new Backend(options);
   const wait = async (test: () => Promise<boolean>, what: string) => {
@@ -137,8 +139,8 @@ test('with the setting on a conversation\'s launch records its hooks, the poll r
     await backend.closeSession(workspace, on.session.id, on.session.paneId!, pane, false);
     await assert.rejects(lstat(dir));
   } finally {
-    await runCommand(workspace, tmux('kill-server')).catch(() => {});
     await Promise.all([backend.dispose(), reopened.dispose()]);
+    privateServer.cleanup();
     if (previous === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = previous;
     await rm(root, { recursive: true, force: true });
   }

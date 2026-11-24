@@ -8,9 +8,9 @@
 // questions (a choice, two checked boxes, the review and submit); each answer must reach its call.
 // With LECTERN_E2E_DIALOG_HOOKS=1 (question-early-hooks-e2e) Settings → Session's recording hooks are
 // on: each card then names its call from the PreToolUse hook at once, its text from the call's input.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -19,6 +19,7 @@ import { _electron } from './fixtures/electron.mjs';
 import { DIALOG_HOOKS, hookStatus, setDialogHooks } from './fixtures/dialog-hooks.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-question-early-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 const drink = { header: '饮品', question: '午餐时喝什么？', multiSelect: false, options: [{ label: '茶', description: '热饮' }, { label: '果汁', description: '冷饮' }] };
 const snacks = { header: '点心', question: '要准备哪些点心？', multiSelect: true, options: [{ label: '点心 A', description: '甜味' }, { label: '点心 B', description: '咸味' }] };
@@ -63,15 +64,15 @@ try {
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: 'question-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'gateway', name: '网关', kind: 'local', cwd }]));
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics'),
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics'),
     // The hooks' folders go under TMPDIR: this run's own.
     ...DIALOG_HOOKS && { TMPDIR: root } };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
   page.setDefaultTimeout(30000);
-  const tmux = (...a) => { try { return execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root }, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); } catch { return ''; } };
+  const tmux = (...a) => { try { return privateServer.tmux(...a); } catch (error) { if (error.status === 1) return ''; throw error; } };
   const paneId = () => tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').find(line => / lectern-/.test(line))?.split(' ')[0];
   const records = async () => {
     const projects = path.join(config, 'projects');
@@ -166,8 +167,8 @@ try {
   if (DIALOG_HOOKS) assert.equal(hooks, 'active');
   console.log(JSON.stringify({ ok: true, claude: ran, deferred, hooks }));
 } finally {
-  await app?.close().catch(() => {});
-  try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}
+  await app?.close();
+  privateServer.kill();
   server.close();
   for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(r => setTimeout(r, 300)); } }
 }

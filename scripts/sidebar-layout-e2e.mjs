@@ -1,4 +1,5 @@
 // Run after npm run build. An optional first argument selects a packaged Electron executable.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -10,13 +11,13 @@ import { waitUntil } from './fixtures/loopback-ssh.mjs';
 
 // Keep the demo's Unix-domain tmux socket within macOS's path limit.
 const root = await realpath(await mkdtemp(path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 'lectern-sidebar-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile');
 const claudeDir = path.join(root, 'config');
 const cwd = path.join(root, 'workspace');
 const reply = '侧栏宽度已保存。重新打开窗口后，可以继续处理这段会话。';
 const resultDirectory = path.resolve('test-results', `sidebar-layout-${Date.now()}`);
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', CLAUDE_CONFIG_DIR: claudeDir, TMUX_TMPDIR: root, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
-delete env.TMUX;
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', CLAUDE_CONFIG_DIR: claudeDir, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 
@@ -575,5 +576,6 @@ try {
   throw error;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

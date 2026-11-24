@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -61,6 +62,7 @@ test('new and resumed chats get the chosen preset\'s cache lifetimes in --settin
   const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
   fixtureClaudeConfig(config);
   const socket = 'cache-ttl-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
+  const privateServer = isolateTmux(socket);
   // A custom executable named claude gets the same per-launch settings as the real CLI.
   const backend = new Backend({ claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] });
   try {
@@ -89,7 +91,8 @@ test('new and resumed chats get the chosen preset\'s cache lifetimes in --settin
     /** Resume once the previous process has exited and its pane is gone. */
     const resume = async (id: string) => {
       for (let i = 0; i < 100; i++) {
-        const panes = (await runCommand(workspace, `tmux -L ${quoteShell(socket)} list-panes -a -F '#{pane_id}' 2>/dev/null || true`)).stdout.toString().trim();
+        const list = ['tmux', ...privateServer.args('list-panes', '-a', '-F', '#{pane_id}')].map(quoteShell).join(' ');
+        const panes = (await runCommand(workspace, `${list} 2>/dev/null || true`)).stdout.toString().trim();
         if (!panes) break;
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -127,7 +130,7 @@ test('new and resumed chats get the chosen preset\'s cache lifetimes in --settin
     assert.deepEqual((await launches(short.id, 1))[0].settings.env, { CLAUDE_CODE_PROMPT_CACHE_TTL: '5m', CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL: '5m' });
   } finally {
     await backend.dispose();
-    await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

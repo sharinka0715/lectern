@@ -1,4 +1,5 @@
 // node --import tsx scripts/native-split-conversations.mjs [packaged-executable]
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -20,12 +21,12 @@ const config = await realpath(await mkdtemp(path.join(tmpdir(),'lectern-split-co
 const workspace = { id:'split-fixture', name:'Split fixture', kind:'local', cwd };
 await writeFile(path.join(profile,'workspaces.json'),JSON.stringify([workspace]));
 const sourceDir = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(),'.claude');
-const env = {...process.env, CLAUDE_CONFIG_DIR:config, LECTERN_LOCALE: 'zh-CN', TMUX_TMPDIR:socket, LECTERN_USER_DATA:profile,LECTERN_LOG_DIR:path.join(out,'diagnostics'),LECTERN_DIAGNOSTIC_CONTENT:'0'};
+const privateServer = createPrivateTmux(socket);
+const env = {...privateServer.env, CLAUDE_CONFIG_DIR:config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA:profile,LECTERN_LOG_DIR:path.join(out,'diagnostics'),LECTERN_DIAGNOSTIC_CONTENT:'0'};
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
-delete env.TMUX;
-delete env.TMUX_PANE;
 process.env.TMUX_TMPDIR=socket;
+process.env.CLAUDE_CONFIG_DIR=config;
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;
 const backend = new Backend({claudeArgs:['--model',model,'--permission-mode','manual']});
@@ -125,7 +126,7 @@ try {
   await page.waitForFunction(draft=>document.querySelector('.desk-pane[data-view="primary"] textarea')?.value===draft,retained);
   assert.ok(!(await leftPane.locator('.conversation').innerText()).includes(tags[0]));
   for(const session of sessions) {
-    const probe=(await exec('tmux',['display-message','-p','-t',session.paneId,'#{pane_dead}|#{@lectern_session_id}'],{env})).stdout.trim();
+    const probe=(await exec('tmux',privateServer.args('display-message','-p','-t',session.paneId,'#{pane_dead}|#{@lectern_session_id}'),{env})).stdout.trim();
     assert.equal(probe,'0|'+session.id);
   }
   report.retainedSecondaryDraft=true;
@@ -141,8 +142,7 @@ try {
 }finally{
   await app?.close();
   await backend.dispose();
-  await exec('tmux',['kill-server'],{env}).catch(()=>{});
-  await rm(socket,{recursive:true,force:true});
+  privateServer.cleanup();
   await rm(config,{recursive:true,force:true});
   await writeFile(path.join(out,'report.json'),JSON.stringify(report,null,2));
   console.log(JSON.stringify({out,...report}));

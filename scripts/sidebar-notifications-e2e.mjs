@@ -6,10 +6,12 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from './fixtures/electron.mjs';
 import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 
 // Isolated demo, real tmux and JSONL. No normal user profile, SSH or model requests.
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-sidebar-receipts-'));
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath };
+const privateServer = createPrivateTmux(await mkdtemp('/tmp/lt-sidebar-'));
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 let app, page;
 try {
@@ -142,4 +144,9 @@ try {
     scroll:Array.from(document.querySelectorAll('.conversation-scroll'), v => [v.scrollHeight,v.scrollTop,v.clientHeight]), errors:document.querySelector('.error-banner')?.textContent })),
     await (await app.browserWindow(page)).evaluate(w => ({ visible:w.isVisible(), focused:w.isFocused() })));
   throw error;
-} finally { await app?.close(); await rm(profile, { recursive:true, force:true }); }
+} finally {
+  await app?.close();
+  privateServer.killAll();
+  await rm(privateServer.dir, { recursive: true, force: true });
+  await rm(profile, { recursive:true, force:true });
+}

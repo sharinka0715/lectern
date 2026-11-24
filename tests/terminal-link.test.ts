@@ -1,3 +1,4 @@
+import { isolateTmux } from './helpers/private-tmux';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
@@ -21,12 +22,16 @@ test('each input is one validated stdin line', () => {
 });
 
 test('the takeover link types at once, keeps every repeated key, pastes, and stops when the pane changes', posix, async t => {
-  try { await exec('tmux', ['-V']); } catch { t.skip('tmux is unavailable'); return; }
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-link-')));
   const socket = 'lectern-link-' + randomUUID().slice(0, 8);
-  const tmux = (...args: string[]) => exec('tmux', ['-L', socket, '-f', '/dev/null', ...args]).then(r => r.stdout.trim());
+  const privateServer = isolateTmux(socket);
+  const tmux = (...args: string[]) => exec('tmux', privateServer.args('-f', '/dev/null', ...args), { env: privateServer.env }).then(r => r.stdout.trim());
   const backend = new Backend({ tmuxSocket: socket });
-  t.after(async () => { await tmux('kill-server').catch(() => {}); await backend.dispose(); await rm(root, { recursive: true, force: true }); });
+  t.after(async () => { await backend.dispose(); privateServer.cleanup(); await rm(root, { recursive: true, force: true }); });
+  try { privateServer.tmux('-V'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    t.skip('tmux is unavailable'); return;
+  }
   // A plain line editor stands in for Claude's input box.
   const pane = await tmux('new-session', '-d', '-P', '-F', '#{pane_id}', '-s', 'lectern-link', '-x', '80', '-y', '12', '-c', root, 'sh', '-c', 'stty -echoctl; exec cat');
   const pid = Number(await tmux('display-message', '-p', '-t', pane, '#{pane_pid}'));

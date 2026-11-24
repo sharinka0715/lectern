@@ -1,3 +1,4 @@
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, realpath, writeFile, rm } from "node:fs/promises";
@@ -8,20 +9,19 @@ import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 const root = await realpath(
   await mkdtemp(path.join(os.tmpdir(), "lectern-desk-")),
 );
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, "profile"),
   config = path.join(root, "claude");
 const output = path.resolve("test-results", "workbench-" + Date.now());
 await mkdir(output, { recursive: true });
 await mkdir(profile);
 const env = {
-  ...process.env, LECTERN_LOCALE: 'zh-CN',
+  ...privateServer.env, LECTERN_LOCALE: 'zh-CN',
   LECTERN_USER_DATA: profile,
-  TMUX_TMPDIR: root,
   CLAUDE_CONFIG_DIR: config,
   LECTERN_DIAGNOSTIC_CONTENT: "0",
   LECTERN_LOG_DIR: path.join(root, "logs"),
 };
-delete env.TMUX;
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 const ids = [randomUUID(), randomUUID(), randomUUID()];
@@ -485,6 +485,7 @@ try {
   process.exitCode = 1;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { force: true, recursive: true });
   await writeFile(
     path.join(output, "report.json"),

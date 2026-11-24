@@ -1,9 +1,9 @@
 // npm run build && node scripts/foreground-shell-e2e.mjs [packaged-executable]
 // Installed Claude Code with an isolated CLAUDE_CONFIG_DIR and tmux, talking to a
 // loopback mock model that asks for one slow foreground Bash command. No real model.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,6 +28,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-fg-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 let app;
 try {
@@ -38,8 +39,8 @@ try {
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'fg', name: '前台命令', kind: 'local', cwd }]));
   // Auto mode's check runs locally (answered by the loopback model), not on the server, which
   // this loopback "gateway" cannot run; the variable reaches Claude Code through the app and tmux.
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0' };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
@@ -57,7 +58,7 @@ try {
     await page.screenshot({ path: path.join(tmpdir(), 'lectern-fg-e2e.png') });
     console.error('STATE', JSON.stringify(await page.evaluate(() => ({ row: document.querySelector('.session-row.active')?.getAttribute('data-status'),
       main: document.querySelector('.main-area')?.innerText.slice(-600) }))));
-    const tmux = (...a) => execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root } }).toString();
+    const tmux = (...a) => privateServer.tmux(...a);
     for (const pane of tmux('list-panes', '-a', '-F', '#{pane_id}').trim().split('\n')) console.error('PANE', pane, '\n' + tmux('capture-pane', '-p', '-t', pane).split('\n').filter(l => l.trim()).slice(-16).join('\n'));
     throw error;
   });
@@ -74,15 +75,15 @@ try {
   assert.equal(await panel.getByRole('button', { name: /^终端/ }).count(), 0, 'a foreground command is not a background task');
   await page.locator('.message-assistant').getByText('命令已完成。').waitFor().catch(async error => {
     console.error('MESSAGES', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.message')].map(m => m.innerText.slice(0, 200)))));
-    const tmux = (...a) => execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root } }).toString();
+    const tmux = (...a) => privateServer.tmux(...a);
     for (const pane of tmux('list-panes', '-a', '-F', '#{pane_id}').trim().split('\n')) console.error('PANE', pane, '\n' + tmux('capture-pane', '-p', '-t', pane).split('\n').filter(l => l.trim()).slice(-12).join('\n'));
     throw error;
   });
   await live.waitFor({ state: 'detached' });
   console.log(JSON.stringify({ ok: true, liveRow: true, description: true, screenLineCount: lines ?? null, panelExcluded: true, localChecks }));
 } finally {
-  await app?.close().catch(() => {});
-  try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}
+  await app?.close();
+  privateServer.kill();
   server.close();
   // Claude may still be writing its config while it exits.
   for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(r => setTimeout(r, 300)); } }

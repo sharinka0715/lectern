@@ -65,7 +65,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
 function matrixPhase(sandbox) {
   let open = true;
   // A timed-out or cancelled scenario may still hold these helpers during cleanup.
-  const whileOpen = (read, fallback) => (...args) => open && existsSync(sandbox.env.TMUX_TMPDIR) ? read(...args) : fallback;
+  const whileOpen = (read, fallback) => (...args) => open && sandbox.hasTmuxDirectory() ? read(...args) : fallback;
   return {
     sandbox: { ...sandbox, tmux: whileOpen(sandbox.tmux, ''), panes: whileOpen(sandbox.panes, []), capture: whileOpen(sandbox.capture, '') },
     stopTmuxAccess: () => { open = false; },
@@ -80,7 +80,7 @@ for (const version of versions) {
   const run = { version, tags: Object.entries(distTags).filter(([tag, value]) => value === version && tag !== 'next').map(([tag]) => tag), features: {}, scenarios: {}, notes: {} };
   for (const scenario of scenarios) for (const feature of scenario.features) run.features[feature] = { status: 'not-covered' };
   const nudges = new Set();
-  let api, watcher, watching = false;
+  let api, watcher, watchError, watching = false;
   const phases = new Map();
   try {
     const binary = await ensureVersion(version, { log });
@@ -92,9 +92,10 @@ for (const version of versions) {
         for (const { sandbox } of phases.values()) observeNativeNudges(sandbox, nudges);
         await new Promise(resolve => setTimeout(resolve, 400));
       }
-    })();
+    })().catch(error => { watchError = error; });
     for (const scenario of scenarios) {
       if (stopped) break;
+      if (watchError) throw watchError;
       const t0 = Date.now();
       if (t0 - started > budgetMs) {
         for (const feature of scenario.features) run.features[feature] = { status: 'fail', error: `not run: the ${budgetMs / 60000} min budget for this release was used up` };
@@ -155,6 +156,9 @@ for (const version of versions) {
       await helpers.closeChat().catch(() => {});
       await launched.page.keyboard.press('Escape').catch(() => {});
     }
+    watching = false;
+    await watcher;
+    if (watchError) throw watchError;
   } catch (error) {
     run.error = String(error?.stack ?? error);
     log(`${version} aborted: ${error?.message ?? error}`);
@@ -184,7 +188,7 @@ for (const version of versions) {
       await api.close();
     }
     run.nudges = [...nudges];
-    const anyFailed = Object.values(run.features).some(item => item.status === 'fail');
+    const anyFailed = Boolean(run.error) || Object.values(run.features).some(item => item.status === 'fail');
     // Stop any remaining app workers before their tmux directories can disappear.
     const appLeftovers = await reap(appTrees);
     const leftovers = [

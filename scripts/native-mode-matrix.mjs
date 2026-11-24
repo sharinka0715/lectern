@@ -1,7 +1,6 @@
 // Real stock TUI and Electron. Mode startup and consent require no model turns.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,11 +18,13 @@ const env = {PATH:process.env.PATH, HOME:root, LANG:'en_US.UTF-8', LECTERN_LOCAL
   TMUX_TMPDIR:path.join(root,'sockets'), ANTHROPIC_BASE_URL:'http://127.0.0.1:9', ANTHROPIC_API_KEY:'lectern-mode-fixture',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',DISABLE_AUTOUPDATER:'1',LECTERN_USER_DATA:profile,LECTERN_LOG_DIR:path.join(logs,'diagnostics'),LECTERN_DIAGNOSTIC_CONTENT:'1'};
 for(const dir of [work,config,profile,env.TMUX_TMPDIR,logs]) await mkdir(dir,{recursive:true,mode:0o700});
-Object.assign(process.env,env);
+const privateServer = createPrivateTmux(env.TMUX_TMPDIR, { env });
+Object.assign(process.env,privateServer.env);
+delete process.env.TMUX; delete process.env.TMUX_PANE;
 await writeFile(path.join(config,'.claude.json'),JSON.stringify({hasCompletedOnboarding:true,lastOnboardingVersion:'2.1.326',theme:'dark',projects:{[work]:{hasTrustDialogAccepted:true}},customApiKeyResponses:{approved:['lectern-mode-fixture'],rejected:[]}}));
 await writeFile(path.join(config,'settings.json'),JSON.stringify({model}));
 await writeFile(path.join(profile,'workspaces.json'),JSON.stringify([ws]));
-const exec=promisify(execFile), tmux=async(...args)=>(await exec('tmux',args,{env})).stdout.trimEnd();
+const tmux = (...args) => privateServer.tmux(...args).trimEnd();
 const sessions=[],report={success:false,modes:[]};let app;
 try {
   for(const [mode,expected] of Object.entries(modeMap)){
@@ -66,7 +67,7 @@ try {
 } catch(e) {report.error=String(e.stack||e);process.exitCode=1;}
 finally {
   await app?.close();
-  await tmux('kill-server').catch(()=>{}); // private TMUX_TMPDIR
+  privateServer.kill();
   await rm(root,{recursive:true,force:true});
   await writeFile(path.join(logs,'report.json'),JSON.stringify(report,null,2));
   console.log(JSON.stringify({logs,...report}));

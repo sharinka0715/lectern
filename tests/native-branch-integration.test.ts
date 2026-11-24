@@ -1,8 +1,8 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,9 +25,9 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     await writeFile(join(config,'skills',name,'SKILL.md'),`---\nname: ${name}\ndescription: ${description}\n---\n\nSay hello.\n`);
   }
   const socket = 'lectern-branch-' + randomUUID().slice(0,8);
-  const env = {...fixture, TMUX_TMPDIR: process.env.TMUX_TMPDIR};
   fixtureClaudeConfig(config);
-  const tmux = (...args: string[]) => execFileSync('tmux',['-L',socket,'-f','/dev/null',...args],{env,encoding:'utf8'}).trim();
+  const privateServer = isolateTmux(socket, fixture);
+  const tmux = (...args: string[]) => privateServer.tmux('-f', '/dev/null', ...args).trim();
   const backend = new Backend({tmuxSocket:socket});
   const frame = (pane: string) => tmux('capture-pane','-p','-J','-t',pane);
   const wait = async (condition:()=>boolean | Promise<boolean>, label:string) => {
@@ -106,7 +106,8 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     await assert.rejects(backend.forkSession(ws,originalId,pane,pid),/已变化/);
     assert.equal(submissions,1);
   } finally {
-    await backend.dispose(); try{tmux('kill-server');}catch{}
+    await backend.dispose();
+    privateServer.cleanup();
     // Claude Code may still be flushing its config directory while tmux takes it down.
     await rm(root,{recursive:true,force:true,maxRetries:10,retryDelay:200});
   }

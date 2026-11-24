@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -72,7 +73,8 @@ test('per-launch callback captures native stdin in the target pane, survives res
   const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'statusline-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
-  const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
+  const privateServer = isolateTmux(socket);
+  const tmux = (...args: string[]) => ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' ');
   const options = { claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] };
   const backend = new Backend(options), reopened = new Backend(options);
   try {
@@ -122,8 +124,8 @@ test('per-launch callback captures native stdin in the target pane, survives res
     assert.equal(invalidated.statusLineManaged, true);
     assert.equal(invalidated.statusLine, undefined);
   } finally {
-    await runCommand(workspace, tmux('kill-server')).catch(() => {});
     await Promise.all([backend.dispose(), reopened.dispose()]);
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

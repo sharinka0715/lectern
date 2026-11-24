@@ -1,17 +1,19 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { Backend, quoteShell, runCommand } from '../src/backend';
+import { Backend, runCommand } from '../src/backend';
 import type { Workspace } from '../src/shared/types';
 import { readFixtureSetting } from './support/read-fixture-setting';
 
 test('a late native repaint can acknowledge the first paste without another paste or Enter', { skip: process.platform === 'win32' }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-late-prompt-')));
   const socket = 'late-prompt-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const ws: Workspace = { id: 'late-prompt', kind: 'local', name: 'Delayed prompt', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath,
@@ -40,7 +42,7 @@ test('a late native repaint can acknowledge the first paste without another past
     }
   } finally {
     await backend.dispose();
-    await runCommand(ws, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

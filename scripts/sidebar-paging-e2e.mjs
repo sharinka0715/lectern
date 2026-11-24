@@ -1,6 +1,7 @@
 // Run after npm run build. An optional first argument selects a packaged Electron executable.
 // Each folder lists its five newest conversations, "展开更多" adds ten at a time, and a
 // folder added without history scanning lists nothing until "扫描所有对话".
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -9,9 +10,10 @@ import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-sidebar-paging-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), claudeDir = path.join(root, 'config');
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', CLAUDE_CONFIG_DIR: claudeDir, TMUX_TMPDIR: root, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
-delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', CLAUDE_CONFIG_DIR: claudeDir, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
+delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 
 async function history(cwd, titles) {
   const project = path.join(claudeDir, 'projects', cwd.replace(/[^a-z0-9-]/gi, '-'));
@@ -103,5 +105,6 @@ try {
   process.exitCode = 1;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

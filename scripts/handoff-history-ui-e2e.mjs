@@ -1,4 +1,5 @@
 // Isolated, native-format source -> middle -> tip. No SSH or Claude process.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -7,6 +8,7 @@ import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-handoff-ui-')));
+const privateServer = createPrivateTmux(root);
 const cwd = path.join(root, 'work'), profile = path.join(root, 'profile'), config = path.join(root, 'config');
 const project = path.join(config, 'projects', cwd.replace(/[^a-z0-9-]/gi, '-'));
 const [old, middle, tip, tool] = Array.from({length:4}, () => randomUUID());
@@ -44,8 +46,8 @@ try {
       {type:'image', title:'旧段图片', source:{type:'base64',media_type:'image/png',data:png}}]) + link(middle,tip);
   const c = cut2(tip) + msg(tip,'user','当前聊天提问') + msg(tip,'assistant','当前聊天回复');
   await Promise.all([[old,a],[middle,b],[tip,c]].map(([id,data])=>writeFile(path.join(project,id+'.jsonl'),data)));
-  const env = {...process.env,LECTERN_LOCALE:'zh-CN',LECTERN_USER_DATA:profile,CLAUDE_CONFIG_DIR:config,TMUX_TMPDIR:root,LECTERN_LOG_DIR:path.join(root,'logs')};
-  delete env.TMUX; delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
+  const env = {...privateServer.env,LECTERN_LOCALE:'zh-CN',LECTERN_USER_DATA:profile,CLAUDE_CONFIG_DIR:config,LECTERN_LOG_DIR:path.join(root,'logs')};
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   app = await _electron.launch({args:exe ? [] : ['.'], ...(exe && {executablePath:path.resolve(exe)}),env});
   const page = await app.firstWindow(); page.setDefaultTimeout(12000);
@@ -111,4 +113,4 @@ try {
   await page.getByText('当前聊天回复',{exact:true}).waitFor();
   assert.equal(await page.getByText('选中的段',{exact:true}).count(),0);
   console.log('通过：只读查看两段原始交接记录，恢复独有的提问、工具和图片，向上分页后切源并返回当前聊天。');
-} finally { await app?.close(); await rm(root,{recursive:true,force:true}); }
+} finally { await app?.close(); privateServer.killAll(); await rm(root,{recursive:true,force:true}); }

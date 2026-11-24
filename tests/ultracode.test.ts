@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -6,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Backend, quoteShell, runCommand } from '../src/backend';
+import { Backend, runCommand } from '../src/backend';
 import { ultracodeReceipt } from '../src/backend/native-settings';
 import { animatedLabelGuard, animatedLabelText } from '../src/backend/composer-frame-guard';
 import { execFileSync } from 'node:child_process';
@@ -59,6 +60,7 @@ test('Lectern-launched sessions turn on dynamic workflows unless the user opted 
   const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'workflows-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
@@ -86,7 +88,7 @@ test('Lectern-launched sessions turn on dynamic workflows unless the user opted 
     assert.equal('enableWorkflows' in await launched(), false, 'opting out leaves the user setting in charge');
   } finally {
     await backend.dispose();
-    await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

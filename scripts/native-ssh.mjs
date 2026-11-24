@@ -15,6 +15,7 @@ assert.ok(host, 'Set LECTERN_SSH_HOST to an SSH alias for the test machine');
 assert.match(host, /^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/);
 const q = value => `'${value.replace(/'/g, `'"'"'`)}'`;
 const remote = async command => (await exec('ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', host, `sh -c ${q(command)}`], { timeout: 30000, maxBuffer: 24 * 1024 * 1024 })).stdout;
+const remoteTmux = 'tmux -S "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"';
 const root = path.resolve('test-results', `native-ssh-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const cwd = (await remote('mktemp -d /tmp/lectern-ssh-XXXXXX')).trim();
@@ -33,11 +34,11 @@ async function checkpoint(phase) {
   console.log(JSON.stringify({ phase, root, requests: report.requests }));
 }
 async function paneIdentity(paneId) {
-  return (await remote(`tmux display-message -p -t ${q(paneId)} '#{pane_id}|#{session_name}|#{@lectern_session_id}'`).catch(() => '')).trim().split('|');
+  return (await remote(`${remoteTmux} display-message -p -t ${q(paneId)} '#{pane_id}|#{session_name}|#{@lectern_session_id}'`).catch(() => '')).trim().split('|');
 }
 async function stopOwned(session) {
   const [pane, name, sid] = await paneIdentity(session.paneId);
-  if (pane === session.paneId && sid === session.sessionId && name.startsWith(`lectern-${sid.slice(0, 8)}-`)) await remote(`tmux kill-pane -t ${q(pane)}`);
+  if (pane === session.paneId && sid === session.sessionId && name.startsWith(`lectern-${sid.slice(0, 8)}-`)) await remote(`${remoteTmux} kill-pane -t ${q(pane)}`);
 }
 async function newSession() {
   // 新建对话 only opens a draft whose first message would start Claude Code with the default
@@ -105,7 +106,7 @@ async function dialogue(sid, index, model) {
   await checkpoint(`dialogue-${index + 1}-canonical`);
 }
 try {
-  report.initialPanes = (await remote(`tmux list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'`)).trim().split('\n');
+  report.initialPanes = (await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'`)).trim().split('\n');
   app = await _electron.launch({ args: ['.'], env, timeout: 60000 });
   page = await app.firstWindow(); page.setDefaultTimeout(45000);
   const errors = []; page.on('pageerror', error => errors.push(String(error)));
@@ -268,7 +269,7 @@ try {
   }
   for (const session of owned) await stopOwned(session).catch(() => {});
   await app?.close();
-  report.finalPanes = (await remote(`tmux list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'`).catch(() => '')).trim().split('\n');
+  report.finalPanes = (await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'`).catch(() => '')).trim().split('\n');
   if (JSON.stringify(report.initialPanes) !== JSON.stringify(report.finalPanes)) {
     report.paneInventoryChanged = true; report.success = false; process.exitCode = 1;
   }

@@ -21,19 +21,13 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { _electron } from './fixtures/electron.mjs';
 import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
+import { createPrivateTmux, privateTmux } from './fixtures/private-tmux.mjs';
 
-// tmux only ever runs against the private server directory test-all (or the caller) set up.
-if (!process.env.TMUX_TMPDIR) {
-  console.error('TMUX_TMPDIR must point at a private tmux directory; run through npm run test:all -- --only build,quit-dialog-e2e');
-  process.exit(2);
-}
 const results = path.resolve('test-results');
 await mkdir(results, { recursive: true });
 const exe = process.argv[2];
 const sshHost = '192.0.2.1';
-const tmuxEnv = { ...process.env };
-delete tmuxEnv.TMUX; delete tmuxEnv.TMUX_PANE;
-const tmux = (socket, ...args) => promisify(execFile)('tmux', ['-L', socket, ...args], { env: tmuxEnv });
+const tmux = (server, ...args) => promisify(execFile)('tmux', server.args(...args), { env: server.env });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const cleanups = [];
 
@@ -53,24 +47,33 @@ const tmuxSessions = async socket => (await tmux(socket, 'list-sessions', '-F', 
 
 async function launch(name, { locale = 'zh-CN', userData, ssh = false, prompt = true } = {}) {
   const logs = await mkdtemp(path.join(tmpdir(), `lectern-quit-${name}-logs-`));
+  const socketDir = await mkdtemp('/tmp/lt-quit-');
+  const privateServer = createPrivateTmux(socketDir);
   const ownProfile = !userData;
   userData ??= await mkdtemp(path.join(tmpdir(), `lectern-quit-${name}-profile-`));
-  const env = { ...process.env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: userData, LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: logs,
+  const env = { ...privateServer.env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: userData, LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: logs,
     LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_DEMO_KEEP_TMUX: '1', ...(prompt && { LECTERN_QUIT_PROMPT: '1' }), ...(ssh && { LECTERN_DEMO_SSH_HOST: sshHost }) };
   if (ssh) {
     // Exercise the unreachable-host path without dialing the documentation address.
     await writeFile(path.join(logs, 'ssh'), '#!/bin/sh\nprintf "ssh: connection refused\\n" >&2\nexit 255\n', { mode: 0o700 });
     env.PATH = [logs, env.PATH].join(path.delimiter);
   }
-  for (const key of ['ELECTRON_RUN_AS_NODE', 'LECTERN_DEV_URL', 'TMUX', 'TMUX_PANE', ...(prompt ? [] : ['LECTERN_QUIT_PROMPT'])]) delete env[key];
-  const app = await _electron.launch({ args: exe ? ['--demo'] : ['.', '--demo'], ...(exe && { executablePath: path.resolve(exe) }), env, timeout: 60_000 });
-  const child = app.process(), socket = `lectern-demo-${child.pid}`;
+  for (const key of ['ELECTRON_RUN_AS_NODE', 'LECTERN_DEV_URL', ...(prompt ? [] : ['LECTERN_QUIT_PROMPT'])]) delete env[key];
+  const app = await _electron.launch({ args: exe ? ['--demo'] : ['.', '--demo'], ...(exe && { executablePath: path.resolve(exe) }), env, timeout: 60_000 }).catch(async error => {
+    privateServer.killAll();
+    await rm(socketDir, { recursive: true, force: true });
+    await rm(logs, { recursive: true, force: true });
+    if (ownProfile) await rm(userData, { recursive: true, force: true });
+    throw error;
+  });
+  const child = app.process(), socket = privateTmux(socketDir, { name: `lectern-demo-${child.pid}` });
   let gone = false;
   const exited = new Promise(resolve => child.once('exit', (code, signal) => { gone = true; resolve({ code, signal }); }));
   const run = { name, app, socket, logs, userData, exited, alive: () => !gone, errors: [] };
   cleanups.push(async () => {
     if (!gone) { child.kill('SIGKILL'); await exited; }
-    await tmux(socket, 'kill-server').catch(() => {});
+    privateServer.killAll();
+    await rm(socketDir, { recursive: true, force: true });
     if (run.demoDir) await rm(run.demoDir, { recursive: true, force: true });
     await rm(logs, { recursive: true, force: true });
     if (ownProfile) await rm(userData, { recursive: true, force: true });

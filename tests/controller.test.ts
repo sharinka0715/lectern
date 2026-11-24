@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,13 +12,18 @@ import { WorkspaceStore } from '../src/main/store';
 import type { Backend, ReadResult } from '../src/backend';
 import type { SessionSettingKind, SessionSettingSnapshot, SessionSnapshot } from '../src/shared/types';
 import { REPLY } from './helpers/claude-screen';
-
-const hasTmux = process.platform !== 'win32' && spawnSync('tmux', ['-V']).status === 0;
+import { isolateTmux } from './helpers/private-tmux';
 
 test('Controller integrates real tmux capture, delayed JSONL, reopen and explicit interrupt', {
-  skip: !hasTmux && 'Requires POSIX tmux; Windows runs no local commands.',
+  skip: process.platform === 'win32' && 'Requires POSIX tmux; Windows runs no local commands.',
   timeout: 40_000,
-}, async () => {
+}, async t => {
+  const privateServer = isolateTmux(`lectern-demo-${process.pid}`);
+  t.after(() => privateServer.cleanup());
+  try { privateServer.tmux('-V'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    t.skip('tmux is unavailable'); return;
+  }
   const previousBinary = process.env.LECTERN_NODE_BINARY;
   process.env.LECTERN_NODE_BINARY = process.execPath;
   const demo = await setupDemo(process.cwd());

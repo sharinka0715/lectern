@@ -33,12 +33,13 @@ const env={...process.env,LECTERN_LOCALE:'zh-CN',LECTERN_USER_DATA:path.join(roo
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const exec=promisify(execFile),q=value=>`'${value.replace(/'/g,`'"'"'`)}'`;
 const remote=async cmd=>(await exec('ssh',['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=10',source.host,`sh -c ${q(cmd)}`],{timeout:30000,maxBuffer:4*1024*1024})).stdout;
+const remoteTmux = 'tmux -S "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"';
 const workspace={id:'native-metadata',name:'SSH · 状态初始化测试',kind:'ssh',host:source.host,cwd:source.cwd};
 const other={id:'metadata-history',name:'工具历史（不启动）',kind:'ssh',host:source.host,cwd:history.cwd};
 const otherSid=history.sessionId;
 let app,page;
 try {
-  report.originalPanes=await remote("tmux list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'");
+  report.originalPanes=await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'`);
   app=await _electron.launch({args:['.'],env}); page=await app.firstWindow();page.setDefaultTimeout(60000);
   await page.waitForFunction(()=>!!window.desktop);
   await page.evaluate(async ({workspace,other})=>{await window.desktop.saveWorkspace(workspace);await window.desktop.saveWorkspace(other);},{workspace,other});
@@ -107,7 +108,7 @@ try {
 }catch(error){report.error=error.stack||String(error);process.exitCode=1;await page?.screenshot({path:path.join(root,'failure.png')}).catch(()=>{});}
 finally{
   await app?.close();
-  report.finalPanes=await remote("tmux list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'");
+  report.finalPanes=await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'`);
   const names=(await readdir(path.join(root,'diagnostics'))).filter(n=>/^events\.\d+\.jsonl$/.test(n));
   const events=(await Promise.all(names.map(n=>readFile(path.join(root,'diagnostics',n),'utf8')))).flatMap(t=>t.trim().split('\n').filter(Boolean).map(JSON.parse));
   report.nativeMenuReads=events.filter(e=>e.event==='settings.get.start'&&e.context?.sessionId===source.sessionId).map(e=>e.context.kind??e.data.kind);

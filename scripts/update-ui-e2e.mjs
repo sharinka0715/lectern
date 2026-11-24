@@ -4,6 +4,7 @@
 // verification into a private Downloads folder, a checksum mismatch, "跳过此版本",
 // the settings page (automatic checks off, up to date) and the skipped version
 // staying quiet at the next start. Nothing reaches the network.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -14,6 +15,7 @@ import { _electron } from './fixtures/electron.mjs';
 
 const manifest = JSON.parse(await readFile('package.json', 'utf8'));
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-update-e2e-'));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), downloads = path.join(root, 'Downloads');
 const results = path.resolve('test-results');
 await mkdir(results, { recursive: true });
@@ -65,8 +67,8 @@ const latestRequests = () => requests.filter(url => url.endsWith('/releases/late
 
 const exe = process.argv[2];
 async function launch(extra) {
-  const env = { ...process.env, LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', TMUX_TMPDIR: root, ...extra };
-  delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL; delete env.TMUX;
+  const env = { ...privateServer.env, LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', ...extra };
+  delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
   const app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
   page.setDefaultTimeout(20000);
@@ -190,7 +192,8 @@ try {
   assert.deepEqual(session.errors, []);
   console.log(JSON.stringify({ success: true, platform: `${process.platform}-${process.arch}`, asset: assetName('99.0.0'), requests: requests.length }));
 } finally {
-  await session?.app.close().catch(() => {});
+  await session?.app.close();
   server.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

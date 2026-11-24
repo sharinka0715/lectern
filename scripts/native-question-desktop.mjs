@@ -1,18 +1,15 @@
 // 真实 Electron → preload → Controller → tmux → Claude Code，只有模型响应来自本机测试服务。
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { promisify } from 'node:util';
 import { _electron, resizeWindow } from './fixtures/electron.mjs';
 import { createQuestionProbe } from './native-question-probe.mjs';
 
 const fixture = await createQuestionProbe();
 const { root, env, cwd, config } = fixture;
-const run = promisify(execFile);
-const tmux = (...args) => run('tmux', ['-f', '/dev/null', ...args], {env, cwd});
+const { tmux } = fixture;
 const session = randomUUID();
 const workspace = {id:'question-fixture', name:'问答验证', kind:'local', cwd};
 const basic = {header:'饮品', question:'午餐时喝什么？', multiSelect:false, options:[
@@ -143,6 +140,5 @@ try {
   throw error;
 } finally {
   await app?.close();
-  if (paneId) await tmux('kill-server').catch(()=>{});
   await fixture.close();
 }

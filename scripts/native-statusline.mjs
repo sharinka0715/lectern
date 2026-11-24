@@ -1,4 +1,5 @@
 // Run the real GUI and CLI on a private tmux server with disposable settings.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +28,8 @@ const env = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1', DISABLE_AUTOUPDATER:'1',
   LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: logs, LECTERN_DIAGNOSTIC_CONTENT: '1',
 };
-const tmux = (...args) => exec('tmux', args, { env }).then(result => result.stdout.trimEnd());
+const privateServer = createPrivateTmux(socketDir, { env });
+const tmux = (...args) => exec('tmux', privateServer.args(...args), { env }).then(result => result.stdout.trimEnd());
 async function ordinaryVisible(pane) {
   return (await tmux('capture-pane','-p','-t',pane)).includes(original);
 }
@@ -305,7 +307,7 @@ try {
   report.error=String(e?.stack??e); process.exitCode=1;
 } finally {
   await app?.close();
-  await tmux('kill-server').catch(()=>{}); // TMUX_TMPDIR belongs exclusively to this test.
+  privateServer.kill();
   await new Promise(resolve=>localApi.close(resolve));
   await rm(root,{recursive:true,force:true});
   await writeFile(path.join(reportDir,'report.json'),JSON.stringify(report,null,2)+'\n');

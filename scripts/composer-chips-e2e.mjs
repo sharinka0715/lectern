@@ -6,6 +6,7 @@
 // and what is copied out or sent is the @-path. A file picked from the @ list becomes a
 // chip the same way (its card opens the preview); typed mentions stay text until the
 // draft is shown again. Demo mode: no real model.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -15,16 +16,17 @@ import path from "node:path";
 import { _electron } from "./fixtures/electron.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tcc-")));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve("test-results", "composer-chips");
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 // Workspace image thumbnails need Pillow on Linux; without it the card keeps its placeholder.
 const fileThumbnails = process.platform === "darwin" || spawnSync("python3", ["-I", "-c", "import PIL"], { stdio: "ignore" }).status === 0;
 // Files written into the folder during the run show in the @ list soon.
-const env = { ...process.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, TMUX_TMPDIR: root, LECTERN_FILE_INDEX_TTL_MS: "300",
+const env = { ...privateServer.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, LECTERN_FILE_INDEX_TTL_MS: "300",
   LECTERN_USER_DATA: path.join(root, "profile"), CLAUDE_CONFIG_DIR: path.join(root, "claude"),
   LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: path.join(output, "diagnostics"), LECTERN_DIAGNOSTIC_CONTENT: "0" };
-delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const uploads = path.join(root, `lectern-attachments-${process.getuid()}`);
 const primary = process.platform === "darwin" ? "Meta" : "Control";
 let app, page;
@@ -458,6 +460,7 @@ try {
   await page?.screenshot({ path: path.join(output, "failure.png") }).catch(() => {});
   throw error;
 } finally {
-  await app?.close().catch(() => {});
+  await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

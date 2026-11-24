@@ -223,7 +223,9 @@ function setPresence(status, waitingFor) {
   if (!presence) {
     const procStart = process.platform === 'linux' ? readFileSync('/proc/self/stat', 'utf8').replace(/^.*\) /s, '').split(' ')[19]
       : execFileSync('ps', ['-p', String(process.pid), '-o', 'lstart='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).toString().trim();
-    const tmux = execFileSync('tmux', ['display-message', '-p', '-t', process.env.TMUX_PANE, '#{session_name}:#{window_id}.#{pane_id}']).toString().trim();
+    const socket = process.env.TMUX?.replace(/,\d+,\d+$/, '');
+    if (!socket || !path.isAbsolute(socket) || !existsSync(path.dirname(socket))) throw new Error('Mock Claude requires its tmux pane socket');
+    const tmux = execFileSync('tmux', ['-S', socket, 'display-message', '-p', '-t', process.env.TMUX_PANE, '#{session_name}:#{window_id}.#{pane_id}']).toString().trim();
     presence = { pid: process.pid, sessionId: id, cwd, procStart, startedAt: Date.now(), kind: 'interactive', entrypoint: 'cli', tmux };
     mkdirSync(path.dirname(presenceFile), { recursive: true });
     process.on('exit', () => rmSync(presenceFile, { force: true }));

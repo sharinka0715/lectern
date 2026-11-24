@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, writeFile, appendFile, chmod, mkdir, rm, symlink, rename, realpath, readFile, readdir, stat } from 'node:fs/promises';
@@ -169,11 +170,13 @@ process.stdin.on('data', data => { if(data.includes(3)) process.exit(0); });
 setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR,'move-cwd'),'utf8'); } catch(error) { if(error.code!=='ENOENT') throw error; } if(to) process.chdir(to); }, 30);
 `);
   const socket = `lectern-discovery-${randomUUID().slice(0, 8)}`;
+  const privateServer = isolateTmux(socket);
   const target: Workspace = { ...workspace, id: randomUUID(), cwd: alias };
   fixtureClaudeConfig(claudeDir);
   const options = { tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] };
   const backend = new Backend(options);
-  const tmux = async (...args: string[]) => (await runCommand(target, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '))).stdout.toString().trim();
+  let staleLocator: Backend | undefined, reloaded: Backend | undefined, otherClient: Backend | undefined;
+  const tmux = async (...args: string[]) => (await runCommand(target, ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' '))).stdout.toString().trim();
   // Waits for the fixture's own state as tmux reports it (not discovery, which is under
   // test) instead of a fixed sleep: a loaded 3-core macOS runner can take longer.
   // `undefined` is a closed pane; pane IDs are never reused, so that is final.
@@ -230,7 +233,7 @@ setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUD
     assert.equal((backend as any).sessions.size, 0, 'an invalidated in-flight scan cannot repopulate the cache');
     await backend.discover(target);
 
-    const staleLocator = new Backend(options);
+    staleLocator = new Backend(options);
     const delayedLocate = delayNextRead(staleLocator, script => script.includes('pwd -P'));
     const obsoleteLocation = assert.rejects(staleLocator.discover(target), /Workspace changed/);
     await delayedLocate.captured;
@@ -239,6 +242,7 @@ setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUD
     await obsoleteLocation;
     assert.equal((staleLocator as any).locations.size, 0, 'an invalidated directory lookup cannot repopulate location state');
     await staleLocator.dispose();
+    staleLocator = undefined;
     await tmux('set-option', '-p', '-t', pending.paneId!, 'remain-on-exit', 'on');
     await backend.sendKey(target, pending.id, 'C-c');
     await waitPane(pending.paneId!, pane => !!pane?.dead, 'Ctrl-C ends the fixture; remain-on-exit keeps its pane');
@@ -250,9 +254,10 @@ setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUD
     const combined = await backend.discover(target);
     assert.equal(combined.sessions.filter(s => s.id === historyId).length, 1, 'JSONL and active pane become one session');
     assert.equal(combined.sessions.find(s => s.id === historyId)?.paneId, live.paneId);
-    const reloaded = new Backend(options);
+    reloaded = new Backend(options);
     assert.equal((await reloaded.discover(target)).sessions.find(s => s.id === historyId)?.paneId, live.paneId, 'mapping survives a client restart');
     await reloaded.dispose();
+    reloaded = undefined;
 
     // Written whole (rename): writeFile creates the file empty before writing it, and the
     // fixture polling in between once read '', threw in chdir('') and exited, closing its
@@ -269,13 +274,14 @@ setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUD
     // Simulate another client resuming/rebinding the same UUID after this pane exits.
     await backend.sendKey(target, historyId, 'C-c');
     await waitPane(live.paneId!, pane => !pane, 'Ctrl-C ends the fixture and closes its pane');
-    const otherClient = new Backend(options);
+    otherClient = new Backend(options);
     const rebound = await otherClient.resumeSession(target, historyId);
     await waitReady(historyId);
     assert.notEqual(rebound.paneId, live.paneId);
     assert.equal((await backend.readSession(target, historyId)).session.paneId, rebound.paneId, 'reads follow current explicit UUID binding, not stale cached pane IDs');
     await backend.sendKey(target, historyId, 'Tab');
     await otherClient.dispose();
+    otherClient = undefined;
 
     const duplicate = await backend.createSession(target);
     await waitReady(duplicate.id);
@@ -299,8 +305,8 @@ setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUD
     assert.equal(removed.sessions.some(s => s.id === historyId), false);
     await assert.rejects(() => backend.readSession(target, historyId), /does not belong/, 'refresh evicts deleted cached sessions');
   } finally {
-    await backend.dispose();
-    await runCommand(target, `tmux -L ${quoteShell(socket)} kill-server 2>/dev/null || true`);
+    await Promise.all([backend.dispose(), staleLocator?.dispose(), reloaded?.dispose(), otherClient?.dispose()]);
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -336,6 +342,7 @@ process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('Read
       if (scenario.inherited === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = scenario.inherited;
       const socket = `lectern-env-${randomUUID().slice(0, 8)}`;
+      const privateServer = isolateTmux(socket);
       const target: Workspace = { ...workspace, id: randomUUID(), cwd };
       const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock, root] });
       try {
@@ -353,7 +360,7 @@ process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('Read
         if (scenario.expected) assert.equal(found?.path, join(scenario.expected, 'projects', projectSlug(cwd), `${session.id}.jsonl`), 'history follows the same selected/inherited configuration');
       } finally {
         await backend.dispose();
-        await runCommand(target, `tmux -L ${quoteShell(socket)} kill-server 2>/dev/null || true`);
+        privateServer.cleanup();
       }
     }
   } finally {
@@ -403,10 +410,12 @@ let text='',paste=false;
 process.stdin.on('data', chunk=>{const s=chunk.toString(); for(let i=0;i<s.length;i++){if(s.startsWith('\\x1b[200~',i)){paste=true;i+=5;continue;}if(s.startsWith('\\x1b[201~',i)){paste=false;i+=5;continue;}const c=s[i];if(c==='\\x03')process.exit();if(c==='\\r'&&!paste){fs.appendFileSync(file,JSON.stringify({type:'user',uuid:'u-'+Date.now(),sessionId:id,cwd:process.cwd(),timestamp:new Date().toISOString(),message:{role:'user',content:text}})+'\\n');process.stdout.write('\\r\\nreceived: '+text+'\\r\\n');text='';}else text+=c;}});
 `);
   const socket = `lectern-test-${randomUUID().slice(0, 8)}`;
+  const privateServer = isolateTmux(socket);
   const target: Workspace = { ...workspace, id: randomUUID(), cwd };
   fixtureClaudeConfig(claudeDir);
   const options = { tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] };
   const backend = new Backend(options);
+  let restarted: Backend | undefined;
   try {
     const session = await backend.createSession(target);
     assert.match(session.paneId!, /^%\d+$/);
@@ -436,13 +445,14 @@ process.stdin.on('data', chunk=>{const s=chunk.toString(); for(let i=0;i<s.lengt
     assert.equal(JSON.parse(read.jsonl.toString()).message.content, text);
     assert.equal((await backend.readSession(target, session.id)).jsonl.length, 0);
     assert.match(read.screen, /received:/);
-    const restarted = new Backend(options);
+    restarted = new Backend(options);
     const discovery = await restarted.discover(target);
     assert.equal(discovery.sessions[0].id, session.id);
     assert.equal(discovery.sessions[0].mapping, 'exact');
     assert.equal(discovery.sessions[0].paneId, session.paneId);
     assert.equal((await restarted.resumeSession(target, session.id)).paneId, session.paneId);
     await restarted.dispose();
+    restarted = undefined;
     const transcript = discovery.sessions[0].path!;
     const hugeRecord = JSON.stringify({ type: 'assistant', uuid: 'large', cwd: discovery.workspace.cwd, message: { role: 'assistant', content: [{ type: 'text', text: '中文🙂'.repeat(90_000) }] } }) + '\n';
     await appendFile(transcript, hugeRecord);
@@ -468,7 +478,8 @@ process.stdin.on('data', chunk=>{const s=chunk.toString(); for(let i=0;i<s.lengt
     assert.equal(safeDiscovery.sessions.length, 1);
     assert.match(safeDiscovery.diagnostic!, /无法.*确认工作目录/);
     // A separately existing shell is deliberately marked to simulate a Claude process exiting.
-    const shell = await runCommand(target, `tmux -L ${quoteShell(socket)} split-window -d -P -F '#{pane_id}' -t ${quoteShell(session.paneId!)} /bin/sh`);
+    const split = ['tmux', ...privateServer.args('split-window', '-d', '-P', '-F', '#{pane_id}', '-t', session.paneId!, '/bin/sh')];
+    const shell = await runCommand(target, split.map(quoteShell).join(' '));
     const shellId = shell.stdout.toString().trim();
     await assert.rejects(() => backend.bindSession(target, session.id, shellId), /live Claude pane/);
     await backend.sendKey(target, session.id, 'C-c');
@@ -478,8 +489,8 @@ process.stdin.on('data', chunk=>{const s=chunk.toString(); for(let i=0;i<s.lengt
     assert.equal((await backend.discover(target)).sessions[0].id, session.id);
     assert.equal(projectSlug(cwd).includes('/'), false);
   } finally {
-    await backend.dispose();
-    await runCommand(target, `tmux -L ${quoteShell(socket)} kill-server 2>/dev/null || true`);
+    await Promise.all([backend.dispose(), restarted?.dispose()]);
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

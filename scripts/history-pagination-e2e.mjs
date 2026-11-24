@@ -1,4 +1,5 @@
 // Normal Electron + isolated, native-format JSONL. No account or Claude process required.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, writeFile, appendFile, realpath, rename, rm } from "node:fs/promises";
@@ -7,6 +8,7 @@ import path from "node:path";
 import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "lectern-history-pages-")));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, "profile");
 const config = path.join(root, "claude");
 const cwd = path.join(root, "work");
@@ -14,9 +16,8 @@ const project = path.join(config, "projects", cwd.replace(/[^a-z0-9-]/gi, "-"));
 const output = path.resolve("test-results", "history-pagination-" + Date.now());
 const logs = path.join(output, "diagnostics");
 const workspace = { id: "project", name: "历史分页", cwd, kind: "local" };
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config,
-  TMUX_TMPDIR: root, LECTERN_LOG_DIR: logs, LECTERN_DIAGNOSTIC_CONTENT: "0" };
-delete env.TMUX;
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config,
+  LECTERN_LOG_DIR: logs, LECTERN_DIAGNOSTIC_CONTENT: "0" };
 delete env.LECTERN_DEV_URL;
 delete env.ELECTRON_RUN_AS_NODE;
 await Promise.all([profile, cwd, project, output].map(dir => mkdir(dir, { recursive: true })));
@@ -341,6 +342,7 @@ try {
   process.exitCode = 1;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
   await writeFile(path.join(output, "report.json"), JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, output }));

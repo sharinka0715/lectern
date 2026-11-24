@@ -6,9 +6,9 @@
 // work; cancelling keeps it running. Then the finished subagent is resumed with
 // SendMessage: it runs again (activity card, "回复完成") until it notifies
 // again. No real model.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -82,9 +82,10 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const root = await realpath(await mkdtemp(path.join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'lectern-bg-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 const output = path.resolve('test-results', 'background-work-' + Date.now());
-const tmux = (...a) => { try { return execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root }, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); } catch { return ''; } };
+const tmux = (...a) => { try { return privateServer.tmux(...a); } catch (error) { if (error.status === 1) return ''; throw error; } };
 const paneId = () => tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').find(line => / lectern-/.test(line))?.split(' ')[0];
 const report = {};
 let app, page;
@@ -96,8 +97,8 @@ try {
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'bg', name: '后台任务', kind: 'local', cwd }]));
   // Auto mode's check runs locally (answered by the loopback model), not on the server, which
   // this loopback "gateway" cannot run; the variable reaches Claude Code through the app and tmux.
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(output, 'diagnostics') };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(output, 'diagnostics') };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   page = await app.firstWindow();
@@ -250,8 +251,8 @@ try {
   releaseAgent();
   releaseResumed();
   await writeFile(path.join(cwd, '.release-background-shell'), '').catch(() => {});
-  await app?.close().catch(() => {});
-  try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}
+  await app?.close();
+  privateServer.kill();
   server.close();
   for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(r => setTimeout(r, 300)); } }
 }

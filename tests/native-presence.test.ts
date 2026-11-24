@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, mkdir, realpath, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -77,10 +78,11 @@ test('project directory encoding uses the whole original UTF-16 path for the nat
 test('isolated tmux uses structured presence, reuses only stable frames and revokes the old UUID after clear', { skip: process.platform === 'win32', timeout: 30_000 }, async t => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'lectern-presence-')));
   const config = join(dir, 'config'), socket = 'presence-' + randomUUID().slice(0, 8), mock = join(dir, 'fixture.mjs');
+  const privateServer = isolateTmux(socket);
   const child = join(dir, 'child');
   const workspace: Workspace = { id: 'presence-fixture', name: 'fixture', kind: 'local', cwd: dir };
   fixtureClaudeConfig(config);
-  const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
+  const tmux = (...args: string[]) => ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' ');
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
@@ -234,7 +236,7 @@ process.stdout.write('❯\\r\\n? for shortcuts\\r\\n');`);
     transport.run = run;
   } finally {
     await backend.dispose();
-    await runCommand(workspace, tmux('kill-server') + ' 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(dir, { recursive: true, force: true });
   }
 });

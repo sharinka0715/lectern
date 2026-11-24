@@ -11,6 +11,7 @@
 //   render   progress notes (narration thinking) show as text, other thinking folds like Claude
 //            Code's "Thought for Ns", sed -i edits show as diffs, and the activity panel lists
 //            background shells but not foreground ones
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -19,6 +20,7 @@ import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-saved-history-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 const project = path.join(config, 'projects', cwd.replace(/[^a-z0-9-]/gi, '-'));
 /** Runs one part; a failure names it. */
@@ -95,8 +97,8 @@ try {
   await writeFile(path.join(project, `${archived}.jsonl`), archiveHistory(archived, '归档这条'));
   const archivedBefore = await readFile(path.join(project, `${archived}.jsonl`), 'utf8');
   await writeFile(path.join(project, `${render.sid}.jsonl`), renderHistory());
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config, LECTERN_DIAGNOSTIC_CONTENT: '0' };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
@@ -200,4 +202,4 @@ try {
       'only the background shell is a task in the panel');
     console.log('PASS render: ' + JSON.stringify({ progressNotes: true, foldedThought: true, sedDiff: true, panel: ['bg1'] }));
   });
-} finally { await app?.close(); await rm(root, { recursive: true, force: true }); }
+} finally { await app?.close(); privateServer.killAll(); await rm(root, { recursive: true, force: true }); }

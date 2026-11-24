@@ -12,6 +12,7 @@
 // leave it at that, "both 5 minutes" must take effect against it; then they drop it, so the
 // default is the API key's 5 minutes and "both 1 hour" must take effect against that.
 // Screenshots of the Session page in Chinese and English go to test-results/cache-ttl/.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -23,6 +24,7 @@ import { descendants } from './cc-matrix/sandbox.mjs';
 import { LOCAL_AUTO_MODE_CHECK } from './fixtures/auto-mode-check.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-cache-ttl-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 const shots = path.resolve('test-results', 'cache-ttl');
 const key = 'sk-ant-cache-ttl-e2e-0000';
@@ -33,8 +35,6 @@ api.script('ttl', ({ step }) => step === 0
   : { text: 'Cache check finished.' });
 api.script('ttl-child', () => ({ text: 'Child finished.' }));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const tmuxEnv = { ...process.env, TMUX_TMPDIR: root };
-delete tmuxEnv.TMUX; delete tmuxEnv.TMUX_PANE;
 let app, page;
 try {
   await Promise.all([profile, config, cwd, shots].map(dir => mkdir(dir, { recursive: true })));
@@ -45,15 +45,15 @@ try {
   await userSettings(true);
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'cache', name: '缓存', kind: 'local', cwd }]));
   // The Agent call is one auto mode checks: locally here (the fake API is a gateway).
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics') };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX; delete env.TMUX_PANE;
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics') };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   // The developer's own cache variables would decide the lifetimes for every chat.
   for (const name of ['FORCE_PROMPT_CACHING_5M', 'ENABLE_PROMPT_CACHING_1H', 'CLAUDE_CODE_PROMPT_CACHE_TTL', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', 'DISABLE_PROMPT_CACHING']) delete env[name];
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   page = await app.firstWindow();
   page.setDefaultTimeout(30000);
-  const tmuxOut = args => execFileSync('tmux', args, { env: tmuxEnv, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+  const tmuxOut = args => privateServer.tmux(...args);
   /** Lectern's panes: [pane id, pid of the Claude process it runs]. */
   const lecternPanes = () => {
     try { return tmuxOut(['list-panes', '-a', '-F', '#{pane_id} #{pane_pid} #{session_name}']).split('\n').filter(line => / lectern-/.test(line)).map(line => line.split(' ')); } catch { return []; }
@@ -200,8 +200,8 @@ try {
   if (page) await Promise.race([page.screenshot({ path: path.join(shots, 'failure.png') }).catch(() => {}), delay(5000)]);
   throw error;
 } finally {
-  await app?.close().catch(() => {});
-  try { execFileSync('tmux', ['kill-server'], { env: tmuxEnv, stdio: 'ignore' }); } catch {}
+  await app?.close();
+  privateServer.kill();
   await api.close();
   for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await delay(300); } }
 }

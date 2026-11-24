@@ -21,6 +21,7 @@ assert.ok(host, 'Set LECTERN_SSH_HOST to an SSH alias for the test machine');
 assert.match(host, /^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/);
 const q = value => `'${value.replace(/'/g, `'"'"'`)}'`;
 const remote = async command => (await exec('ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', host, `sh -c ${q(command)}`], { timeout: 30000, maxBuffer: 24 * 1024 * 1024 })).stdout;
+const remoteTmux = 'tmux -S "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"';
 const root = path.resolve('test-results', `native-ssh-tools-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const cwd = source?.cwd || (await remote('mktemp -d /tmp/lectern-tools-XXXXXX')).trim();
@@ -40,10 +41,10 @@ async function checkpoint(phase) {
   await writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ phase, root, requests: report.requests }));
 }
-async function inventory() { return (await remote("tmux list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'")).trim().split('\n'); }
+async function inventory() { return (await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'`)).trim().split('\n'); }
 async function stopOwned(session) {
-  const [pane, name, bound] = (await remote(`tmux display-message -p -t ${q(session.paneId)} '#{pane_id}|#{session_name}|#{@lectern_session_id}'`).catch(() => '')).trim().split('|');
-  if (pane === session.paneId && bound === session.sessionId && name.startsWith(`lectern-${bound.slice(0, 8)}-`)) await remote(`tmux kill-pane -t ${q(pane)}`);
+  const [pane, name, bound] = (await remote(`${remoteTmux} display-message -p -t ${q(session.paneId)} '#{pane_id}|#{session_name}|#{@lectern_session_id}'`).catch(() => '')).trim().split('|');
+  if (pane === session.paneId && bound === session.sessionId && name.startsWith(`lectern-${bound.slice(0, 8)}-`)) await remote(`${remoteTmux} kill-pane -t ${q(pane)}`);
 }
 async function ready() {
   await page.waitForFunction(sid => window.__snapshot?.sessionId === sid && window.__snapshot.status === 'idle' && window.__snapshot.navigationStatus === 'idle' && !window.__snapshot.settingBusy && !window.__snapshot.trustBusy, sid, { timeout: 60000 });

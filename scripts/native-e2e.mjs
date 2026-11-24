@@ -1,8 +1,9 @@
 // Explicit opt-in integration test: launches the installed, logged-in Claude TUI
 // and sends one small everyday conversation. Never part of `npm test`.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { _electron } from './fixtures/electron.mjs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -14,13 +15,14 @@ const root = path.resolve('test-results', `native-${new Date().toISOString().rep
 const workspace = path.join(root, 'workspace');
 await mkdir(workspace, { recursive: true });
 await writeFile(path.join(workspace, 'README.md'), 'Temporary workspace for one Lectern native TUI diagnostic check. No tools or file changes are required.\n');
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
+const privateServer = createPrivateTmux(await mkdtemp('/tmp/lt-native-'));
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
 const scenario = selectNativeScenario('native');
 const report = { workspace, logs: env.LECTERN_LOG_DIR, success: false, version: (await exec('claude', ['--version'])).stdout.trim(), messagesSent: 0,
   scenario: { id: scenario.id, title: scenario.title }, prompt: scenario.prompt };
 const errors = [];
-let app, page, sessionId, paneId;
+let app, page, sessionId;
 try {
   app = await _electron.launch({ args: ['.'], env, timeout: 60000 });
   page = await app.firstWindow();
@@ -45,7 +47,6 @@ try {
   await startConversation(page, 'native-diagnostics');
   await page.waitForFunction(() => !!window.__nativeSnapshot?.paneId);
   sessionId = await page.evaluate(() => window.__nativeSnapshot.sessionId);
-  paneId = await page.evaluate(() => window.__nativeSnapshot.paneId);
   report.sessionId = sessionId;
   let trustConfirmed = false, securityNotesAccepted = false, themeAccepted = false, ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -131,16 +132,8 @@ try {
       await window.desktop.sendKey('native-diagnostics', id, 'C-c').catch(() => {});
     }, sessionId).catch(() => {});
   }
-  if (paneId && sessionId) {
-    const identity = await exec('tmux', ['display-message', '-p', '-t', paneId, '#{session_name}|#{@lectern_session_id}']).catch(() => undefined);
-    if (identity) {
-      const [name, bound] = identity.stdout.trim().split('|');
-      if (bound === sessionId && name.startsWith(`lectern-${sessionId.slice(0, 8)}-`)) {
-        await exec('tmux', ['kill-session', '-t', name]).catch(() => {});
-      }
-    }
-  }
   await app?.close();
+  privateServer.cleanup();
   await writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(`Native diagnostic artifacts: ${root}`);
 }

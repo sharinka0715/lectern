@@ -1,9 +1,9 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -345,9 +345,9 @@ test('installed CLI: rewind past one-step /model and /effort switches; a failed 
   local('model', 'haiku', 'Set model to Haiku and saved as your default for new sessions');
   await writeFile(file, lines.join('\n') + '\n');
   const socket = 'lectern-rewind-' + randomUUID().slice(0, 8);
-  const env = { ...fixtureEnv, TMUX_TMPDIR: process.env.TMUX_TMPDIR };
-  fixtureClaudeConfig(env.CLAUDE_CONFIG_DIR!);
-  const tmux = (...args: string[]) => execFileSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { env, encoding: 'utf8' }).trim();
+  fixtureClaudeConfig(fixtureEnv.CLAUDE_CONFIG_DIR!);
+  const privateServer = isolateTmux(socket, fixtureEnv);
+  const tmux = (...args: string[]) => privateServer.tmux('-f', '/dev/null', ...args).trim();
   const backend = new Backend({ tmuxSocket: socket });
   const wait = async (condition: () => boolean | Promise<boolean>, label: string) => {
     const until = Date.now() + 15000;
@@ -388,7 +388,8 @@ test('installed CLI: rewind past one-step /model and /effort switches; a failed 
     const cut = frame();
     assert.ok(cut.includes('First answer') && cut.includes('/effort low') && !cut.includes('Second answer') && !cut.includes('/model haiku'), cut);
   } finally {
-    await backend.dispose(); try { tmux('kill-server'); } catch {}
+    await backend.dispose();
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });

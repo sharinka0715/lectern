@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createPrivateTmux } from '../fixtures/private-tmux.mjs';
 
 // The tmux session prefix the app gives its own panes (src/backend/index.ts). The only
 // place the harness spells it, so a rename touches one line.
@@ -50,7 +51,6 @@ export async function createSandbox({ version, binary, api, label = version }) {
     TMPDIR: process.env.TMPDIR || '/tmp',
     // Make Claude's task output location explicit when the caller isolates TMPDIR.
     CLAUDE_CODE_TMPDIR: process.env.TMPDIR || '/tmp',
-    TMUX_TMPDIR: dirs.tmux,
     CLAUDE_CONFIG_DIR: dirs.config,
     ANTHROPIC_BASE_URL: api.url, ANTHROPIC_API_KEY: API_KEY,
     HTTP_PROXY: api.url, HTTPS_PROXY: api.url, http_proxy: api.url, https_proxy: api.url, NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost',
@@ -62,7 +62,7 @@ export async function createSandbox({ version, binary, api, label = version }) {
     if (process.env[name]) env[name] = process.env[name];
 
   await seedConfig(dirs, version);
-  const tmuxBin = path.join(dirs.bin, 'tmux');
+  const privateServer = createPrivateTmux(dirs.tmux, { env, executable: path.join(dirs.bin, 'tmux') });
   // The harness's tmux client gets the whole sandbox environment (TMUX_TMPDIR included, TMUX
   // unset): whoever starts the private server hands its environment to every pane made in it
   // later, the app's too (the app's new-session passes none of its own). subagent-elsewhere starts
@@ -70,11 +70,11 @@ export async function createSandbox({ version, binary, api, label = version }) {
   // opened while that server lived ran Claude Code without the API key, base URL and proxy
   // ("Not logged in", no request reached the fake API).
   const tmux = (...args) => {
-    try { return execFileSync(tmuxBin, args, { env, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
-    catch { return ''; }
+    try { return privateServer.tmux(...args); }
+    catch (error) { if (error.status === 1) return ''; throw error; }
   };
   return {
-    version, root, ...dirs, env, tmux,
+    version, root, ...dirs, env: privateServer.env, tmux, hasTmuxDirectory: privateServer.exists,
     /** The app's own panes (session names start with SESSION_PREFIX). */
     panes: () => tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').filter(line => line.split(' ')[1]?.startsWith(SESSION_PREFIX)).map(line => line.split(' ')[0]),
     capture: pane => pane ? tmux('capture-pane', '-p', '-t', pane) : '',
@@ -84,13 +84,11 @@ export async function createSandbox({ version, binary, api, label = version }) {
     /** Close the private tmux server and make sure every process it ran is gone.
      * Returns the processes that outlived it (a bug in what was tested). */
     async close({ keep = false } = {}) {
-      // tmux 3.2a falls back to the user's server when TMUX_TMPDIR is missing.
-      const socket = path.join(dirs.tmux, `tmux-${process.getuid()}`, 'default');
-      const privateTmux = (...args) => existsSync(dirs.tmux) ? tmux('-S', socket, ...args) : '';
-      const server = Number(privateTmux('display-message', '-p', '#{pid}').trim());
-      const tracked = server > 1 ? descendants(server) : [];
-      privateTmux('kill-server');
-      const leftovers = await reap(tracked);
+      // Read the PID through the private socket before tracking any processes.
+      const server = privateServer.exists() ? Number(tmux('display-message', '-p', '#{pid}').trim()) : 0;
+      const tracked = Number.isSafeInteger(server) && server > 1 ? descendants(server) : [];
+      privateServer.kill();
+      const leftovers = tracked.length ? await reap(tracked) : [];
       if (!keep) for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(resolve => setTimeout(resolve, 300)); } }
       return leftovers;
     },

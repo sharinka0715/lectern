@@ -7,6 +7,7 @@
 // the index expired shows up in the open list. Prints the measured latencies.
 // FILE_INDEX_MEASURE_ONLY=1 only types and times (also on builds without the index).
 // Local folders only, no Claude, no network.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +19,7 @@ import { _electron, resizeWindow } from './fixtures/electron.mjs';
 const measureOnly = process.env.FILE_INDEX_MEASURE_ONLY === '1';
 const ttlMs = 8000, bigFiles = 120_000;
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-file-index-')));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve('test-results', 'file-index-e2e-' + Date.now());
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), logs = path.join(output, 'diagnostics');
 const repo = path.join(root, 'repo'), side = path.join(root, 'side');
@@ -107,9 +109,9 @@ async function timeList(label, text, expect, { gap = 0, timeout = measureOnly ? 
 }
 
 try {
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, CLAUDE_CONFIG_DIR: config,
+  const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config,
     LECTERN_LOG_DIR: logs, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_FILE_INDEX_TTL_MS: String(ttlMs) };
-  delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+  delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   page = await app.firstWindow();
@@ -196,6 +198,7 @@ try {
   await page?.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {});
   throw error;
 } finally {
-  await app?.close().catch(() => {});
+  await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

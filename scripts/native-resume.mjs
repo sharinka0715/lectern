@@ -1,7 +1,8 @@
 // Reopen a successful test-created real Claude conversation. No new model input.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { _electron } from './fixtures/electron.mjs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -16,7 +17,8 @@ assert.equal(source.workspace, path.join(path.dirname(sourcePath), 'workspace'))
 assert.match(source.sessionId, /^[a-f0-9-]{36}$/);
 const root = path.join(results, `native-resume-${Date.now()}`);
 await mkdir(root, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
+const privateServer = createPrivateTmux(await mkdtemp('/tmp/lt-native-'));
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 const exec = promisify(execFile);
@@ -73,14 +75,8 @@ try {
   process.exitCode = 1;
   console.error(String(error));
 } finally {
-  if (paneId) {
-    const identity = await exec('tmux', ['display-message', '-p', '-t', paneId, '#{session_name}|#{@lectern_session_id}']).catch(() => undefined);
-    if (identity) {
-      const [name, id] = identity.stdout.trim().split('|');
-      if (id === source.sessionId && name.startsWith(`lectern-${id.slice(0, 8)}-`)) await exec('tmux', ['kill-session', '-t', name]).catch(() => {});
-    }
-  }
   await app?.close();
+  privateServer.cleanup();
   await writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(`Native resume artifacts: ${root}`);
 }

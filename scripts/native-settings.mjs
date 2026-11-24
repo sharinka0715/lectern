@@ -1,8 +1,9 @@
 // Explicit opt-in: operates the installed Claude Code TUI and sends one everyday dialogue.
 // All choices come from the actual slash menus. Never reads auth/config credentials.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { _electron } from './fixtures/electron.mjs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
@@ -13,7 +14,8 @@ const root = path.resolve('test-results', `native-settings-${Date.now()}`);
 const cwd = path.join(root, 'workspace');
 await mkdir(cwd, { recursive: true });
 await writeFile(path.join(cwd, 'README.md'), 'Empty workspace for native TUI model and effort selection verification.\n');
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
+const privateServer = createPrivateTmux(await mkdtemp('/tmp/lt-native-'));
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const scenario = selectNativeScenario('settings');
 const report = { success: false, cwd, logs: env.LECTERN_LOG_DIR, version: (await exec('claude', ['--version'])).stdout.trim(), requests: 0,
@@ -133,12 +135,8 @@ try {
     await restore('effort', originalEffort).catch(error => { report.effortRestoreError = String(error); });
   }
 } finally {
-  if (sid && paneId) {
-    const identity = await exec('tmux', ['display-message', '-p', '-t', paneId, '#{session_name}|#{@lectern_session_id}']).catch(() => undefined);
-    const [name, bound] = identity?.stdout.trim().split('|') || [];
-    if (bound === sid && name.startsWith(`lectern-${sid.slice(0, 8)}-`)) await exec('tmux', ['kill-session', '-t', name]).catch(() => {});
-  }
   await app?.close();
+  privateServer.cleanup();
   await writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ report: path.join(root, 'report.json'), success: report.success, requests: report.requests, error: report.error }, null, 2));
 }

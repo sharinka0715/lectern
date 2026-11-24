@@ -1,5 +1,6 @@
 // Explicit opt-in native GUI test. Home trust is observed and rejected only.
 // Only this script's newly created empty temporary workspace is trusted.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { _electron } from './fixtures/electron.mjs';
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
@@ -14,22 +15,20 @@ const root = path.resolve('test-results', `native-trust-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const cwd = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-native-trust-')));
 await writeFile(path.join(cwd, 'README.md'), 'Empty, test-owned workspace for directory trust and everyday conversation checks.\n');
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
+const privateServer = createPrivateTmux(await mkdtemp('/tmp/lt-native-'));
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const report = { success: false, cwd, root, version: (await exec('claude', ['--version'])).stdout.trim(), home: {}, temporary: {}, turns: [], requests: 0 };
 const dialogueTurns = Number(process.env.LECTERN_TRUST_DIALOGUE_TURNS ?? 3);
 assert.ok(Number.isInteger(dialogueTurns) && dialogueTurns >= 0 && dialogueTurns <= 3, 'LECTERN_TRUST_DIALOGUE_TURNS must be 0–3');
 report.requestedDialogueTurns = dialogueTurns;
-const owned = [];
 let app, page;
 async function newSession(workspaceId) {
   // 新建对话 only opens a draft whose first message starts Claude Code (a real request);
   // start the pane without a message and open it from the sidebar, as the old button did.
   const started = await startConversation(page, workspaceId);
   await page.waitForFunction(({ id, sid }) => window.__snapshot?.workspaceId === id && window.__snapshot.sessionId === sid && !!window.__snapshot.paneId, { id: workspaceId, sid: started.id });
-  const snapshot = await page.evaluate(() => window.__snapshot);
-  owned.push({ workspaceId, sessionId: snapshot.sessionId, paneId: snapshot.paneId });
-  return snapshot;
+  return page.evaluate(() => window.__snapshot);
 }
 async function trustCard(workspaceId) {
   await page.waitForFunction(id => window.__snapshot?.workspaceId === id && window.__snapshot.directoryTrust && window.__snapshot.status === 'waiting', workspaceId);
@@ -46,7 +45,7 @@ async function trustCard(workspaceId) {
   return card;
 }
 async function paneAlive(paneId) {
-  const result = await exec('tmux', ['display-message', '-p', '-t', paneId, '#{pane_id}']).catch(() => undefined);
+  const result = await exec('tmux', privateServer.args('display-message', '-p', '-t', paneId, '#{pane_id}'), { env: privateServer.env }).catch(() => undefined);
   return result?.stdout.trim() === paneId; // tmux may exit 0 with empty output for a missing target.
 }
 async function waitExited(paneId) {
@@ -147,21 +146,8 @@ try {
     report.incidentId = await page.evaluate(note => window.desktop.markDiagnosticIncident(note), report.error.slice(0, 1800)).catch(() => undefined);
   }
 } finally {
-  // A UI race may create a pane before its selection snapshot arrives. The
-  // uniquely created empty workspace still identifies these as test-owned.
-  if (page) {
-    const leftovers = await page.evaluate(() => window.desktop.discover('trust-scratch')).catch(() => undefined);
-    for (const pane of leftovers?.panes || []) if (pane.cwd === cwd && pane.managed && pane.sessionId
-      && !owned.some(session => session.sessionId === pane.sessionId)) {
-      owned.push({ workspaceId: 'trust-scratch', sessionId: pane.sessionId, paneId: pane.id });
-    }
-  }
-  for (const session of owned) {
-    const identity = await exec('tmux', ['display-message', '-p', '-t', session.paneId, '#{session_name}|#{@lectern_session_id}']).catch(() => undefined);
-    const [name, bound] = identity?.stdout.trim().split('|') || [];
-    if (bound === session.sessionId && name.startsWith(`lectern-${bound.slice(0, 8)}-`)) await exec('tmux', ['kill-session', '-t', name]).catch(() => {});
-  }
   await app?.close();
+  privateServer.cleanup();
   await writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ report: path.join(root, 'report.json'), success: report.success, requests: report.requests, error: report.error }, null, 2));
 }

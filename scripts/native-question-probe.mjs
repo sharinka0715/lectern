@@ -2,6 +2,7 @@
 // Stock Claude Code and tmux. No model service, saved user account, or existing project.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -36,7 +37,7 @@ export async function createQuestionProbe() {
   const root = await realpath(await mkdtemp('/tmp/t-q-'));
   const home = path.join(root, 'home'), config = path.join(root, 'config'), cwd = path.join(root, 'work');
   const env = { PATH:process.env.PATH, HOME:home, SHELL:'/bin/sh', LANG:'en_US.UTF-8', TERM:'xterm-256color',
-    TMUX_TMPDIR:root, CLAUDE_CONFIG_DIR:config, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1', DISABLE_AUTOUPDATER:'1',
+    CLAUDE_CONFIG_DIR:config, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1', DISABLE_AUTOUPDATER:'1',
     ANTHROPIC_API_KEY:'question-fixture', NO_PROXY:'127.0.0.1,localhost', HTTP_PROXY:'http://127.0.0.1:1', HTTPS_PROXY:'http://127.0.0.1:1' };
   let nextBlock, nextPreamble, seq = 0;
   const server = createServer(async (req,res) => {
@@ -51,7 +52,9 @@ export async function createQuestionProbe() {
       stream(res,body.model,block,++seq,preamble);
     } catch { res.writeHead(400).end(); }
   });
+  let privateServer;
   async function close() {
+    privateServer?.kill();
     server.closeAllConnections(); await new Promise(resolve=>server.close(resolve));
     await rm(root,{recursive:true,force:true});
   }
@@ -59,9 +62,11 @@ export async function createQuestionProbe() {
     for (const d of [home,config,cwd]) await mkdir(d,{mode:0o700});
     await new Promise((resolve,reject)=>server.once('error',reject).listen(0,'127.0.0.1',resolve));
     env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${server.address().port}`;
+    privateServer = createPrivateTmux(root, { env });
     assert.match((await run('claude',['--version'],{env,cwd})).stdout.trim(),/^2\.1\.326\b/);
     await writeFile(path.join(config,'.claude.json'),JSON.stringify({hasCompletedOnboarding:true,lastOnboardingVersion:version,theme:'dark',projects:{[cwd]:{hasTrustDialogAccepted:true}},customApiKeyResponses:{approved:[env.ANTHROPIC_API_KEY]}}));
-    return {root,home,config,cwd,env,close,queueQuestion(questions,id='toolu_question_'+randomUUID(),preamble) {
+    const tmux = (...args) => run('tmux', privateServer.args('-f', '/dev/null', ...args), { env: privateServer.env, cwd });
+    return {root,home,config,cwd,env:privateServer.env,close,tmux,queueQuestion(questions,id='toolu_question_'+randomUUID(),preamble) {
       assert.ok(!nextBlock,'another fixture question is already queued');
       nextPreamble = preamble;
       nextBlock = {type:'tool_use',id,name:'AskUserQuestion',input:{questions}};
@@ -81,8 +86,8 @@ const preview = { header:'会场 布置', question:'接待区的设计方案，�
 ]};
 async function probe(write) {
   const fixture = await createQuestionProbe();
-  const {env,cwd,root,config} = fixture;
-  const tmux = async (...args) => (await run('tmux',['-S',path.join(root,'tmux.sock'),'-f','/dev/null',...args],{env,cwd})).stdout;
+  const {cwd,config} = fixture;
+  const tmux = async (...args) => (await fixture.tmux(...args)).stdout;
   const recorded = {}; let pane, current;
   const screen = () => tmux('capture-pane','-p','-J','-t',pane);
   async function wait(predicate,label) {
@@ -172,6 +177,6 @@ async function probe(write) {
       await key('Down','Enter'); await capture('review'); await key('Enter');
     },answers(extra,'薄荷 糖'));
     if(write) await writeFile(new URL('../tests/fixtures/native-contracts/question-2.1.326.json',import.meta.url),JSON.stringify({version,scenarios:recorded},null,2)+'\n');
-  } finally { await tmux('kill-server').catch(()=>{}); await fixture.close(); }
+  } finally { await fixture.close(); }
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url) await probe(process.argv.includes('--write-fixtures'));

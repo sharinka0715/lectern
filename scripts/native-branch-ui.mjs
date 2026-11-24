@@ -1,8 +1,8 @@
 // npm run build && node --import tsx scripts/native-branch-ui.mjs
 // Isolated synthetic history, native CLI and Electron. No model requests.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { _electron, resizeWindow } from './fixtures/electron.mjs';
 import { nativeBranchFixture } from '../tests/helpers/native-branch-fixture.ts';
@@ -11,7 +11,8 @@ const {root, cwd, ws, env: fixture, originalId, ids} = await nativeBranchFixture
 const profile = path.join(root,'profile'), logs = path.join(root,'logs');
 await mkdir(profile); await writeFile(path.join(profile,'workspaces.json'),JSON.stringify([ws]));
 const env = {...fixture, LECTERN_LOCALE:'zh-CN', LECTERN_USER_DATA:profile,LECTERN_LOG_DIR:logs,LECTERN_DIAGNOSTIC_CONTENT:'0',LANG:'en_US.UTF-8'};
-const tmux = (...args) => execFileSync('tmux',['-f','/dev/null',...args],{env,encoding:'utf8'}).trim();
+const privateServer = createPrivateTmux(root, { env });
+const tmux = (...args) => privateServer.tmux('-f', '/dev/null', ...args).trim();
 let app, page, stage='launch';
 const row=id=>page.locator(`.session-row[data-session-id="${id}"]`);
 const pane=view=>page.locator(`.desk-pane[data-view="${view}"]`);
@@ -27,7 +28,7 @@ async function nextBranch() {
 }
 try {
   tmux('new-session','-d','-s','fixture-owner','-c',cwd,'sleep','160'); tmux('set-option','-g','focus-events','on');
-  app=await _electron.launch({env,args:['.']}); page=await app.firstWindow(); page.setDefaultTimeout(30000);
+  app=await _electron.launch({env:privateServer.env,args:['.']}); page=await app.firstWindow(); page.setDefaultTimeout(30000);
   await resizeWindow(app, page, 1440, 900);
   await page.waitForFunction(()=>!!window.desktop);
   await page.evaluate(()=>{window.__observed={}; window.desktop.onSnapshot(s=>window.__observed[s.sessionId]=s);});
@@ -65,4 +66,4 @@ try {
   const dump=await page?.evaluate(()=>({text:document.body.innerText,snapshots:window.__observed})).catch(()=>undefined);
   await writeFile(path.join(output,'failure.json'),JSON.stringify(dump ?? {}));
   console.error(output); throw e;
-} finally {await app?.close();try{tmux('kill-server');}catch{} await rm(root,{recursive:true,force:true});}
+} finally {await app?.close();privateServer.cleanup();}

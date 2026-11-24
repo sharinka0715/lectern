@@ -7,7 +7,8 @@ import { tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { Backend, commandInvocation, projectSlug, runCommand } from '../src/backend';
+import { Backend, commandInvocation, projectSlug, quoteShell, runCommand } from '../src/backend';
+import { createPrivateTmux } from '../scripts/fixtures/private-tmux.mjs';
 import { Transport, type CommandOptions } from '../src/backend/transport';
 import type { Workspace } from '../src/shared/types';
 import { uploadAttachment } from '../src/backend/attachment-upload';
@@ -73,21 +74,22 @@ test('SSH failure while writing stdin preserves the original error and runs only
 
 test('loopback SSH: actual OpenSSH transports tmux input, capture, and authoritative JSONL', { timeout: 30_000, skip: process.platform === 'win32' ? 'Requires POSIX sshd/tmux host' : false }, async t => {
   const sshd = '/usr/sbin/sshd';
-  try { await access(sshd); await exec('tmux', ['-V']); await exec('ssh-keygen', ['-V']); } catch (error) {
+  try { await access(sshd); await exec('ssh-keygen', ['-V']); } catch (error) {
     // ssh-keygen -V requires a value and intentionally exits nonzero; presence is checked below.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') { t.skip('sshd, ssh-keygen, or tmux is unavailable'); return; }
   }
   const directory = await realpath(await mkdtemp(join(process.platform === 'darwin' ? '/tmp' : tmpdir(), 'lectern-loopback-')));
   const socket = `lectern-ssh-${randomUUID().slice(0, 8)}`;
+  const privateServer = createPrivateTmux(directory, { name: socket });
   let daemon: ReturnType<typeof spawn> | undefined;
   let backend: Backend | undefined;
   let daemonLog = '';
   let userMasterConfig: string | undefined;
-  const previousTmux = process.env.TMUX_TMPDIR;
-  process.env.TMUX_TMPDIR = directory;
-  t.after(() => { if (previousTmux === undefined) delete process.env.TMUX_TMPDIR; else process.env.TMUX_TMPDIR = previousTmux; });
-  const local: Workspace = { id: 'cleanup', name: 'Cleanup', kind: 'local', cwd: directory };
   try {
+    try { privateServer.tmux('-V'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      t.skip('tmux is unavailable'); return;
+    }
     await exec('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', join(directory, 'host-key')]);
     await exec('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', join(directory, 'client-key')]);
     const port = await new Promise<number>((resolve, reject) => {
@@ -100,7 +102,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     const serverConfig = join(directory, 'sshd_config');
     await writeFile(serverConfig, [
       `Port ${port}`, 'ListenAddress 127.0.0.1', `HostKey ${join(directory, 'host-key')}`, `PidFile ${join(directory, 'sshd.pid')}`,
-      `AuthorizedKeysFile ${join(directory, 'authorized_keys')}`, `SetEnv HOME=${join(directory, 'workspace')} CLAUDE_CONFIG_DIR=${config} TMUX_TMPDIR=${directory}`, 'StrictModes no', 'UsePAM no', 'PasswordAuthentication no',
+      `AuthorizedKeysFile ${join(directory, 'authorized_keys')}`, `SetEnv HOME=${join(directory, 'workspace')} CLAUDE_CONFIG_DIR=${config} TMUX_TMPDIR=${privateServer.dir}`, 'StrictModes no', 'UsePAM no', 'PasswordAuthentication no',
       'KbdInteractiveAuthentication no', 'PubkeyAuthentication yes', 'PermitRootLogin no', `AllowUsers ${userInfo().username}`, 'LogLevel ERROR',
     ].join('\n') + '\n', { mode: 0o600 });
     const clientConfig = join(directory, 'ssh_config');
@@ -181,7 +183,8 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     assert.ok(ready, 'mock TUI is ready over SSH: ' + JSON.stringify(lastState));
     // A takeover link over the same multiplexed SSH: frames come back and keys go through.
     {
-      const pid = Number((await runCommand(workspace, `tmux -L ${socket} display-message -p -t ${session.paneId} '#{pane_pid}'`, { sshConfigPath: clientConfig })).stdout.toString().trim());
+      const probe = ['tmux', ...privateServer.args('display-message', '-p', '-t', session.paneId!, '#{pane_pid}')].map(quoteShell).join(' ');
+      const pid = Number((await runCommand(workspace, probe, { sshConfigPath: clientConfig })).stdout.toString().trim());
       const frames: string[] = [];
       const link = await backend.openTerminalLink(workspace, session.paneId!, pid, { onFrame: frame => frames.push(frame.ansi), onClosed: () => {} });
       link.send({ type: 'literal', text: 'link probe' });
@@ -288,7 +291,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
   } finally {
     await backend?.dispose();
     if (userMasterConfig) await exec('ssh', ['-F', userMasterConfig, '-O', 'exit', 'lectern-loopback']).catch(() => {});
-    await runCommand(local, `tmux -L '${socket}' kill-server 2>/dev/null || true`).catch(() => {});
+    privateServer.kill();
     daemon?.kill('SIGTERM');
     daemon?.stdout?.destroy(); daemon?.stderr?.destroy();
     if (daemon && daemon.exitCode === null && daemon.signalCode === null) {

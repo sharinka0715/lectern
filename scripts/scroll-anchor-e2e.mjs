@@ -4,6 +4,7 @@
 // content changes size. Its scrollbar runs to the bottom of the chat, under the
 // input area floating there, and a wheel over that area scrolls the chat.
 // Demo mode: no real model.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -13,12 +14,13 @@ import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tsa-")));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve("test-results", "scroll-anchor-" + Date.now());
 await mkdir(output, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root, TMUX_TMPDIR: root,
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root,
   LECTERN_USER_DATA: path.join(root, "profile"), CLAUDE_CONFIG_DIR: path.join(root, "claude"),
   LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: path.join(output, "diagnostics"), LECTERN_DIAGNOSTIC_CONTENT: "0" };
-delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 let app, page;
 const report = {};
 
@@ -205,6 +207,7 @@ try {
   await page?.screenshot({ path: path.join(output, "failure.png") }).catch(() => {});
   throw error;
 } finally {
-  await app?.close().catch(() => {});
+  await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

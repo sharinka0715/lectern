@@ -58,6 +58,7 @@ const exec = promisify(execFile), host = source.host, sid = source.sessionId, cw
 const q = value => `'${value.replace(/'/g, `'"'"'`)}'`;
 const remote = async (command, bytes = false) => (await exec('ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', host, `sh -c ${q(command)}`],
   { timeout: 30000, maxBuffer: 24 * 1024 * 1024, encoding: bytes ? 'buffer' : 'utf8' })).stdout;
+const remoteTmux = 'tmux -S "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"';
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const report = { success: false, root, host, cwd, sessionId: sid, sourceReport: sourcePath, scenarioOffset: 3,
@@ -72,11 +73,11 @@ async function checkpoint(phase) {
   await writeFile(path.join(root, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ phase, root, newRequests: report.requests }));
 }
-async function inventory() { return (await remote("tmux list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'")).trim().split('\n'); }
+async function inventory() { return (await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{session_name}|#{@lectern_session_id}|#{pane_current_command}'`)).trim().split('\n'); }
 async function stopOwned(session) {
-  const identity = (await remote(`tmux display-message -p -t ${q(session.paneId)} '#{pane_id}|#{session_name}|#{@lectern_session_id}'`).catch(() => '')).trim().split('|');
+  const identity = (await remote(`${remoteTmux} display-message -p -t ${q(session.paneId)} '#{pane_id}|#{session_name}|#{@lectern_session_id}'`).catch(() => '')).trim().split('|');
   if (identity[0] === session.paneId && identity[2] === sid && identity[1].startsWith(`lectern-${sid.slice(0, 8)}-`)) {
-    await remote(`tmux kill-pane -t ${q(session.paneId)}`);
+    await remote(`${remoteTmux} kill-pane -t ${q(session.paneId)}`);
   }
 }
 async function waitReady() {

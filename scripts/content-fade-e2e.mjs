@@ -7,6 +7,7 @@
 // one in place; a rewound turn, the resume bar, a permission card and the progress pill fade out
 // where they were while the conversation keeps its latest line (or the line being read) in place;
 // with reduced motion nothing fades. Frames in test-results/content-fade-*/.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -16,16 +17,17 @@ import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tcf-")));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve("test-results", "content-fade-" + Date.now());
 await mkdir(output, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root, TMUX_TMPDIR: root,
+const env = { ...privateServer.env, LECTERN_LOCALE: "zh-CN", TMPDIR: root,
   LECTERN_USER_DATA: path.join(root, "profile"), CLAUDE_CONFIG_DIR: path.join(root, "claude"),
   LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: path.join(output, "diagnostics"), LECTERN_DIAGNOSTIC_CONTENT: "0",
   // The mock's second paragraph starts 0.2 s into its reply at the usual pace: a slower machine (the
   // macOS runner, more so beside another test) may read the reply first only then, and see two
   // paragraphs arrive together. Even 0.5 s (250 ms) was not always enough there.
   LECTERN_MOCK_STREAM_MS: "500" };
-delete env.TMUX; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const primary = process.platform === "darwin" ? "Meta" : "Control";
 let app, page;
 const report = {};
@@ -659,6 +661,7 @@ try {
   await page?.screenshot({ path: path.join(output, "failure.png") }).catch(() => {});
   throw error;
 } finally {
-  await app?.close().catch(() => {});
+  await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

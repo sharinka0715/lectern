@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -34,11 +35,12 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
   const workspace: Workspace = { id: 'goal-' + randomUUID().slice(0, 6), name: 'Goal', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'goal-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath,
     claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config'), '--alias-models'] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
-    const capture = async (pane: string) => (await runCommand(workspace, ['tmux', '-L', socket, 'capture-pane', '-p', '-t', pane].map(quoteShell).join(' '))).stdout.toString();
+    const capture = async (pane: string) => (await runCommand(workspace, ['tmux', ...privateServer.args('capture-pane', '-p', '-t', pane)].map(quoteShell).join(' '))).stdout.toString();
     const until = async (pane: string, test: (screen: string) => boolean, label: string) => {
       for (let i = 0; i < 400; i++) { const screen = await capture(pane); if (test(screen)) return screen; await pause(25); }
       assert.fail(`never: ${label}\n${numberedTail(await capture(pane))}`);
@@ -57,7 +59,7 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
       }
     };
     await until(paneId, screen => screen.includes('shortcuts'), 'ready');
-    const pid = Number((await runCommand(workspace, ['tmux', '-L', socket, 'display-message', '-p', '-t', paneId, '#{pane_pid}'].map(quoteShell).join(' '))).stdout.toString());
+    const pid = Number((await runCommand(workspace, ['tmux', ...privateServer.args('display-message', '-p', '-t', paneId, '#{pane_pid}')].map(quoteShell).join(' '))).stdout.toString());
     // A goal whose reply goes on: /goal clear typed during it runs at once and writes only the cleared record.
     await backend.sendMessage(workspace, session.id, '/goal Hold the reply goal-hold');
     await until(paneId, screen => /Still working on step two/u.test(screen) && /◎ \/goal active \(\d+s\)/u.test(screen), 'held reply');
@@ -99,7 +101,7 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
     assert.ok(!records.some(record => record.type === 'system' && /<command-args>clear<\/command-args>/u.test(record.content ?? '')), 'a busy clear writes no command record');
   } finally {
     await backend.dispose();
-    await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

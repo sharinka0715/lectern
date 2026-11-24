@@ -4,6 +4,7 @@
 // survive switching the sort mode and a restart; opening a conversation from that list does
 // not open its folder in the tree, nor does restoring it at launch. Folds of folders and
 // machines no longer in the sidebar are dropped at launch.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -12,9 +13,10 @@ import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-sidebar-folds-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), claudeDir = path.join(root, 'config');
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', CLAUDE_CONFIG_DIR: claudeDir, TMUX_TMPDIR: root, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
-delete env.TMUX; delete env.TMUX_PANE; delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', CLAUDE_CONFIG_DIR: claudeDir, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs') };
+delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const preferences = 'lectern.desktop.preferences.v1';
 
 /** One history file per title, the first the oldest; returns their session ids. */
@@ -143,5 +145,6 @@ try {
   process.exitCode = 1;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

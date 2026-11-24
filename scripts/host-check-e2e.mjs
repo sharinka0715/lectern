@@ -7,6 +7,7 @@
 // gentle outdated-version warning, the normal path, and an SSH machine whose check
 // fails to connect (shown as "signed out", never as a missing tool). No Claude process
 // starts and no model or real SSH machine is contacted (ssh is a local stub that refuses).
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +17,7 @@ import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp('/tmp/lectern-host-check-'));
+const privateServer = createPrivateTmux(root);
 const results = path.resolve('test-results');
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 const sys = path.join(root, 'sys'), tools = path.join(root, 'tools'), stubs = path.join(root, 'stubs');
@@ -45,9 +47,9 @@ const history = [
 ].map(record => JSON.stringify({ ...record, cwd, sessionId, timestamp: new Date().toISOString() })).join('\n') + '\n';
 
 async function launch(locale) {
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: locale, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs'), TMUX_TMPDIR: root,
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: locale, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs'),
     LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOCAL_PATH: `${tools}:${sys}`, PATH: `${stubs}:${process.env.PATH}` };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX; delete env.TMUX_PANE;
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   const app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
@@ -178,5 +180,6 @@ try {
   console.log(JSON.stringify({ ok: true, platform: process.platform, screenshots: ['host-check-notice-zh-CN.png', 'host-check-notice-en.png'] }));
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
 }

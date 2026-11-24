@@ -1,4 +1,5 @@
 // Run after npm run build. The isolated demo uses real Electron IPC and tmux with an offline Claude fixture.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -8,14 +9,15 @@ import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "trn-")));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve("test-results", "session-rename-" + Date.now());
 await mkdir(output, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root, TMUX_TMPDIR: root,
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root,
   LECTERN_USER_DATA: path.join(root, "profile"), LECTERN_LOG_DIR: path.join(output, "diagnostics"),
   LECTERN_DIAGNOSTIC_CONTENT: "0", LECTERN_NODE_BINARY: process.execPath };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
-delete env.TMUX;
+
 
 let app, page;
 const report = { checks: [] };
@@ -154,6 +156,7 @@ try {
   process.exitCode = 1;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
   await writeFile(path.join(output, "report.json"), JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, output }));

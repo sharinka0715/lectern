@@ -1,4 +1,5 @@
 // Real desktop window, native-format archives and the bundled offline tmux fixture.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -9,13 +10,13 @@ import { _electron, resizeWindow } from "./fixtures/electron.mjs";
 import { refreshFolderUntil } from "./fixtures/sidebar-refresh.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tbr-")));
+const privateServer = createPrivateTmux(root);
 const output = path.resolve("test-results", "history-resume-bar-" + Date.now());
 await mkdir(output, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root, TMUX_TMPDIR: root,
+const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', TMPDIR: root,
   LECTERN_USER_DATA: path.join(root, "profile"), CLAUDE_CONFIG_DIR: path.join(root, "claude"),
   LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: path.join(output, "diagnostics"),
   LECTERN_DIAGNOSTIC_CONTENT: "0" };
-delete env.TMUX;
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 let app, page;
@@ -212,6 +213,7 @@ try {
   process.exitCode = 1;
 } finally {
   await app?.close();
+  privateServer.killAll();
   await rm(root, { recursive: true, force: true });
   await writeFile(path.join(output, "report.json"), JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, output }));

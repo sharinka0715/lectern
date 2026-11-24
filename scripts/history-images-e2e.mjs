@@ -1,4 +1,5 @@
 // 离线历史：在真实 Electron 中记录首屏 / 上翻文字出现的时刻、图片请求和传输字节。
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { crc32, deflateSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +24,7 @@ function png(seed) {
   return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 }
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-history-images-')));
+const privateServer = createPrivateTmux(root);
 const cwd = path.join(root,'work'), profile = path.join(root,'profile'), config = path.join(root,'claude'), logs = path.join(root,'logs');
 const project = path.join(config,'projects',cwd.replace(/[^a-z0-9-]/gi, '-')), sid = randomUUID();
 const olderText = '更早一轮的图文结论', latestText = '最新一轮的图文结论';
@@ -45,8 +47,8 @@ try {
   const jsonl = line('user', '检查第一批图片') + line('assistant', [...files.slice(0,9).map((_, i) => img(i)), text(olderText)]) +
     line('user', '检查第二批图片') + line('assistant', [img(9), text('比较开始'), img(10), img(11), text(latestText)]);
   await writeFile(file, jsonl);
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA:profile, CLAUDE_CONFIG_DIR:config, TMUX_TMPDIR:root, LECTERN_LOG_DIR:logs, LECTERN_DIAGNOSTIC_CONTENT:'0' };
-  delete env.TMUX; delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA:profile, CLAUDE_CONFIG_DIR:config, LECTERN_LOG_DIR:logs, LECTERN_DIAGNOSTIC_CONTENT:'0' };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath:path.resolve(exe) }), env });
   const page = await app.firstWindow(); page.setDefaultTimeout(15000);
@@ -128,4 +130,4 @@ try {
   const imageTraces = new Set(final.filter(e => /^ipc\.(previewMessageAttachment(?:Thumbnail)?|downloadMessageAttachment)\.start$/.test(e.event)).map(e => e.context.traceId));
   assert.ok(!final.some(e => e.event === 'transport.command.request' && imageTraces.has(e.context.traceId)), '内嵌图片的缩略图、放大和下载都应使用桌面端已收到的数据');
   console.log('通过：两页历史完整传回 12 张图，正文异步显示缩略图，放大和下载直接使用已收到的原图。');
-} finally { await app?.close(); await rm(root,{ recursive:true, force:true }); }
+} finally { await app?.close(); privateServer.killAll(); await rm(root,{ recursive:true, force:true }); }

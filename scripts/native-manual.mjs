@@ -13,11 +13,12 @@ assert.ok(host, 'Set LECTERN_SSH_HOST to an SSH alias for the test machine');
 assert.match(host, /^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/);
 const q = value => `'${value.replace(/'/g, `'"'"'`)}'`;
 const remote = async command => (await exec('ssh', ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', host, `sh -c ${q(command)}`], { timeout: 30000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+const remoteTmux = 'tmux -S "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"';
 const root = path.resolve('test-results', `native-manual-${Date.now()}`);
 await mkdir(root, { recursive: true });
 const cwd = (await remote('mktemp -d /tmp/lectern-manual-XXXXXX')).trim();
 assert.match(cwd, /^\/tmp\/lectern-manual-[A-Za-z0-9]+$/);
-const report = { success: false, root, host, cwd, requests: 0, checks: [], screens: [], originalPanes: await remote("tmux list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'") };
+const report = { success: false, root, host, cwd, requests: 0, checks: [], screens: [], originalPanes: await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'`) };
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const workspaceId = 'native-manual', name = `${host} · 原生交互测试`;
@@ -163,10 +164,10 @@ try {
 } finally {
   await app?.close();
   if (paneId && sid) {
-    const mapping = await remote(`tmux show-options -pqv -t ${q(paneId)} @lectern_session_id`).catch(()=> '');
-    if (mapping.trim() === sid) await remote(`tmux kill-pane -t ${q(paneId)}`);
+    const mapping = await remote(`${remoteTmux} show-options -pqv -t ${q(paneId)} @lectern_session_id`).catch(()=> '');
+    if (mapping.trim() === sid) await remote(`${remoteTmux} kill-pane -t ${q(paneId)}`);
   }
-  report.finalPanes = await remote("tmux list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'");
+  report.finalPanes = await remote(`${remoteTmux} list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'`);
   await writeFile(path.join(root,'report.json'),JSON.stringify(report,null,2));
   console.log(JSON.stringify(report,null,2));
 }

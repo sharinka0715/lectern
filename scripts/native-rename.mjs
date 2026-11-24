@@ -1,5 +1,6 @@
 // Stock Claude Code and tmux with disposable transcripts, account and model endpoint.
 // Run with node --import tsx scripts/native-rename.mjs [--ssh].
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { startLoopback, waitUntil as until } from './fixtures/loopback-ssh.mjs';
@@ -34,10 +35,12 @@ const env = {
 };
 for (const key of Object.keys(process.env)) delete process.env[key];
 Object.assign(process.env, env);
+delete process.env.TMUX; delete process.env.TMUX_PANE;
 const opts = {tmuxSocket:socket, claudeArgs:['--bare','--strict-mcp-config','--model','sonnet']};
 const workspace = {id:'rename-test',name:'Rename test',cwd:work,kind:ssh?'ssh':'local',...(ssh?{host:'rename-loopback'}:{})};
 const records = async file => (await readFile(file,'utf8')).trimEnd().split('\n').map(line => JSON.parse(line));
-const tmux = (...args) => exec('tmux',args,{env});
+const foreignServer = createPrivateTmux(sockets, { name: foreignSocket, env });
+const tmux = (...args) => exec('tmux', foreignServer.args(...args), { env: foreignServer.env });
 async function waitForNativeExit(id) {
   const directory=path.join(config,'sessions');
   await until(async()=>{
@@ -103,7 +106,7 @@ try {
   assert.equal((await records(history.file)).filter(row=>row.type==='assistant').length,1);
   report.passed.push('new backend saw the final native title, original transcript prefix and UUID');
   const external=await seed();
-  const foreign=await tmux('-L',foreignSocket,'-f','/dev/null','new-session','-d','-P','-F','#{pane_pid}','-s','ordinary','-c',work,'claude',...opts.claudeArgs,'--resume',external.id);
+  const foreign=await tmux('-f','/dev/null','new-session','-d','-P','-F','#{pane_pid}','-s','ordinary','-c',work,'claude',...opts.claudeArgs,'--resume',external.id);
   const pid=Number(foreign.stdout.trim());
   await until(async()=>{try{return JSON.parse(await readFile(path.join(config,'sessions',pid+'.json'),'utf8')).sessionId===external.id;}catch{return false;}},'Other terminal did not register its UUID');
   await assert.rejects(backend.renameSession(workspace,external.id,'Would conflict'),/其他 Claude 终端|原终端/);
@@ -113,7 +116,7 @@ try {
   console.log(JSON.stringify({...report,modelRequests},null,2));
 } finally {
   await backend?.dispose();
-  for (const label of [socket,foreignSocket]) await tmux('-L',label,'kill-server').catch(()=>{});
+  foreignServer.killAll();
   daemon?.stop();
   await new Promise(resolve=>model.close(resolve));
   await rm(root,{recursive:true,force:true});

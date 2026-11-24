@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -21,12 +22,13 @@ test('the model list comes from one SDK probe without a tmux pane, and each expl
   const workspace: Workspace = { id: 'catalog-fixture', name: 'Fixture', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'catalog-apply-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config')] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const session = await backend.createSession(workspace);
     const paneId = session.paneId!;
-    const tmux = (...args: string[]) => runCommand(workspace, ['tmux', '-L', socket, ...args].map(quoteShell).join(' ')).then(result => result.stdout.toString());
+    const tmux = (...args: string[]) => runCommand(workspace, ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' ')).then(result => result.stdout.toString());
     const capture = () => tmux('capture-pane', '-p', '-t', paneId);
     for (let i = 0; i < 80 && !(await capture()).includes('shortcuts'); i++) await new Promise(resolve => setTimeout(resolve, 25));
     const before = await capture();
@@ -58,7 +60,7 @@ test('the model list comes from one SDK probe without a tmux pane, and each expl
     assert.match(after, /Set effort level to low \(this session only\)/);
   } finally {
     await backend.dispose();
-    await runCommand(workspace, 'tmux -L ' + quoteShell(socket) + ' kill-server 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -75,8 +77,9 @@ test('one-page settings use bounded round trips and protect external drafts and 
   const workspace: Workspace = { id: 'settings-fixture', name: 'Fixture', kind: 'local', cwd: root };
   fixtureClaudeConfig(join(root, 'config'));
   const socket = 'settings-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config')] });
-  const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
+  const tmux = (...args: string[]) => ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' ');
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const session = await backend.createSession(workspace);
@@ -174,7 +177,7 @@ test('one-page settings use bounded round trips and protect external drafts and 
     assert.ok((await runCommand(workspace, tmux('capture-pane', '-p', '-t', session.paneId!))).stdout.includes('Permission required'));
   } finally {
     await backend.dispose();
-    await runCommand(workspace, tmux('kill-server') + ' 2>/dev/null || true');
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

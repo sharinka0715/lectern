@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
@@ -15,8 +16,9 @@ test('close validates current pane and PID, drains final writes, leaves siblings
   fixtureClaudeConfig(config);
   const script = join(dir, 'cli.mjs');
   const socket = 'close-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [script] });
-  const tmux = (...args: string[]) => runCommand(target, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '));
+  const tmux = (...args: string[]) => runCommand(target, ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' '));
   try {
     try { await runCommand(target, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     await mkdir(config);
@@ -46,8 +48,8 @@ console.log('fixture-ready');setInterval(()=>{},10000);`);
     assert.ok(resumed.paneId && resumed.paneId !== session.paneId);
     assert.equal(resumed.id, session.id);
   } finally {
-    await tmux('kill-server').catch(() => {});
     await backend.dispose();
+    privateServer.cleanup();
     await rm(dir, { recursive: true, force: true });
   }
 });
@@ -60,8 +62,9 @@ test('quitting: running sessions with pane PIDs, what discovery knew, and closin
   const missing: Workspace = { id: 'quit-missing', name: 'Gone', kind: 'local', cwd: join(dir, 'missing') };
   const script = join(dir, 'cli.mjs');
   const socket = 'quit-' + randomUUID().slice(0, 8);
+  const privateServer = isolateTmux(socket);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [script] });
-  const tmux = (...args: string[]) => runCommand(target, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '));
+  const tmux = (...args: string[]) => runCommand(target, ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' '));
   try {
     try { await runCommand(target, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     await mkdir(config);
@@ -95,8 +98,8 @@ process.on('SIGTERM',()=>process.exit(0));console.log('fixture-ready');setInterv
     await backend.closeListed(target, other.id, other.paneId);
     assert.deepEqual(await running(), []);
   } finally {
-    await tmux('kill-server').catch(() => {});
     await backend.dispose();
+    privateServer.cleanup();
     await rm(dir, { recursive: true, force: true });
   }
 });

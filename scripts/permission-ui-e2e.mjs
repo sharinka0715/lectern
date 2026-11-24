@@ -4,6 +4,7 @@
 // With LECTERN_E2E_DIALOG_HOOKS=1 (permission-hooks-e2e) Settings → Session's recording hooks are on:
 // the cards then show each call's whole input from its PermissionRequest hook; a dialog Claude Code
 // asks without one ("… so this one needs your approval") is read off the screen as before.
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
@@ -15,6 +16,7 @@ import { _electron } from './fixtures/electron.mjs';
 import { DIALOG_HOOKS, hookStatus, setDialogHooks } from './fixtures/dialog-hooks.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-perm-ui-')));
+const privateServer = createPrivateTmux(root);
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
 // A second folder whose sessions stay in auto mode, using the default permission settings.
 const autoCwd = path.join(root, 'work-auto');
@@ -64,8 +66,8 @@ try {
   // actions in this session" in the app's own new chats there (steps 4 and 5).
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'perm', name: '权限确认', kind: 'local', cwd },
     { id: 'auto', name: '自动检查', kind: 'local', cwd: autoCwd }]));
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', ...DIALOG_HOOKS && { TMPDIR: root } };
-  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
+  const env = { ...privateServer.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_DIAGNOSTIC_CONTENT: '0', ...DIALOG_HOOKS && { TMPDIR: root } };
+  delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   // Lectern's default: nothing moves auto mode's check off the server (manual mode in the first folder has none).
   delete env.CLAUDE_CODE_AUTO_MODE_SERVER;
   const exe = process.argv[2];
@@ -75,7 +77,7 @@ try {
   if (DIALOG_HOOKS) await setDialogHooks(page, true);
   // A new chat: Claude Code starts with its first message (sent in step 1).
   await page.getByRole('button', { name: '在 权限确认 新建对话' }).click();
-  const tmux = (...a) => { try { return execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root }, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); } catch { return ''; } };
+  const tmux = (...a) => { try { return privateServer.tmux(...a); } catch (error) { if (error.status === 1) return ''; throw error; } };
   const paneId = () => tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}').split('\n').find(line => / lectern-/.test(line))?.split(' ')[0];
   // Watch the pane until the permission card shows: the auto-mode prompt must never block.
   const dismissStartupPrompt = async () => {
@@ -231,8 +233,8 @@ try {
   if (DIALOG_HOOKS) assert.equal(hooks, 'active');
   console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true, autoModeUnavailable: asksUnavailable ? { stayed: true, left: true } : 'skipped', hooks }));
 } finally {
-  await app?.close().catch(() => {});
-  try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}
+  await app?.close();
+  privateServer.kill();
   server.close();
   for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(r => setTimeout(r, 300)); } }
 }

@@ -1,4 +1,5 @@
 import { fixtureClaudeConfig } from './helpers/claude-config';
+import { isolateTmux } from './helpers/private-tmux';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -68,10 +69,11 @@ process.stdin.setRawMode(true);process.stdin.resume();let previous='';
 setInterval(()=>{const end=path.join(root,id+'.exit');if(fs.existsSync(end))process.exit(Number(fs.readFileSync(end,'utf8')));const file=path.join(root,id+'.screen'),screen=fs.existsSync(file)?fs.readFileSync(file,'utf8'):'❯\\n? for shortcuts\\n';if(screen!==previous){previous=screen;process.stdout.write('\\x1b[2J\\x1b[H'+screen.replace(/\\n/g,'\\r\\n'));}},25);
 `);
   const socket = `lectern-status-${randomUUID().slice(0, 8)}`;
+  const privateServer = isolateTmux(socket);
   const workspace: Workspace = { ...local, id: randomUUID(), cwd };
   fixtureClaudeConfig(config);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [script, root] });
-  const tmux = async (...args: string[]) => runCommand(workspace, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '));
+  const tmux = async (...args: string[]) => runCommand(workspace, ['tmux', ...privateServer.args(...args)].map(quoteShell).join(' '));
   try {
     const idle = await backend.createSession(workspace), working = await backend.createSession(workspace), waiting = await backend.createSession(workspace);
     await writeFile(path.join(root, working.id + '.screen'), '✻ Thinking… (esc to interrupt)\n');
@@ -122,7 +124,7 @@ setInterval(()=>{const end=path.join(root,id+'.exit');if(fs.existsSync(end))proc
     assert.equal((await readFile(discovery.sessions.find(s => s.id === idle.id)!.path!, 'utf8')).trim().split('\n').length, 1);
   } finally {
     await backend.dispose();
-    await runCommand(workspace, `tmux -L ${quoteShell(socket)} kill-server 2>/dev/null || true`);
+    privateServer.cleanup();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -2,26 +2,24 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron, resizeWindow } from './fixtures/electron.mjs';
+import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import { sel, ui, writeWorkspaces } from './cc-matrix/app.mjs';
 import { descendants } from './cc-matrix/sandbox.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-chat-settings-')));
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'project');
 const home = path.join(root, 'home'), bin = path.join(home, '.local', 'bin');
-const env = { ...process.env, HOME: home, TMPDIR: root, TMUX_TMPDIR: root, CLAUDE_CONFIG_DIR: config,
+const env = { ...process.env, HOME: home, TMPDIR: root, CLAUDE_CONFIG_DIR: config,
   LECTERN_SETTINGS_FIXTURE: '1', LECTERN_DIAGNOSTIC_CONTENT: '0' };
-delete env.TMUX; delete env.TMUX_PANE; delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
-const socket = path.join(root, `tmux-${process.getuid()}`, 'default');
-let tmuxOpen = true;
+delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
+const privateServer = createPrivateTmux(root, { env });
 const tmux = (...args) => {
-  if (!tmuxOpen || !existsSync(root)) return '';
-  try { return execFileSync('tmux', ['-S', socket, ...args], { env, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
-  catch { return ''; }
+  try { return privateServer.tmux(...args); }
+  catch (error) { if (error.status === 1) return ''; throw error; }
 };
 const project = { id: 'settings-fixture', name: '配置测试', cwd };
 const outside = randomUUID();
@@ -38,7 +36,7 @@ const lines = async name => (await readFile(path.join(config, name), 'utf8').cat
 let app, page, chat;
 
 async function startApp(locale = 'zh-CN', userData = profile) {
-  app = await _electron.launch({ args: ['.', '--disable-background-networking'], env: { ...env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: userData }, timeout: 60_000 });
+  app = await _electron.launch({ args: ['.', '--disable-background-networking'], env: { ...privateServer.env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: userData }, timeout: 60_000 });
   page = await app.firstWindow();
   page.setDefaultTimeout(20_000);
   await resizeWindow(app, page, windowSize.width, windowSize.height);
@@ -319,10 +317,6 @@ try {
   await englishResume.getByRole('button', { name: 'Cancel', exact: true }).click();
   console.log('PASS: conversation settings, overrides, replacement and persistence');
 } finally {
-  try { await app?.close(); }
-  finally {
-    tmux('kill-server');
-    tmuxOpen = false;
-  }
-  await rm(root, { recursive: true, force: true });
+  await app?.close();
+  privateServer.cleanup();
 }
