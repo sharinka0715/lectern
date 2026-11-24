@@ -11,3 +11,6 @@
 .directory-picker-row:hover, .directory-picker-row:focus-visible { background: var(--hover); }
 .directory-picker-navigation input { font-family: var(--font-mono); font-size: var(--text-label); }
 .directory-picker-login { margin: 0 8px 12px; }
+.directory-picker-create { margin-top: 16px; }
+.directory-picker-create .field-label { margin-bottom: 0; }
+.directory-picker > .modal-footer { flex-wrap: wrap; }

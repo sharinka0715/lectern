@@ -545,6 +545,10 @@ async function boot() {
       if (demo) throw new Error(t('main.demoNoBrowse'));
       return controller.backend.listWorkspaceDirectories(target, path, offset);
     },
+    createWorkspaceDirectory: (target, parentPath, name) => {
+      if (demo) throw new Error(t('main.demoIsolatedOnly'));
+      return controller.backend.createWorkspaceDirectory(target, parentPath, name);
+    },
     discover: async (id, baselines) => {
       const discovery = await controller.discover(id, baselines).catch(error => {
         if (error instanceof WorkspaceChangedError) return undefined;

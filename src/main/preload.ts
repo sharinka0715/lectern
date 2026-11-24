@@ -47,6 +47,7 @@ const api: DesktopAPI = {
   removeWorkspace: id => ipcRenderer.invoke('lectern:removeWorkspace', id),
   enableHistoryScan: id => ipcRenderer.invoke('lectern:enableHistoryScan', id),
   listWorkspaceDirectories: (target, path, offset) => ipcRenderer.invoke('lectern:listWorkspaceDirectories', target, path, offset),
+  createWorkspaceDirectory: (target, parentPath, name) => ipcRenderer.invoke('lectern:createWorkspaceDirectory', target, parentPath, name),
   listSshConfigHosts: () => ipcRenderer.invoke('lectern:listSshConfigHosts'),
   setLaunchPreferences: preferences => ipcRenderer.invoke('lectern:setLaunchPreferences', preferences),
   setUltracode: (workspaceId, sessionId, on) => ipcRenderer.invoke('lectern:setUltracode', workspaceId, sessionId, on),

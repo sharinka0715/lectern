@@ -473,6 +473,27 @@ exit 0`;
     const nextOffset = directories.length > DIRECTORY_PAGE_SIZE ? offset + DIRECTORY_PAGE_SIZE : undefined;
     return { path: resolvedPath, directories: directories.slice(0, DIRECTORY_PAGE_SIZE), ...(nextOffset !== undefined ? { nextOffset } : {}) };
   }
+  async createWorkspaceDirectory(target: WorkspaceEndpoint, parentPath: string, name: string): Promise<string> {
+    if (!target || typeof target !== 'object') throw new Error('Invalid workspace endpoint');
+    if (typeof parentPath !== 'string' || !parentPath.startsWith('/')) throw new Error(t('backend.invalidFolderParent'));
+    if (typeof name !== 'string' || !name.trim() || name === '.' || name === '..' || /[/\x00-\x1f\x7f]/.test(name)
+        || name.includes(SEP) || Buffer.byteLength(name) > 255) throw new Error(t('backend.invalidFolderName'));
+    const { kind, host, port } = target;
+    const workspace = validateWorkspace({ id: 'directory-browser', name: 'Directory browser', cwd: parentPath, kind, host, port });
+    const path = `${workspace.cwd.replace(/\/+$/, '')}/${name}`;
+    validateWorkspace({ ...workspace, cwd: path });
+    // Use a single mkdir in the chosen parent. Existing entries are never replaced.
+    const child = q(`./${name}`);
+    const script = `cd -L ${q(workspace.cwd)} || exit 1
+if message=$(mkdir ${child} 2>&1); then exit 0; fi
+if [ -e ${child} ] || [ -L ${child} ]; then
+  message=${q(t('backend.folderNameExists'))}
+fi
+printf '%s\\n' "$message" >&2
+exit 1`;
+    await this.transport.run(workspace, script, { tag: 'workspace.create_directory' });
+    return path;
+  }
   async discoverHistoryProjects(target: HistoryTarget): Promise<HistoryScan> {
     return diagnostic.operation('backend.history_projects', { targetKind: target?.kind }, () => scanHistoryProjects(target, this.transport));
   }

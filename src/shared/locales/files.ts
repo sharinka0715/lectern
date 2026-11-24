@@ -101,4 +101,8 @@ export const files = {
   moreFolders: ['显示更多文件夹', 'Show more folders'],
   cancel: ['取消', 'Cancel'],
   selectFolder: ['选择此目录', 'Choose this folder'],
+  newFolder: ['新建文件夹', 'New folder'],
+  folderName: ['文件夹名称', 'Folder name'],
+  createAndSelectFolder: ['创建并选择', 'Create and select'],
+  creatingFolder: ['正在创建…', 'Creating…'],
 } as const satisfies Namespace;

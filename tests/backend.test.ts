@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, appendFile, chmod, mkdir, rm, symlink, rename, realpath, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, appendFile, chmod, mkdir, rm, symlink, rename, realpath, readFile, readdir, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Backend, commandInvocation, foregroundClaudePids, isClaudeForeground, projectSlug, quoteShell, runCommand, validateWorkspace, WorkspaceChangedError } from '../src/backend/index';
 import { Transport } from '../src/backend/transport';
 import type { Workspace, WorkspaceEndpoint } from '../src/shared/types';
+import { t } from '../src/shared/i18n';
 
 const workspace: Workspace = { id: 'test', name: 'Test', kind: 'local', cwd: '/tmp' };
 test('shell quoting preserves apostrophes, substitutions, Unicode, and newlines', { skip: process.platform === 'win32' ? 'POSIX shell behavior; Windows runs no local commands' : false }, async () => {
@@ -90,6 +91,46 @@ test('workspace directory browsing validates paths, offsets and endpoints before
     assert.equal(transport.mock.callCount(), 0);
     assert.deepEqual(await backend.listWorkspaceDirectories({ kind: 'ssh', host: 'dev', port: 2222 }, '~'), { path: '/home/test', directories: ['child'] });
     assert.equal(transport.mock.callCount(), 1);
+  } finally { await backend.dispose(); }
+});
+
+test('workspace directory creation preserves the logical parent and exact name without replacing entries', { skip: process.platform === 'win32' }, async () => {
+  const backend = new Backend(), target = { kind: 'local' } as const;
+  const root = await mkdtemp(join(tmpdir(), 'lectern-create-directory-'));
+  const physical = join(root, 'actual parent'), alias = join(root, 'selected parent');
+  const name = " -新项目 ' $(printf nope) ";
+  try {
+    await mkdir(physical);
+    await symlink(physical, alias);
+    await writeFile(join(physical, 'existing file'), 'keep this');
+    await symlink('missing', join(physical, 'dangling link'));
+    assert.equal(await backend.createWorkspaceDirectory(target, alias, name), join(alias, name));
+    assert.ok((await stat(join(physical, name))).isDirectory());
+    assert.equal(await backend.createWorkspaceDirectory(target, alias, '-new'), join(alias, '-new'));
+    for (const occupied of [name, 'existing file', 'dangling link']) {
+      await assert.rejects(backend.createWorkspaceDirectory(target, alias, occupied), { message: t('backend.folderNameExists') });
+    }
+    await assert.rejects(backend.createWorkspaceDirectory(target, join(root, 'missing'), 'child'));
+    assert.deepEqual((await readdir(physical)).sort(), [name, '-new', 'dangling link', 'existing file']);
+    assert.equal(await readFile(join(physical, 'existing file'), 'utf8'), 'keep this');
+    assert.deepEqual((await readdir(root)).sort(), ['actual parent', 'selected parent']);
+  } finally { await backend.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('workspace directory creation rejects invalid names, paths and endpoints before running any command', async context => {
+  const backend = new Backend(), target = { kind: 'ssh', host: 'dev', port: 2222 } as const;
+  const run = context.mock.method(Transport.prototype, 'run', async () => ({ stdout: Buffer.alloc(0), stderr: '' }));
+  try {
+    for (const name of ['', ' ', '.', '..', '../child', '/child', 'a/b', 'a\nb', 'a\0b', '|~lectern~|', '新'.repeat(86)]) {
+      await assert.rejects(backend.createWorkspaceDirectory(target, '/home/dev', name), { message: t('backend.invalidFolderName') });
+    }
+    for (const parent of ['', '~', 'relative', '/tmp/invalid\nname', '/tmp/|~lectern~|', '/' + 'a'.repeat(4095)]) {
+      await assert.rejects(backend.createWorkspaceDirectory(target, parent, 'child'));
+    }
+    for (const endpoint of [{ kind: 'other' }, { ...target, host: '-bad' }, { ...target, port: 0 }]) {
+      await assert.rejects(backend.createWorkspaceDirectory(endpoint as WorkspaceEndpoint, '/home/dev', 'child'));
+    }
+    assert.equal(run.mock.callCount(), 0);
   } finally { await backend.dispose(); }
 });
 

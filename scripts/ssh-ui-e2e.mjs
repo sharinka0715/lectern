@@ -14,6 +14,7 @@ await mkdir(resultDirectory, { recursive: true });
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: diagnostics };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const host = 'synthetic-ssh-alias';
+const port = 2244;
 const paths = ['/srv/projects/中文 team', '/srv/projects/service-b', '/srv/deleted-project'];
 const ids = paths.map(() => randomUUID());
 let app;
@@ -25,7 +26,7 @@ try {
   await page.getByRole('button', { name: '添加 SSH 机器', exact: true }).waitFor();
   // Folders are added on a machine in the sidebar; the sidebar heading has no generic entry.
   assert.equal(await page.locator('.sidebar-heading-actions').getByRole('button', { name: '添加工作目录', exact: true }).count(), 0);
-  await app.evaluate(({ ipcMain, BrowserWindow }, { paths, ids }) => {
+  await app.evaluate(({ ipcMain, BrowserWindow }, { paths, ids, host, port }) => {
     const fixture = globalThis.__sshUI = { paths, ids, scans: [], calls: [], scanFail: false, watchFail: false, failCwd: '', live: {}, current: undefined };
     const workspaces = event => event.sender.executeJavaScript('window.desktop.listWorkspaces()');
     const session = workspace => ({ id: fixture.ids[Math.max(0, fixture.paths.indexOf(workspace.cwd))], title: `远程历史 · ${workspace.name}`, path: `/home/remote/.claude/projects/synthetic/${workspace.id}.jsonl`,
@@ -37,11 +38,20 @@ try {
     fixture.browses = [];
     replace('listWorkspaceDirectories', async (_event, target, requested, offset) => {
       fixture.browses.push({target, requested, offset});
-      if (target.kind !== 'ssh' || target.host !== 'synthetic-ssh-alias') throw new Error('浏览目标错误');
+      if (target.kind !== 'ssh' || target.host !== host || target.port !== port) throw new Error('浏览目标错误');
       if (requested === '~') return {path:'/srv', directories:['projects']};
       if (requested === '/srv/projects') return offset ? {path:requested, directories:['service-b']} : {path:requested, directories:['中文 team'], nextOffset:1};
       if (fixture.paths.includes(requested)) return {path:requested, directories:[]};
       throw new Error('这个目录不可访问');
+    });
+    fixture.creates = [];
+    const creation = new Promise(resolve => { fixture.finishCreate = resolve; });
+    replace('createWorkspaceDirectory', async (_event, target, parent, name) => {
+      fixture.creates.push({target, parent, name});
+      if (target.kind !== 'ssh' || target.host !== host || target.port !== port || parent !== '/srv/projects') throw new Error('创建目标错误');
+      if (name === '中文 team') throw new Error('此名称已存在');
+      await creation;
+      return `${parent}/${name}`;
     });
     replace('resolveArtifactReferences', async () => []);
     // The startup connection check stays inside the fixture too.
@@ -97,7 +107,7 @@ try {
     for (const method of ['createSession', 'sendMessage', 'sendKey', 'getSessionSetting', 'setSessionSetting', 'respondDirectoryTrust'])
       replace(method, async () => { fixture.calls.push({ method }); throw new Error(`Unexpected synthetic test action: ${method}`); });
     fixture.disconnect = () => BrowserWindow.getAllWindows()[0].webContents.send('lectern:snapshot', { ...fixture.current, status: 'offline', navigationStatus: 'unknown', error: 'Synthetic SSH: connection lost' });
-  }, { paths, ids });
+  }, { paths, ids, host, port });
 
   const composer = page.getByRole('textbox', { name: '发送给 Claude 的消息', exact: true });
   await page.getByRole('button', { name: '添加 SSH 机器', exact: true }).click();
@@ -107,7 +117,7 @@ try {
   await settings.getByLabel('端口', { exact: true }).fill('70000');
   await settings.getByRole('button', { name: '保存连接' }).click();
   assert.match(await settings.getByRole('alert').innerText(), /1–65535/);
-  await settings.getByLabel('端口', { exact: true }).fill('');
+  await settings.getByLabel('端口', { exact: true }).fill(String(port));
   await settings.getByRole('button', { name: '保存连接' }).click();
   const machine = page.getByRole('region', { name: '示例 SSH 机器', exact: true });
   await page.reload();
@@ -140,6 +150,7 @@ try {
       await folder.getByRole('button', {name:'选择文件夹'}).click();
       await picker.getByRole('alert').waitFor();
       assert.equal(await picker.getByRole('button', {name:'选择此目录'}).isDisabled(), true);
+      assert.equal(await picker.getByRole('button', {name:'新建文件夹', exact:true}).isDisabled(), true);
       await navigate('主目录'); await navigate('projects'); await navigate('中文 team'); await navigate('选择此目录');
       assert.equal(await input.inputValue(), cwd);
       assert.equal(await folder.getByLabel('名称', {exact:true}).inputValue(), '');
@@ -155,7 +166,7 @@ try {
   let stored = await page.evaluate(() => window.desktop.listWorkspaces());
   assert.equal(stored.length, 2);
   assert.deepEqual(stored.map(w => w.name), paths.slice(0, 2).map(p => path.posix.basename(p)));
-  assert.ok(stored.every(w => w.kind === 'ssh' && w.host === host && !w.port && !w.claudeDir));
+  assert.ok(stored.every(w => w.kind === 'ssh' && w.host === host && w.port === port && !w.claudeDir));
   assert.equal(await machine.locator('.workspace-row').count(), 2);
   assert.equal(await page.getByRole('region', { name: '本地', exact: true }).locator('.workspace-row').count(), 0);
   assert.equal(await composer.isDisabled(), true);
@@ -266,7 +277,7 @@ try {
 
   // The machine's own folder dialog browses that machine.
   const browsed = await app.evaluate(() => globalThis.__sshUI.browses.at(-1).target);
-  assert.ok(browsed.kind === 'ssh' && browsed.host === host && !browsed.port, JSON.stringify(browsed));
+  assert.deepEqual(browsed, { kind: 'ssh', host, port });
   await app.evaluate(() => { globalThis.__sshUI.failCwd = '/srv/inaccessible'; });
   await addFolder('/srv/inaccessible');
   await page.locator('.error-banner').waitFor();
@@ -292,6 +303,50 @@ try {
   await page.locator('.error-banner').getByRole('button', { name: '重试', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
 
+  // Create one subfolder on the browsed machine, then explicitly add it to Lectern.
+  const parent = '/srv/projects', newName = "示例 'draft'", newPath = `${parent}/${newName}`;
+  const readWorkspaces = () => page.evaluate(() => window.desktop.listWorkspaces());
+  const beforeCreate = await readWorkspaces();
+  await machine.getByRole('button', { name: '在 示例 SSH 机器 添加项目文件夹' }).click();
+  const addProject = page.getByRole('dialog', { name: '添加项目文件夹', exact: true });
+  const cwdInput = addProject.getByLabel('工作目录', { exact: true });
+  await cwdInput.fill(parent);
+  await addProject.getByRole('button', { name: '选择文件夹', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: '选择工作目录', exact: true });
+  const newFolder = picker.getByRole('button', { name: '新建文件夹', exact: true });
+  const create = picker.locator('.directory-picker-create');
+  const name = create.getByRole('textbox', { name: '文件夹名称', exact: true });
+  const createAndSelect = create.getByRole('button', { name: '创建并选择', exact: true });
+  await newFolder.click();
+  await name.fill(newName);
+  await createAndSelect.and(create.locator('button:enabled')).waitFor();
+  await picker.screenshot({ path: path.join(resultDirectory, 'ssh-project-create-folder.png'), animations: 'disabled' });
+  await create.getByRole('button', { name: '取消', exact: true }).click();
+  await name.waitFor({ state: 'detached' });
+  assert.deepEqual(await app.evaluate(() => globalThis.__sshUI.creates), []);
+  await newFolder.click();
+  await name.fill('中文 team');
+  await createAndSelect.click();
+  const createError = create.getByRole('alert');
+  await createError.waitFor();
+  assert.equal(await createError.innerText(), '此名称已存在');
+  assert.equal(await name.inputValue(), '中文 team');
+  assert.deepEqual(await readWorkspaces(), beforeCreate);
+  await name.fill(newName);
+  await createAndSelect.click();
+  const closePicker = picker.getByRole('button', { name: '关闭目录选择器', exact: true });
+  await closePicker.and(picker.locator('button:disabled')).waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await picker.isVisible(), true);
+  await app.evaluate(() => { globalThis.__sshUI.finishCreate(); });
+  await picker.waitFor({ state: 'detached' });
+  assert.equal(await cwdInput.inputValue(), newPath);
+  assert.deepEqual(await readWorkspaces(), beforeCreate, 'Choosing the newly created folder does not add a workspace');
+  assert.deepEqual(await app.evaluate(() => globalThis.__sshUI.creates), ['中文 team', newName].map(name => ({ target: { kind: 'ssh', host, port }, parent, name })));
+  await addProject.getByRole('button', { name: '添加目录', exact: true }).click();
+  await addProject.waitFor({ state: 'detached' });
+  assert.ok((await readWorkspaces()).some(workspace => workspace.cwd === newPath && workspace.name === newName && workspace.host === host && workspace.port === port));
+
   // A local folder is added on the local machine, like any other.
   if (process.platform !== 'win32') {
     await page.getByRole('button', { name: '在 本地 添加项目文件夹', exact: true }).click();
@@ -312,7 +367,7 @@ try {
   const events = (await Promise.all((await readdir(diagnostics)).filter(name => name.endsWith('.jsonl')).map(name => readFile(path.join(diagnostics, name), 'utf8'))))
     .join('\n').split('\n').filter(Boolean).map(line => JSON.parse(line));
   assert.ok(!events.some(event => event.event.startsWith('transport.command')), 'This UI test must never launch SSH or any native backend command');
-  const report = { success: true, scope: 'renderer SSH workflow only; local synthetic IPC', manualFolderScope: true, noScanOnMachineRegistration: true, configInheritancePreserved: true, noDuplicateFolders: true,
+  const report = { success: true, scope: 'renderer SSH workflow only; local synthetic IPC', manualFolderScope: true, noScanOnMachineRegistration: true, configInheritancePreserved: true, noDuplicateFolders: true, createRemoteFolder: true,
  initialConnectionErrorsVisible: true, watchErrorsRetriable: true, movedResumeErrorRetriable: true, readonlyTerminal: true, noNativeCommandsOrModelRequests: true, scans: fixture.scans.length };
   await writeFile(path.join(resultDirectory, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   console.log(JSON.stringify({ ...report, resultDirectory }));
