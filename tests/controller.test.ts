@@ -79,10 +79,16 @@ test('Controller integrates real tmux capture, delayed JSONL, reopen and explici
     const resumed = await controller.resumeSession(workspace.id, session.id);
     assert.equal(resumed.paneId, session.paneId, 'Resuming an existing live session must not fork a second Claude process');
 
-    await controller.sendMessage(workspace.id, session.id, '测试中断操作 ' + '继续生成'.repeat(120));
-    const beforeInterrupt = await waitFor(s => !!s.turnControls?.canStop && s.messages.length === 6 && s.messages[5].source === 'preview' && s.messages[5].text.length > 5);
-    // The mock has no footer hint; its spinner right above the box shows the turn runs (as on Claude Code 2.1.316).
-    assert.equal(beforeInterrupt.turnControls?.running, true);
+    // `mock-hold`: the reply shows its first words and then waits for Esc, so the stop reads a frame the mock
+    // no longer redraws. A streamed reply clears and redraws the whole screen every 100 ms; a read that caught
+    // the redraw half done (a macOS pty hands tmux a frame in pieces) had no spinner and no input box, and the
+    // stop was refused on its first read ("Claude 原生画面已变化", macOS CI).
+    await controller.sendMessage(workspace.id, session.id, '测试中断操作 mock-hold');
+    // A poll can still catch that last redraw half done (the spinner drawn, the input box not yet): wait for the
+    // whole frame. The mock has no footer hint; its spinner right above the box shows the turn runs (as on
+    // Claude Code 2.1.316), so `running` must come true.
+    const beforeInterrupt = await waitFor(s => !!s.turnControls?.canStop && s.turnControls.running === true
+      && s.messages.length === 6 && s.messages[5].source === 'preview' && s.messages[5].text.length > 5);
     await controller.turnAction(workspace.id, session.id, beforeInterrupt.paneId!, beforeInterrupt.panePid!, { kind: 'stop' });
     const interrupted = await waitFor(s => s.messages.length === 6 && s.status === 'idle' && s.messages[5].status === 'complete');
     assert.equal(interrupted.messages[5].id, beforeInterrupt.messages[5].id);

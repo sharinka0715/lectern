@@ -384,7 +384,9 @@ try {
   await diagnosticsDialog.getByRole('button', { name: '关闭诊断日志', exact: true }).click();
 
   // 模拟器在输入框上方显示中断提示。通过 UI 中断，再核对同一原生会话接收下一轮。
-  const slowPrompt = '测试停止生成 ' + '继续输出'.repeat(180);
+  // `mock-hold`：回复显示开头后一直扣住、直到 Esc，停止读到的是不再重画的画面（流式回复每 100 ms 清屏重画，
+  // 读到画了一半的屏幕时没有转圈和输入框，停止在第一次读屏就被拒，见 tests/controller.test.ts）。
+  const slowPrompt = '测试停止生成 mock-hold ' + '继续输出'.repeat(180);
   const afterStop = '中断之后继续聊天';
   await input.fill(slowPrompt);
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
