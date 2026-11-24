@@ -66,7 +66,7 @@ async function launch(locale) {
     && !document.querySelector('form.composer textarea')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30_000 });
   const sessionId = await page.locator('.session-row.active').getAttribute('data-session-id');
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
-  const project = path.join(workspace.claudeDir, 'projects', workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'projects', workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
   return {
     app, page, errors, sessionId, workspace, project, taskTmp,
     async close() {
@@ -479,6 +479,8 @@ async function splitShot(demo, s, locale) {
   await secondary.locator('table').waitFor();
   // Resume it, so both sides are live, and give the two panes the whole width.
   await secondary.getByRole('button', { name: tr(locale, '续接会话', 'Resume'), exact: true }).first().click();
+  const settings = page.getByRole('dialog', { name: tr(locale, '续接前设置配置文件', 'Set the configuration file before resuming') });
+  await settings.getByRole('button', { name: tr(locale, '续接', 'Resume'), exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.desk-pane[data-view="secondary"] form.composer textarea')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30_000 });
   await toggleSidebar(page, locale, false);
   await settle(page);

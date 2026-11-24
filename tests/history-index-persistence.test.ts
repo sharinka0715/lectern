@@ -149,7 +149,7 @@ test('SSH index distinguishes endpoint, effective config and cwd (even with a co
     const { disk, discover } = f.openBackend(); await discover();
     const read = (ws = f.ws, location = f.location) => disk.forWorkspace(ws, location)!.read();
     assert.equal((await read({ ...f.ws, name: 'new display name' })).size, 1);
-    for (const change of [{ id: 'another' }, { host: 'other' }, { port: 22 }, { cwd: '/work/a.b' }, { claudeDir: f.location.claudeDir }]) {
+    for (const change of [{ id: 'another' }, { host: 'other' }, { port: 22 }, { cwd: '/work/a.b' }]) {
       assert.equal((await read({ ...f.ws, ...change })).size, 0);
     }
     for (const change of [{ cwd: '/work/a.b' }, { claudeDir: '/other/config' }, { projectDirs: ['/another/slug'] }]) {

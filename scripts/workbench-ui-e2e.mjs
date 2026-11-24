@@ -28,7 +28,7 @@ const ids = [randomUUID(), randomUUID(), randomUUID()];
 const workspaces = [];
 for (const [i, name] of ["设计稿", "开发笔记"].entries()) {
   const cwd = path.join(root, "work" + i);
-  const ws = { id: "work" + i, name, kind: "local", cwd, claudeDir: config };
+  const ws = { id: "work" + i, name, kind: "local", cwd };
   workspaces.push(ws);
   const project = path.join(
     config,

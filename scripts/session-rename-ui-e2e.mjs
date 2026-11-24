@@ -28,10 +28,10 @@ try {
   page.on("pageerror", error => pageErrors.push(error.message));
   await resizeWindow(app, page, 1440, 880);
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
-  assert.ok(workspace.claudeDir.startsWith(root + path.sep) && workspace.cwd.startsWith(root + path.sep));
+  assert.ok((await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR)).startsWith(root + path.sep) && workspace.cwd.startsWith(root + path.sep));
   const liveId = await page.locator('.session-row.active[data-status="idle"]').getAttribute("data-session-id");
   const archiveId = randomUUID();
-  const project = path.join(workspace.claudeDir, "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
   const firstPrompt = "请整理项目计划";
   const archive = path.join(project, archiveId + ".jsonl");
   const seed = { type: "user", uuid: randomUUID(), sessionId: archiveId, cwd: workspace.cwd,
@@ -88,13 +88,13 @@ try {
   await row(liveId).click();
   await page.waitForFunction(() => document.querySelector('.desk-pane[data-view="primary"]')?.dataset.active === "true");
   assert.equal(await header("secondary").innerText(), archiveTitle);
-  const screenState = path.join(workspace.claudeDir, "screen-state");
+  const screenState = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "screen-state");
   await writeFile(screenState, "waiting");
   await page.locator('.session-row.active[data-status="waiting"]').waitFor();
   await row(liveId).press("F2");
   const requested = "交接记录 · 修订 2";
   const liveTitle = requested + "-2";
-  await writeFile(path.join(workspace.claudeDir, "fixture-occupied-name"), requested);
+  await writeFile(path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "fixture-occupied-name"), requested);
   await field.fill(requested);
   await save.click();
   await dialog.getByRole("alert").waitFor();

@@ -124,6 +124,7 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   /** Recording-only Claude Code hooks for question and permission dialogs in the processes Lectern
    * starts (backend/dialog-hooks.ts); off by default. */
   dialogHooks: boolean;
+  warnSettingsOverrides: boolean;
   historyPageMiB: number;
   showCacheTtl: boolean;
   showSubscriptionQuota: boolean;
@@ -155,7 +156,7 @@ export const defaultAppearance = {
   showSubscriptionQuota: true,
   quotaTimeZone: "",
 } as const;
-export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtlPreset: "default", dialogHooks: false } as const;
+export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtlPreset: "default", dialogHooks: false, warnSettingsOverrides: true } as const;
 const defaults: DesktopState = {
   ...defaultAppearance,
   ...defaultSessionOptions,
@@ -238,6 +239,7 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       promptCacheTtlPreset: "promptCacheTtlPreset" in p ? promptCacheTtlPreset(p.promptCacheTtlPreset)
         : promptCacheTtlPresetOf(p.promptCacheTtl, p.subagentPromptCacheTtl),
       dialogHooks: p.dialogHooks === true,
+      warnSettingsOverrides: p.warnSettingsOverrides !== false,
       historyPageMiB: historyPageSizeMiB(p.historyPageMiB),
       showCacheTtl: p.showCacheTtl !== false,
       showSubscriptionQuota: p.showSubscriptionQuota !== false,

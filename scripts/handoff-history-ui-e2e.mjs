@@ -15,7 +15,7 @@ const line = row => JSON.stringify(row) + '\n';
 let app;
 try {
   await Promise.all([cwd, profile, project].map(p => mkdir(p, {recursive:true})));
-  await writeFile(path.join(profile,'workspaces.json'), JSON.stringify([{id:'sample', name:'交接测试', cwd, claudeDir:config, kind:'local'}]));
+  await writeFile(path.join(profile,'workspaces.json'), JSON.stringify([{id:'sample', name:'交接测试', cwd, kind:'local'}]));
   let parent = null;
   const msg = (sessionId, type, content) => {
     const uuid = randomUUID();

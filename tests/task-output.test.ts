@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
@@ -138,7 +139,8 @@ test('redirect files: read windows of a growing file under the attachment rules'
   await mkdir(config, { recursive: true }); await mkdir(outside);
   const backend = new Backend();
   t.after(async () => { await backend.dispose(); await rm(base, { recursive: true, force: true }); });
-  const workspace = { id: 'redirect', name: 'proj', kind: 'local' as const, cwd, claudeDir: config };
+  const workspace = { id: 'redirect', name: 'proj', kind: 'local' as const, cwd };
+  fixtureClaudeConfig(config);
   const log = path.join(cwd, 'logs', 'train.log');
   await mkdir(path.dirname(log)); await writeFile(log, 'epoch 1\nepoch 2\n');
   const first = await backend.artifacts.readWindow(workspace, log, { limit: 9 });

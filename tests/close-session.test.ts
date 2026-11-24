@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import { strict as assert } from 'node:assert';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
@@ -10,7 +11,8 @@ import type { Workspace } from '../src/shared/types';
 test('close validates current pane and PID, drains final writes, leaves siblings live and the original UUID resumable', { skip: process.platform === 'win32', timeout: 30_000 }, async t => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'lectern-close-')));
   const config = join(dir, 'config');
-  const target: Workspace = { id: 'close-test', name: 'Close', kind: 'local', cwd: dir, claudeDir: config };
+  const target: Workspace = { id: 'close-test', name: 'Close', kind: 'local', cwd: dir };
+  fixtureClaudeConfig(config);
   const script = join(dir, 'cli.mjs');
   const socket = 'close-' + randomUUID().slice(0, 8);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [script] });
@@ -53,8 +55,9 @@ console.log('fixture-ready');setInterval(()=>{},10000);`);
 test('quitting: running sessions with pane PIDs, what discovery knew, and closing a listed conversation after checking it again', { skip: process.platform === 'win32', timeout: 40_000 }, async t => {
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'lectern-quit-')));
   const config = join(dir, 'config');
-  const target: Workspace = { id: 'quit-test', name: 'Quit', kind: 'local', cwd: dir, claudeDir: config };
-  const missing: Workspace = { id: 'quit-missing', name: 'Gone', kind: 'local', cwd: join(dir, 'missing'), claudeDir: config };
+  const target: Workspace = { id: 'quit-test', name: 'Quit', kind: 'local', cwd: dir };
+  fixtureClaudeConfig(config);
+  const missing: Workspace = { id: 'quit-missing', name: 'Gone', kind: 'local', cwd: join(dir, 'missing') };
   const script = join(dir, 'cli.mjs');
   const socket = 'quit-' + randomUUID().slice(0, 8);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [script] });

@@ -29,7 +29,7 @@ const olderText = '更早一轮的图文结论', latestText = '最新一轮的�
 let app;
 try {
   await Promise.all([cwd, profile, project].map(dir => mkdir(dir, { recursive: true })));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id:'fixture', name:'多图历史', cwd, claudeDir:config, kind:'local' }]));
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id:'fixture', name:'多图历史', cwd, kind:'local' }]));
   let parentUuid = null;
   const line = (type, content) => {
     const uuid = randomUUID();

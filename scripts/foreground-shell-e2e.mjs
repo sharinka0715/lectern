@@ -35,10 +35,10 @@ try {
   await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['fg-e2e'] } }));
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash'], defaultMode: 'acceptEdits' },
     env: { ANTHROPIC_API_KEY: 'fg-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'fg', name: '前台命令', kind: 'local', cwd, claudeDir: config }]));
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'fg', name: '前台命令', kind: 'local', cwd }]));
   // Auto mode's check runs locally (answered by the loopback model), not on the server, which
   // this loopback "gateway" cannot run; the variable reaches Claude Code through the app and tmux.
-  const env = { ...process.env, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
@@ -49,6 +49,7 @@ try {
   const input = page.getByRole('textbox', { name: '发送给 Claude 的消息' });
   await input.fill('运行慢命令');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await page.locator('.settings-override-dialog').getByRole('button', { name: '接受', exact: true }).click();
   // The app starts the session in auto mode (Bash is allowed here anyway) and gets
   // past any auto-mode prompt itself; wait until the model was asked.
   for (let i = 0; i < 80 && turn === 0; i++) await new Promise(r => setTimeout(r, 250));

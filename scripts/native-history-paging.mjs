@@ -45,7 +45,8 @@ const logs = path.join(probe,'logs');
 configureDiagnostics({ directory:logs, captureContent:false });
 const report = { fileBytes:size, compactBoundaries:compactions, initialBytes:0, initialMessages:0, openMs:0, pages:[], olderHumanVerified:false };
 const out = path.resolve('test-results','native-history-paging-'+Date.now());
-const workspace = { id:'native-page-probe', name:'Pagination', kind:'local', cwd, claudeDir:config };
+process.env.CLAUDE_CONFIG_DIR = config;
+const workspace = { id:'native-page-probe', name:'Pagination', kind:'local', cwd };
 class MeasuredBackend extends Backend {
   async readSession(...args) {
     const result = await super.readSession(...args);

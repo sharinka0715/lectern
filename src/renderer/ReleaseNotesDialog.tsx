@@ -24,6 +24,7 @@ export function ReleaseNotesDialog({ current, onClose }: { current?: string; onC
         <h3 id={`release-${note.version}`}>v{note.version}{note.version === current && <span className="release-current">{t('misc.currentVersion')}</span>}
           {current && isLaterVersion(note.version, current) && <span className="release-current release-pending">{t('misc.pending')}</span>}</h3>
         {note.features.length > 0 && <><h4>{t('misc.features')}</h4><ol>{note.features.map((item, i) => <li key={i}>{releaseItemText(item, getLocale())}</li>)}</ol></>}
+        {!!note.changes?.length && <><h4>{t('misc.changes')}</h4><ol>{note.changes.map((item, i) => <li key={i}>{releaseItemText(item, getLocale())}</li>)}</ol></>}
         {note.fixes.length > 0 && <><h4>{t('misc.fixes')}</h4><ol>{note.fixes.map((item, i) => <li key={i}>{releaseItemText(item, getLocale())}</li>)}</ol></>}
       </section>)}
     </div>

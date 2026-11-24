@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -78,8 +79,9 @@ test('history project discovery handles deleted cwd, aliases, large prefixes, co
   const subagents = path.join(projectDir, randomUUID(), 'subagents'); await mkdir(subagents, { recursive: true }); await writeFile(path.join(subagents, `${randomUUID()}.jsonl`), record('/tmp/subagent'));
   const backend = new Backend();
   const transport = new Transport();
+  fixtureClaudeConfig(config);
   try {
-    const scan = await backend.discoverHistoryProjects({ kind: 'local', claudeDir: config });
+    const scan = await backend.discoverHistoryProjects({ kind: 'local' });
     assert.equal(scan.scannedFiles, 9);
     assert.equal(scan.skippedFiles, 3);
     assert.equal(scan.truncated, false);
@@ -90,21 +92,21 @@ test('history project discovery handles deleted cwd, aliases, large prefixes, co
     assert.equal(JSON.stringify(scan).includes('PRIVATE MESSAGE'), false);
     assert.equal(scan.projects.some(p => p.cwd === '/tmp/later-cwd'), false, 'expanded prefix wins over later tail cwd');
     assert.match(scan.diagnostic!, /符号链接目录/);
-    const limited = await scanHistoryProjects({ kind: 'local', claudeDir: config }, transport, { maxFiles: 2 });
+    const limited = await scanHistoryProjects({ kind: 'local' }, transport, { maxFiles: 2 });
     assert.equal(limited.scannedFiles, 2);
     assert.equal(limited.truncated, true);
-    const budgetLimited = await scanHistoryProjects({ kind: 'local', claudeDir: config }, transport, { expansionBytes: 0 });
+    const budgetLimited = await scanHistoryProjects({ kind: 'local' }, transport, { expansionBytes: 0 });
     assert.equal(budgetLimited.truncated, true);
     // Only the tail has a cwd, a subdirectory Claude Code went to: the session is still the project's.
     await historyFile(cwd, JSON.stringify({ type: 'file-history-snapshot', data: 'x'.repeat(20_000) }) + '\n' + record(path.join(cwd, 'sub')));
-    const subdirectory = await scanHistoryProjects({ kind: 'local', claudeDir: config }, transport, { expansionBytes: 0 });
+    const subdirectory = await scanHistoryProjects({ kind: 'local' }, transport, { expansionBytes: 0 });
     assert.equal(subdirectory.projects.some(p => p.cwd === path.join(cwd, 'sub')), false);
     assert.equal(subdirectory.projects.find(p => p.cwd === cwd)?.sessionCount, budgetLimited.projects.find(p => p.cwd === cwd)!.sessionCount + 1);
     assert.match(budgetLimited.diagnostic!, /预算/);
     const symlinkRoot = path.join(root, 'linked-config'); await mkdir(symlinkRoot); await symlink(path.join(config, 'projects'), path.join(symlinkRoot, 'projects'));
-    assert.equal((await backend.discoverHistoryProjects({ kind: 'local', claudeDir: symlinkRoot })).scannedFiles, 0);
+    fixtureClaudeConfig(symlinkRoot);
+    assert.equal((await backend.discoverHistoryProjects({ kind: 'local' })).scannedFiles, 0);
     await assert.rejects(() => backend.discoverHistoryProjects({ kind: 'ssh', host: '-oProxyCommand=bad' }), /SSH config alias/);
-    await assert.rejects(() => backend.discoverHistoryProjects({ kind: 'local', claudeDir: 'relative' }), /absolute POSIX/);
   } finally { await backend.dispose(); await transport.dispose(); await rm(root, { recursive: true, force: true }); }
 });
 

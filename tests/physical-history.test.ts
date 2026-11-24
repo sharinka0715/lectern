@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, link, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -16,7 +17,8 @@ const line = (r:unknown) => JSON.stringify(r)+'\n';
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(join(tmpdir(),'lectern 会话 ')));
   const config = join(cwd,'config'), profile = join(cwd,'profile');
-  const ws: Workspace = {kind:'ssh',id:'test-history',host:'invalid.example',cwd,claudeDir:config,name:'history'};
+  const ws: Workspace = {kind:'ssh',id:'test-history',host:'invalid.example',cwd,name:'history'};
+  fixtureClaudeConfig(config);
   const dirs = [projectSlug(cwd), cwd.replace(/[/.]/g,'-')].map(s=>join(config,'projects',s));
   await Promise.all(dirs.map(d=>mkdir(d,{recursive:true})));
   const backends: Backend[]=[];

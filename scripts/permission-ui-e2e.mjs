@@ -16,8 +16,8 @@ import { DIALOG_HOOKS, hookStatus, setDialogHooks } from './fixtures/dialog-hook
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-perm-ui-')));
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
-// A second folder whose sessions stay in auto mode, with its own Claude configuration.
-const autoConfig = path.join(root, 'claude-auto'), autoCwd = path.join(root, 'work-auto');
+// A second folder whose sessions stay in auto mode, using the default permission settings.
+const autoCwd = path.join(root, 'work-auto');
 // One tool call per prompt, chosen by the prompt text; afterwards plain text.
 const plans = {
   '运行命令': { name: 'Bash', input: { command: 'echo hello > greeting.txt', description: 'Write a greeting file' } },
@@ -51,22 +51,20 @@ const server = createServer(async (req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 let app;
 try {
-  await Promise.all([profile, config, cwd, path.join(cwd, 'build'), autoConfig, autoCwd].map(dir => mkdir(dir, { recursive: true })));
-  await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['perm-e2e'] } }));
+  await Promise.all([profile, config, cwd, path.join(cwd, 'build'), path.join(cwd, '.claude'), autoCwd].map(dir => mkdir(dir, { recursive: true })));
+  await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true }, [autoCwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['perm-e2e'] } }));
   // The app starts sessions in auto mode, which would run these tools without asking.
   // This user has turned auto mode off (Claude Code's documented opt-out), so the
   // session falls back to manual mode and every tool asks.
-  await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'default', disableAutoMode: 'disable' },
+  await writeFile(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'default', disableAutoMode: 'disable' } }));
+  await writeFile(path.join(config, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   // Auto mode stays on there. Lectern leaves auto mode's check on the server, which this
   // third-party endpoint does not run, so Claude Code 2.1.321+ asks "Auto mode can't check
   // actions in this session" in the app's own new chats there (steps 4 and 5).
-  await writeFile(path.join(autoConfig, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [autoCwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['perm-e2e'] } }));
-  await writeFile(path.join(autoConfig, 'settings.json'), JSON.stringify({
-    env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'perm', name: '权限确认', kind: 'local', cwd, claudeDir: config },
-    { id: 'auto', name: '自动检查', kind: 'local', cwd: autoCwd, claudeDir: autoConfig }]));
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', ...DIALOG_HOOKS && { TMPDIR: root } };
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'perm', name: '权限确认', kind: 'local', cwd },
+    { id: 'auto', name: '自动检查', kind: 'local', cwd: autoCwd }]));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', ...DIALOG_HOOKS && { TMPDIR: root } };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   // Lectern's default: nothing moves auto mode's check off the server (manual mode in the first folder has none).
   delete env.CLAUDE_CODE_AUTO_MODE_SERVER;
@@ -98,6 +96,7 @@ try {
     await ready();
     await input.fill(prompt);
     await page.getByRole('button', { name: '发送消息', exact: true }).click();
+    if (prompt === '运行命令') await page.locator('.settings-override-dialog').getByRole('button', { name: '接受', exact: true }).click();
     await card.waitFor().catch(async error => {
       const pane = paneId();
       console.error('PANE\n' + (pane ? tmux('capture-pane', '-p', '-t', pane) : '(none)').split('\n').filter(l => l.trim()).slice(-24).join('\n'));

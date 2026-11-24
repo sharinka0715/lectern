@@ -34,8 +34,8 @@ try {
   await history(later, ['稍后扫描的对话 A', '稍后扫描的对话 B']);
   await mkdir(profile, { recursive: true });
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([
-    { id: 'many', name: '很多对话', kind: 'local', cwd: many, claudeDir },
-    { id: 'later', name: '新加的目录', kind: 'local', cwd: later, claudeDir, historyScan: false },
+    { id: 'many', name: '很多对话', kind: 'local', cwd: many },
+    { id: 'later', name: '新加的目录', kind: 'local', cwd: later, historyScan: false },
   ]));
   const executablePath = process.argv[2];
   const launch = async () => {

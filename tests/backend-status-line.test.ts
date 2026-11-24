@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -68,14 +69,15 @@ test('status line source transport uses the target tmux version', () => {
 
 test('per-launch callback captures native stdin in the target pane, survives restart, and clears with the pane', { skip: process.platform === 'win32', timeout: 40_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-status-line-')));
-  const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
+  const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const socket = 'statusline-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
   const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
   const options = { claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] };
   const backend = new Backend(options), reopened = new Backend(options);
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
-    await mkdir(workspace.claudeDir!);
+    await mkdir(join(root, 'config'));
     await symlink(process.execPath, exe);
     await writeFile(fixture, `
       import {spawnSync} from 'node:child_process';

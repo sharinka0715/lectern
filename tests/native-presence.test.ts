@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, mkdir, realpath, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -77,7 +78,8 @@ test('isolated tmux uses structured presence, reuses only stable frames and revo
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'lectern-presence-')));
   const config = join(dir, 'config'), socket = 'presence-' + randomUUID().slice(0, 8), mock = join(dir, 'fixture.mjs');
   const child = join(dir, 'child');
-  const workspace: Workspace = { id: 'presence-fixture', name: 'fixture', kind: 'local', cwd: dir, claudeDir: config };
+  const workspace: Workspace = { id: 'presence-fixture', name: 'fixture', kind: 'local', cwd: dir };
+  fixtureClaudeConfig(config);
   const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] });
   try {

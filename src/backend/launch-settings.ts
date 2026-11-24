@@ -1,9 +1,8 @@
 import { promptCacheTtls, type PromptCacheTtlPreset } from '../shared/prompt-cache';
 
-/** The per-process settings (`claude --settings <json>`) every Claude that Lectern
- * starts gets: new chats, resumes, the temporary resume behind a rename and the
- * model-list probe. They layer over the user's own settings files for this process
- * only; those files are never written. */
+/** Lectern's per-process settings for chats, resumes, temporary renames and probes.
+ * A custom file is merged with this layer before it is passed to Claude Code.
+ * Without a custom file, Claude Code receives this layer as inline JSON. */
 export function launchSettings(options: {
   statusLine?: object; enableWorkflows: boolean; promptCacheTtlPreset?: PromptCacheTtlPreset;
   /** Recording hooks for question and permission dialogs (dialog-hooks.ts), only when the user

@@ -47,9 +47,12 @@ test('endpoint catalog, file boundaries and real local cancellation in an isolat
     for (const expected of ['个人工具','team:发布','local','suite:reader','suite:qa:check','linked','linked-project','project-tools:trace','compact']) assert.ok((await complete('slash',expected)).some(i=>i.value===expected), expected);
     for (const absent of ['internal','not-active','other-project-only','disabled:','stale:']) assert.deepEqual(await complete('slash',absent),[]);
     await assert.rejects(access(marker));
-    const override = {...ws,claudeDir:join(temp,'override')}; await write(join(override.claudeDir,'commands','override.md'));
+    const override = {...ws,id:'override'};
+    const overrideConfig = join(temp,'override'); await write(join(overrideConfig,'commands','override.md'));
+    process.env.CLAUDE_CONFIG_DIR = overrideConfig;
     assert.equal((await backend.query(override,'primary','override',{kind:'slash',prefix:'override'}))[0]?.value,'override');
     assert.deepEqual(await backend.query(override,'primary','override-2',{kind:'slash',prefix:'个人工具'}),[]);
+    process.env.CLAUDE_CONFIG_DIR = config;
   });
   await t.test('versioned cache and legacy flat installs when no registry exists',async()=>{
     await rm(join(pluginRoot,'installed_plugins.json')); backend.reset();

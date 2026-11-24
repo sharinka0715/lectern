@@ -62,8 +62,8 @@ try {
   await history(path.join(root, 'beta'), ['乙 对话 1', '乙 对话 2', '乙 对话 3'], 2);
   await mkdir(profile, { recursive: true });
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([
-    { id: 'alpha', name: '甲项目', kind: 'local', cwd: path.join(root, 'alpha'), claudeDir },
-    { id: 'beta', name: '乙项目', kind: 'local', cwd: path.join(root, 'beta'), claudeDir },
+    { id: 'alpha', name: '甲项目', kind: 'local', cwd: path.join(root, 'alpha') },
+    { id: 'beta', name: '乙项目', kind: 'local', cwd: path.join(root, 'beta') },
   ]));
   await launch();
   // A fresh profile opens the first folder by itself.

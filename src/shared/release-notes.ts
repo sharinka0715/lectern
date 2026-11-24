@@ -17,6 +17,7 @@ export type ReleaseItem = string | readonly [zh: string, en: string];
 export interface ReleaseNote {
   version: string;
   features: ReleaseItem[];
+  changes?: ReleaseItem[];
   fixes: ReleaseItem[];
 }
 
@@ -37,6 +38,8 @@ export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.3',
     features: [
+      ['每段对话可以指定自定义 Claude 配置文件。', 'Each conversation can use a custom Claude settings file.'],
+      ['Lectern 覆盖你的设置时会提醒。', 'Lectern warns when it overrides your settings.'],
       ['侧栏「最近更新」「进行中优先」与「按项目」观感一致，分组标题像文件夹一样可折叠；每个对话分两行，上行是对话名，下行以浅色小字写机器和文件夹。',
         'The "Most recently updated" and "In progress first" sidebar lists look like "By project", with groups that fold like folders; each chat takes two lines: its name, then its machine and folder.'],
       ['侧栏里展开、折叠的项目文件夹、机器、分组和「展开更多」在切换排序方式和重启后都保持原样，在其他排序里打开对话也不再展开它的文件夹。',
@@ -55,6 +58,9 @@ export const releaseNotes: ReleaseNote[] = [
         'Right-click a conversation in the sidebar to mark it as read or unread, with a manual unread mark lasting until you reopen the conversation or clear it.'],
       ['主回复结束后若还有子代理或后台任务在运行，侧栏和顶栏显示「回复完成」，侧栏另起一行显示计数并保留未读标记。',
         'If subagents or background tasks still run when the main reply finishes, the sidebar and title bar show "Reply complete", and the sidebar shows the counts on a separate line and keeps the unread mark.'],
+    ],
+    changes: [
+      ['文件夹一律改用目标机器的 Claude 默认配置目录（通常是 ~/.claude），包括之前指定过其他目录的文件夹。', "All folders now use Claude Code's default configuration directory on the target (normally ~/.claude), including folders that previously specified a different directory."],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',

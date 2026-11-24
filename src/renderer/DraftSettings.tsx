@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { SettingsFileEditor } from './ConversationSettingsDialog';
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Box, Check, ChevronDown, Loader2, RefreshCw, X } from "lucide-react";
 import { defaultModelChoice, effortsFor, validLaunchChoices, type LaunchChoices, type ModelCatalogState } from "../shared/model-catalog";
 import { tip } from "./Tooltip";
@@ -13,22 +14,23 @@ const errorText = (error: unknown) => String(error instanceof Error ? error.mess
 /** Model and effort for a new chat that has not started. The lists are the
  * machine's (read once per run); the choice applies to this chat's launch only
  * and is never saved as a default. */
-export function DraftSettings({ workspaceId, choices, onChange, disabled }: {
-  workspaceId: string; choices: LaunchChoices; onChange(next: LaunchChoices): void; disabled?: boolean;
+export function DraftSettings({ workspaceId, choices, onChange, disabled, file, onFile }: {
+  workspaceId: string; choices: LaunchChoices; onChange(next: LaunchChoices): void; disabled?: boolean; file: string | null; onFile(next: string | null): void;
 }) {
   const [state, setState] = useState<ModelCatalogState>({ status: "loading" });
-  const [openKind, setOpenKind] = useState<Kind>();
+  const [openKind, setOpenKind] = useState<Kind | "file">();
   const container = useRef<HTMLDivElement>(null);
+  const fileMenu = useRef<HTMLElement>(null);
   const load = (retry = false) => {
     let live = true;
     setState({ status: "loading" });
-    window.desktop.modelCatalog(workspaceId, retry).then(next => { if (live) setState(next); }, error => {
+    window.desktop.modelCatalog(workspaceId, retry, file).then(next => { if (live) setState(next); }, error => {
       reportActionError(error, "读取模型列表失败");
       if (live) setState({ status: "failed", error: errorText(error) });
     });
     return () => { live = false; };
   };
-  useEffect(() => load(), [workspaceId]);
+  useEffect(() => load(), [workspaceId, file]);
   const catalog = state.status === "ready" ? state.catalog : undefined;
   // Another folder or machine may not offer the earlier choice.
   useEffect(() => {
@@ -43,6 +45,25 @@ export function DraftSettings({ workspaceId, choices, onChange, disabled }: {
     document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [openKind]);
+  useLayoutEffect(() => {
+    const menu = fileMenu.current;
+    const anchor = menu?.offsetParent;
+    if (!menu || !anchor) return;
+    const dock = anchor.closest('.composer-area');
+    const area = anchor.closest('.main-area');
+    const measure = () => {
+      // The upper edge moves as the editor grows, while the bottom stays anchored.
+      const top = area?.getBoundingClientRect().top ?? 0;
+      menu.style.setProperty('--settings-file-space', `${menu.getBoundingClientRect().bottom - top}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(anchor);
+    if (dock) observer.observe(dock);
+    if (area) observer.observe(area);
+    window.addEventListener('resize', measure);
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
   }, [openKind]);
   const defaultRow = catalog && defaultModelChoice(catalog);
   const modelRow = catalog?.models.find(row => row.value === choices.model);
@@ -71,7 +92,25 @@ export function DraftSettings({ workspaceId, choices, onChange, disabled }: {
       {kind === "model" && <span className="mini-claude" aria-hidden="true"><Box size={14} strokeWidth={1.7} /></span>}
       <span>{label(kind)}</span>{state.status === "loading" && openKind === kind ? <Loader2 size={11} className="rotating" /> : <ChevronDown size={11} />}
     </button>)}
-    {openKind && <section className="session-setting-menu" role="dialog" aria-label={t('settings.choose', { kind: openKind })} data-setting-menu={openKind}>
+    <button type="button" className={"session-setting-trigger" + (openKind === "file" ? " selected" : "")}
+      data-setting-kind="file" aria-label={t('conversationSettings.title')} aria-haspopup="dialog" aria-expanded={openKind === "file"}
+      disabled={disabled} {...tip(file ?? t('conversationSettings.default'), t('conversationSettings.help'))}
+      onClick={() => setOpenKind(openKind === "file" ? undefined : "file")}>
+      <span>{file ? file.split("/").at(-1) : t('conversationSettings.default')}</span><ChevronDown size={11} />
+    </button>
+    {openKind === "file" && <section ref={fileMenu} className="session-setting-menu settings-file-menu" role="dialog" aria-label={t('conversationSettings.title')} data-setting-menu="file">
+      <div className="setting-menu-heading"><strong>{t('conversationSettings.title')}</strong>
+        <button className="icon-button" type="button" aria-label={t('settings.closeMenu')} onClick={() => setOpenKind(undefined)}><X size={14} /></button>
+      </div>
+      <SettingsFileEditor workspaceId={workspaceId} initial={file} mode="draft" onApply={(next, result) => {
+        if (result) {
+          onChange(validLaunchChoices(result, choices));
+          setState({ status: 'ready', catalog: result });
+        }
+        onFile(next);
+      }} />
+    </section>}
+    {openKind && openKind !== "file" && <section className="session-setting-menu" role="dialog" aria-label={t('settings.choose', { kind: openKind })} data-setting-menu={openKind}>
       <div className="setting-menu-heading"><strong>{names(openKind)}</strong>
         <button className="icon-button" type="button" aria-label={t('settings.closeMenu')} onClick={() => setOpenKind(undefined)}><X size={14} /></button></div>
       {state.status === "loading" && <div className="setting-menu-loading" role="status"><Loader2 size={15} className="rotating" /><span>{t('settings.readingModels')}</span></div>}

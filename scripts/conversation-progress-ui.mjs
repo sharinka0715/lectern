@@ -57,7 +57,7 @@ try {
   assert.match(await summary.innerText(),/失败/);
   assert.match(await summary.innerText(),/\+2/);
   assert.match(await summary.innerText(),/[−-]1/);
-  const state = path.join(workspace.claudeDir,'screen-state');
+  const state = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR),'screen-state');
   const progress = page.locator('.turn-progress');
   await writeFile(state, 'progress');
   await progress.filter({hasText:/15/}).waitFor();

@@ -178,7 +178,8 @@ function keep(top: Candidate[], candidate: Candidate, limit: number) {
   top.splice(low, 0, candidate);
   if (top.length > limit) top.pop();
 }
-const keyOf = (ws: Workspace) => ws.id + '\n' + JSON.stringify([ws.kind, ws.host ?? '', ws.port ?? 0, ws.cwd, ws.claudeDir ?? '']);
+// Preserve the empty directory override slot used by existing indexes.
+export const fileIndexWorkspaceKey = (ws: Workspace) => ws.id + '\n' + JSON.stringify([ws.kind, ws.host ?? '', ws.port ?? 0, ws.cwd, '']);
 const failed = (ws: Workspace, error: unknown) => {
   const text = (error instanceof Error ? error.message : String(error)).slice(0, 300);
   // Superseded by a newer name, or ended with the window: not a failure.
@@ -224,7 +225,7 @@ export class FileIndex {
   /** Index the working directory in the background, or refresh it once it has expired. */
   prefetch(ws: Workspace): void {
     validateWorkspace(ws);
-    const wsKey = keyOf(ws), index = this.cache.get(wsKey + '\0');
+    const wsKey = fileIndexWorkspaceKey(ws), index = this.cache.get(wsKey + '\0');
     if (index) { this.use(ws, wsKey, index); return; }
     this.scan(ws, wsKey, '', false).catch(error => failed(ws, error));
   }
@@ -234,7 +235,7 @@ export class FileIndex {
     if (typeof prefix !== 'string' || prefix.length > 1024 || /[\x00-\x1f\x7f]/.test(prefix) || /^(?:\/|~(?:\/|$)|[a-z][\w+.-]*:)/i.test(prefix)) return [];
     const parts = prefix.replace(/^\.\//, '').split('/'), name = parts.pop()!;
     if (parts.some(p => !p || p === '.' || p === '..') || name === '..') return [];
-    const wsKey = keyOf(ws), scope = await abortable(this.scope(ws, wsKey), signal);
+    const wsKey = fileIndexWorkspaceKey(ws), scope = await abortable(this.scope(ws, wsKey), signal);
     let root, dir;
     try { root = scope.locate('.'); dir = scope.locate(parts.join('/') || '.'); } catch { return []; }
     if (root.external || dir.external || root.documents || dir.documents) return [];

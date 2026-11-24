@@ -85,9 +85,9 @@ async function run(locale) {
   await history(claudeDir, path.join(root, 'logs'), Array.from({ length: 20 }, (_, i) => L.log(i + 1)), L.reply, 2);
   await mkdir(profile, { recursive: true });
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([
-    { id: 'designs', name: L.designs, kind: 'local', cwd: path.join(root, 'designs'), claudeDir },
-    { id: 'notes', name: L.notes, kind: 'local', cwd: path.join(root, 'notes'), claudeDir },
-    { id: 'logs', name: L.logs, kind: 'local', cwd: path.join(root, 'logs'), claudeDir },
+    { id: 'designs', name: L.designs, kind: 'local', cwd: path.join(root, 'designs') },
+    { id: 'notes', name: L.notes, kind: 'local', cwd: path.join(root, 'notes') },
+    { id: 'logs', name: L.logs, kind: 'local', cwd: path.join(root, 'logs') },
   ]));
   const [oldest, newest] = [designs[0], designs[6]];
   let app, page;

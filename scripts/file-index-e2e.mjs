@@ -48,8 +48,8 @@ await write(path.join(project, sessionId + '.jsonl'), [
     message: { id: randomUUID(), role: 'assistant', content: [{ type: 'text', text: '旧的回复' }], stop_reason: 'end_turn' } },
 ].map(record => JSON.stringify(record)).join('\n') + '\n');
 await write(path.join(profile, 'workspaces.json'), JSON.stringify([
-  { id: 'big', name: '大仓库', kind: 'local', cwd: repo, claudeDir: config },
-  { id: 'side', name: '旁边', kind: 'local', cwd: side, claudeDir: config },
+  { id: 'big', name: '大仓库', kind: 'local', cwd: repo },
+  { id: 'side', name: '旁边', kind: 'local', cwd: side },
 ]));
 
 /** Scans the app logged (`completion.index.scanned`), oldest first. */

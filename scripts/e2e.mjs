@@ -241,7 +241,7 @@ try {
   assert.equal(isolated, true);
 
   const fixtureWorkspace = await page.evaluate(async () => (await window.desktop.listWorkspaces())[0]);
-  const launched = (await readFile(path.join(fixtureWorkspace.claudeDir, 'launches.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  const launched = (await readFile(path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'launches.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   const flags = launched.find(row => row.id === newSessionId).args;
   assert.deepEqual(flags.slice(flags.indexOf('--model'), flags.indexOf('--model') + 4), ['--model', 'fixture-beta', '--effort', 'high'], 'the draft\'s choices start that session');
   assert.ok(launched.filter(row => row.id !== newSessionId).every(row => !row.args.includes('--model')), 'other sessions keep the defaults');
@@ -249,7 +249,7 @@ try {
   await page.waitForFunction(() => document.querySelector('.draft-settings [data-setting-kind="model"]')?.textContent.startsWith('默认'));
   // A first message waits while the new Claude shows a prompt; reopening that chat
   // keeps it waiting, and closing the chat brings text and model back to the draft.
-  const stateFile = path.join(fixtureWorkspace.claudeDir, 'screen-state');
+  const stateFile = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'screen-state');
   await writeFile(stateFile, 'waiting');
   await page.getByRole('button', { name: '选择模型' }).click();
   await page.getByRole('option', { name: /Fixture Beta/ }).click();
@@ -374,7 +374,7 @@ try {
   assert.equal(metadataOnly.some(record => record.event.startsWith('capture.')), false, 'Metadata-only mode contains no raw captures');
   // The model list is read once from the machine's home directory with the folder's configuration,
   // and the machine's tmux / Claude Code check runs once for the machine as a whole.
-  const machine = [fixtureWorkspace.kind, fixtureWorkspace.host, fixtureWorkspace.port, fixtureWorkspace.claudeDir];
+  const machine = [fixtureWorkspace.kind, fixtureWorkspace.host, fixtureWorkspace.port, null];
   const demoScopes = new Set([fixtureWorkspace.id, 'models-' + createHash('sha256').update(JSON.stringify(machine)).digest('hex'), 'host-check']);
   const strays = records.filter(record => record.context.workspaceId && !demoScopes.has(record.context.workspaceId)).map(record => [record.event, record.context.workspaceId]);
   assert.deepEqual(strays, [], 'Only the isolated demo workspace and its model list were accessed');

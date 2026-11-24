@@ -62,6 +62,9 @@ try {
       tmux: { path: '/usr/bin/tmux', version: 'tmux 3.4' }, claude: { path: '/home/dev/.local/bin/claude', version: '2.1.329 (Claude Code)' } } }));
     // New chats read the machine's model list; keep that inside the fixture too.
     replace('modelCatalog', async () => ({ status: 'failed', error: 'synthetic: no model list' }));
+    // These are already-configured sessions on the synthetic target.
+    replace('getConversationSettings', async () => ({ settingsFile: null }));
+    replace('inspectConversationSettings', async () => ({ settingsFile: null, overrides: [] }));
     // The activity card reads the folder's git changes; the synthetic folder is no repository.
     fixture.gitReads = 0;
     replace('gitChanges', async () => { fixture.gitReads++; return { kind: 'none' }; });
@@ -72,7 +75,7 @@ try {
       fixture.scans.push(target);
       if (fixture.scanFail) throw new Error('Synthetic SSH: Permission denied (publickey).');
       return { projects: target.kind === 'ssh' ? fixture.paths.map((cwd, index) => ({ cwd, sessionCount: index === 0 ? 2 : 1, exists: index < 2, latestAt: '2026-01-02T10:00:00Z' })) : [],
-        scannedFiles: target.kind === 'ssh' ? 4 : 0, skippedFiles: 0, truncated: false, claudeDir: target.claudeDir || '/home/remote/.claude' };
+        scannedFiles: target.kind === 'ssh' ? 4 : 0, skippedFiles: 0, truncated: false, claudeDir: '/home/remote/.claude' };
     });
     replace('discover', async (event, workspaceId) => {
       const workspace = (await workspaces(event)).find(item => item.id === workspaceId);

@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -75,7 +76,8 @@ test('with the setting on a conversation\'s launch records its hooks, the poll r
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-dialog-hooks-')));
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = join(root, 'tmp');
-  const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
+  const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const socket = 'dialoghooks-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
   const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
   const options = { claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] };
@@ -86,7 +88,7 @@ test('with the setting on a conversation\'s launch records its hooks, the poll r
   };
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
-    await mkdir(workspace.claudeDir!); await mkdir(join(root, 'tmp'));
+    await mkdir(join(root, 'config')); await mkdir(join(root, 'tmp'));
     await symlink(process.execPath, exe);
     // A stand-in for Claude Code: runs its SessionStart hook at start and AskUserQuestion's PreToolUse on a key.
     await writeFile(fixture, `

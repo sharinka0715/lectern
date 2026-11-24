@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -30,10 +31,11 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
   t.after(() => { for (const [key, value] of saved)
     if (value === undefined) delete process.env[key]; else process.env[key] = value; });
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-goal-mock-')));
-  const workspace: Workspace = { id: 'goal-' + randomUUID().slice(0, 6), name: 'Goal', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
+  const workspace: Workspace = { id: 'goal-' + randomUUID().slice(0, 6), name: 'Goal', kind: 'local', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const socket = 'goal-' + randomUUID().slice(0, 8);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath,
-    claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', workspace.claudeDir!, '--alias-models'] });
+    claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config'), '--alias-models'] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const capture = async (pane: string) => (await runCommand(workspace, ['tmux', '-L', socket, 'capture-pane', '-p', '-t', pane].map(quoteShell).join(' '))).stdout.toString();
@@ -62,7 +64,7 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
     await backend.turnAction(workspace, session.id, paneId, pid, { kind: 'command', text: '/goal clear' });
     await until(paneId, screen => /Goal cleared: Hold the reply goal-hold/u.test(screen), 'cleared notice');
     assert.match(await capture(paneId), /esc to interrupt/u, 'the reply goes on until released');
-    await writeFile(join(workspace.claudeDir!, 'mock-release'), '');
+    await writeFile(join(join(root, 'config'), 'mock-release'), '');
     await until(paneId, screen => !/esc to interrupt/u.test(screen) && /shortcuts/u.test(screen), 'the reply ended');
     // A goal left paused and active: its timer ticks over the idle box; an inline switch's paste and Enter pass.
     await backend.sendMessage(workspace, session.id, '/goal Pause after two checks goal-pause');

@@ -165,11 +165,11 @@ export async function expandHistoryHeads(transport: Transport, workspace: Worksp
 
 export async function scanHistoryProjects(target: HistoryTarget, transport: Transport, limits: HistoryScanLimits = {}): Promise<HistoryScan> {
   if (!target || typeof target !== 'object') throw new Error('Invalid history target');
-  const { kind, host, port, claudeDir } = target;
-  const workspace = validateWorkspace({ id: 'history-discovery', name: 'History discovery', cwd: '~', kind, host, port, claudeDir });
+  const { kind, host, port } = target;
+  const workspace = validateWorkspace({ id: 'history-discovery', name: 'History discovery', cwd: '~', kind, host, port });
   const maxFiles = Math.max(1, Math.min(2000, Math.floor(Number.isFinite(limits.maxFiles) ? limits.maxFiles! : 2000)));
   const maxProjects = Math.max(1, Math.min(1000, Math.floor(Number.isFinite(limits.maxProjects) ? limits.maxProjects! : 1000)));
-  const configExpression = claudeDir ? (claudeDir === '~' ? '"$HOME"' : claudeDir.startsWith('~/') ? `"$HOME"/${q(claudeDir.slice(2))}` : q(claudeDir)) : '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
+  const configExpression = '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
   const script = `config=${configExpression}
 printf '%s\\0' "$config"
 files=0; dirs=0; skipped=0; skipped_dirs=0; truncated=0

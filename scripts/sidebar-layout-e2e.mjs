@@ -226,7 +226,7 @@ async function checkBackgroundReplyStatus() {
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
   assert.equal(workspace.id, 'demo-local');
   const historyId = randomUUID();
-  const project = path.join(workspace.claudeDir, 'projects', workspace.cwd.replace(/[^a-z0-9-]/gi, '-'));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'projects', workspace.cwd.replace(/[^a-z0-9-]/gi, '-'));
   const history = (...messages) => messages.map(message => JSON.stringify({
     type: message.role, uuid: randomUUID(), sessionId: historyId, cwd: workspace.cwd,
     timestamp: new Date().toISOString(), message,
@@ -251,7 +251,7 @@ async function checkBackgroundReplyStatus() {
   }, idleDiscovery);
   await selectSort('recent');
   await expectGlobalOrder('recent', historyId, liveId);
-  const stateFile = path.join(workspace.claudeDir, 'screen-state');
+  const stateFile = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'screen-state');
   await writeFile(stateFile, 'progress');
   const replying = liveRow.locator('.session-state-label', { hasText: '回复中' });
   await replying.waitFor();
@@ -463,7 +463,7 @@ try {
     { type: 'assistant', uuid: randomUUID(), sessionId, cwd, timestamp, message: { role: 'assistant', content: [{ type: 'text', text: reply }], stop_reason: 'end_turn' } },
   ];
   await Promise.all([
-    writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'layout', name: workspaceName, kind: 'local', cwd, claudeDir }])),
+    writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'layout', name: workspaceName, kind: 'local', cwd }])),
     writeFile(path.join(project, `${sessionId}.jsonl`), records.map(record => JSON.stringify(record)).join('\n') + '\n'),
   ]);
 

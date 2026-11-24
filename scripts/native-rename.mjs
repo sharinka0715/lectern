@@ -35,7 +35,7 @@ const env = {
 for (const key of Object.keys(process.env)) delete process.env[key];
 Object.assign(process.env, env);
 const opts = {tmuxSocket:socket, claudeArgs:['--bare','--strict-mcp-config','--model','sonnet']};
-const workspace = {id:'rename-test',name:'Rename test',cwd:work,claudeDir:config,kind:ssh?'ssh':'local',...(ssh?{host:'rename-loopback'}:{})};
+const workspace = {id:'rename-test',name:'Rename test',cwd:work,kind:ssh?'ssh':'local',...(ssh?{host:'rename-loopback'}:{})};
 const records = async file => (await readFile(file,'utf8')).trimEnd().split('\n').map(line => JSON.parse(line));
 const tmux = (...args) => exec('tmux',args,{env});
 async function waitForNativeExit(id) {

@@ -13,7 +13,7 @@ export async function nativeBranchFixture(count = 15) {
   const fakeKey = 'test-only';
   const env = {PATH:process.env.PATH!,HOME:home,TERM:'xterm-256color',CLAUDE_CONFIG_DIR:config,TMUX_TMPDIR:root,
     ANTHROPIC_API_KEY:fakeKey,ANTHROPIC_BASE_URL:'http://127.0.0.1:1',DISABLE_AUTOUPDATER:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
-  const ws: Workspace = {id:'native-branch',name:'分叉测试',kind:'local',cwd,claudeDir:config};
+  const ws: Workspace = {id:'native-branch',name:'分叉测试',kind:'local',cwd};
   const originalId = randomUUID(), prompts: string[] = [], ids: string[] = [], rows = [];
   let parent: string | null = null;
   for (let i=0; i<count; i++) {

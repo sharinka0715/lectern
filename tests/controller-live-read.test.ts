@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -28,7 +29,8 @@ test('an immediate read requested during a read waits for it, so a record being 
     + line({ ...base, type: 'assistant', uuid: 'a1', parentUuid: 'u1', timestamp: at(1), message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'One question.' }] } }));
   const ask = line({ ...base, type: 'assistant', uuid: 'a2', parentUuid: 'a1', timestamp: at(2), message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use',
     content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: { questions: [{ header: 'Pick', question: 'Which one?', multiSelect: false, options: [] }] } }] } });
-  const workspace: Workspace = { id: 'overlap', name: 'Overlap', kind: 'local', cwd, claudeDir };
+  const workspace: Workspace = { id: 'overlap', name: 'Overlap', kind: 'local', cwd };
+  fixtureClaudeConfig(claudeDir);
   const store = new WorkspaceStore(join(root, 'store'));
   await store.save(workspace);
   const backend = new Backend({ tmuxSocket: `lectern-live-overlap-${randomUUID().slice(0, 8)}` });

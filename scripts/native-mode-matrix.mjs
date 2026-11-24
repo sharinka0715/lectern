@@ -12,7 +12,7 @@ import { Backend } from '../src/backend/index.ts';
 const root = await realpath(await mkdtemp(path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 't-mode-')));
 const config = path.join(root,'config'), work = path.join(root,'workspace'), profile = path.join(root,'profile');
 const logs = path.resolve('test-results','native-mode-matrix-' + Date.now());
-const ws = {id:'mode-proof',kind:'local',cwd:work,claudeDir:config,name:'本机模式测试'};
+const ws = {id:'mode-proof',kind:'local',cwd:work,name:'本机模式测试'};
 // A full model ID the operator's Claude Code can use (LECTERN_NATIVE_MODEL); the report checks replies came from it.
 const model = process.env.LECTERN_NATIVE_MODEL || 'claude-sonnet-5-5', modeMap = {manual:'default',plan:'plan',auto:'auto',acceptEdits:'acceptEdits',bypassPermissions:'bypassPermissions',dontAsk:'dontAsk'};
 const env = {PATH:process.env.PATH, HOME:root, LANG:'en_US.UTF-8', LECTERN_LOCALE:'zh-CN', SHELL:'/bin/sh', TERM:'xterm-256color', CLAUDE_CONFIG_DIR:config,

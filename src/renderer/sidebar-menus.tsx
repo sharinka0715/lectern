@@ -24,6 +24,7 @@ export interface SidebarMenuActions {
   removeWorkspace(id: string): Promise<void>;
   open(workspace: Workspace, sessionId: string): void;
   openBeside(workspace: Workspace, session: SessionInfo): void;
+  editConversationSettings(workspace: Workspace, session: SessionInfo): void;
   /** Hide from the sidebar (Settings → 回收站 restores); the target's files stay. */
   archiveSession(workspace: Workspace, session: SessionInfo): void;
 }
@@ -108,6 +109,7 @@ export function sessionMenu(workspace: Workspace, session: SessionInfo, actions:
       onSelect: () => setTreeSessionUnread(workspace, session.id, !unread) },
     "separator",
     { label: t('sidebar.rename'), icon: icon(Pencil), hint: "F2", onSelect: actions.rename },
+    { label: t('conversationSettings.edit'), icon: icon(Settings2), onSelect: () => actions.editConversationSettings(workspace, session) },
     { label: t('sidebar.copyTitle'), icon: icon(Copy), onSelect: () => copyWithToast(title) },
     { label: t('sidebar.copySessionId'), icon: icon(Hash), onSelect: () => copyWithToast(session.id) },
     { label: t('sidebar.copyResume'), icon: icon(SquareTerminal), onSelect: () => copyWithToast(resume, t('sidebar.copiedResume')) },

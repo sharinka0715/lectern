@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -67,7 +68,8 @@ process.stdin.setRawMode(true);process.stdin.resume();let previous='';
 setInterval(()=>{const end=path.join(root,id+'.exit');if(fs.existsSync(end))process.exit(Number(fs.readFileSync(end,'utf8')));const file=path.join(root,id+'.screen'),screen=fs.existsSync(file)?fs.readFileSync(file,'utf8'):'❯\\n? for shortcuts\\n';if(screen!==previous){previous=screen;process.stdout.write('\\x1b[2J\\x1b[H'+screen.replace(/\\n/g,'\\r\\n'));}},25);
 `);
   const socket = `lectern-status-${randomUUID().slice(0, 8)}`;
-  const workspace: Workspace = { ...local, id: randomUUID(), cwd, claudeDir: config };
+  const workspace: Workspace = { ...local, id: randomUUID(), cwd };
+  fixtureClaudeConfig(config);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [script, root] });
   const tmux = async (...args: string[]) => runCommand(workspace, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '));
   try {

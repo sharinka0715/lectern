@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -11,9 +12,10 @@ import { readFixtureSetting } from './support/read-fixture-setting';
 test('a late native repaint can acknowledge the first paste without another paste or Enter', { skip: process.platform === 'win32' }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-late-prompt-')));
   const socket = 'late-prompt-' + randomUUID().slice(0, 8);
-  const ws: Workspace = { id: 'late-prompt', kind: 'local', name: 'Delayed prompt', cwd: root, claudeDir: join(root, 'config') };
+  const ws: Workspace = { id: 'late-prompt', kind: 'local', name: 'Delayed prompt', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath,
-    claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', ws.claudeDir!, '--delayed-setting-redraw'] });
+    claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config'), '--delayed-setting-redraw'] });
   try {
     try { await runCommand(ws, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const session = await backend.createSession(ws);

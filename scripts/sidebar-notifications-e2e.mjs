@@ -50,7 +50,7 @@ try {
   assert.equal(await folderDot.count(), 0);
   const ws = await page.evaluate(async () => (await window.desktop.listWorkspaces())[0]);
   assert.equal(ws.id, 'demo-local');
-  const id = randomUUID(), log = path.join(ws.claudeDir, 'projects', ws.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${id}.jsonl`);
+  const id = randomUUID(), log = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'projects', ws.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${id}.jsonl`);
   const line = (type, message, timestamp = new Date().toISOString()) => JSON.stringify({ type, uuid: randomUUID(), sessionId: id, cwd: ws.cwd, timestamp, message }) + '\n';
   const archived = page.locator(`.session-row[data-session-id="${id}"]`);
   await writeFile(log, line('user', {content:'已经存在的历史'}, '2026-01-01T00:00:00Z') + line('assistant', {content:'旧回复', stop_reason:'end_turn'}, '2026-01-01T00:00:01Z'));
@@ -60,7 +60,7 @@ try {
   const busy = await inspect(live, 'working', '.session-title'); assert.deepEqual(busy.rgb, idle.rgb); assert.notEqual(busy.animation, 'none');
   assert.equal(await folderDot.count(), 0);
   await focusWindow(); await live.locator('.state-idle').waitFor();
-  const stateFile = path.join(ws.claudeDir, 'screen-state');
+  const stateFile = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'screen-state');
   for (const state of ['waiting','error']) {
     await writeFile(stateFile, state);
     const chat = await inspect(live, state, '.session-title'), project = await inspect(folder, state, '.workspace-name');

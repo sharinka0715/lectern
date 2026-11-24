@@ -240,7 +240,7 @@ export class WorkspaceArtifacts {
 
   private async locator(workspace: Workspace, references: string[], signal?: AbortSignal) {
     validateWorkspace(workspace);
-    const config = workspace.claudeDir ? homePath(workspace.claudeDir) : '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
+    const config = '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
     // macOS exposes /tmp, /var and /etc as fixed aliases. Verify them on the target host.
     const aliases = ['tmp', 'var', 'etc'].filter(alias => references.some(path => within(path, '/' + alias)));
     const script = `set -e

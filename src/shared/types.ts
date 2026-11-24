@@ -12,8 +12,6 @@ export interface Workspace {
   /** SSH config alias or user@hostname. System OpenSSH owns authentication. */
   host?: string;
   port?: number;
-  /** Absolute target config directory override; otherwise inherit the target environment. */
-  claudeDir?: string;
   /** false: saved conversations are not scanned until the user asks (new folders start this way).
    * Running Lectern panes in the folder are still listed. Absent means scanning is on. */
   historyScan?: false;
@@ -25,7 +23,7 @@ export type SshLoginPromptKind = 'secret' | 'text' | 'hostkey' | 'confirm' | 'in
 /** One OpenSSH prompt during an in-app login (password, one-time code, new host key…). */
 export interface SshLoginPrompt { loginId: string; promptId: string; kind: SshLoginPromptKind; text: string; context?: string }
 export interface WorkspaceDirectoryPage { path: string; directories: string[]; nextOffset?: number }
-export type HistoryTarget = WorkspaceEndpoint & Pick<Workspace, 'claudeDir'>;
+export type HistoryTarget = WorkspaceEndpoint;
 export interface HistoryProject {
   cwd: string;
   sessionCount: number;
@@ -627,13 +625,17 @@ export interface DesktopAPI {
   /** Undefined means the scan was superseded by a change to this folder or its bindings. */
   discover(workspaceId: string, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery | undefined>;
   /** A new conversation. Model and effort apply to this session only; validateMessage is checked, never sent. */
-  createSession(workspaceId: string, options?: { model?: string; effort?: string; validateMessage?: string }): Promise<SessionInfo>;
+  createSession(workspaceId: string, options?: import("./conversation-settings").NewConversationOptions): Promise<SessionInfo>;
   /** The models and effort levels Claude Code offers on this folder's machine (read once per run). */
-  modelCatalog(workspaceId: string, retry?: boolean): Promise<import('./model-catalog').ModelCatalogState>;
+  modelCatalog(workspaceId: string, retry?: boolean, file?: string | null): Promise<import('./model-catalog').ModelCatalogState>;
   renameSession(workspaceId: string, sessionId: string, title: string): Promise<SessionInfo>;
   setTerminalVisible(workspaceId: string, sessionId: string, visible: boolean, view?: ChatView): Promise<void>;
   closeSession(workspaceId: string, sessionId: string, paneId: string, panePid: number): Promise<SessionInfo | null>;
-  resumeSession(workspaceId: string, sessionId: string): Promise<SessionInfo>;
+  getConversationSettings(workspaceId: string, sessionId: string): Promise<import('./conversation-settings').ConversationSettingsRecord | undefined>;
+  inspectConversationSettings(workspaceId: string, file: string | null, options?: import('./conversation-settings').SettingsInspection): Promise<import('./conversation-settings').SettingsFileValidation>;
+  validateConversationSettings(workspaceId: string, file: string | null): Promise<import('./conversation-settings').SettingsFileValidation>;
+  saveConversationSettings(workspaceId: string, sessionId: string, file: string | null): Promise<void>;
+  resumeSession(workspaceId: string, sessionId: string, nonce?: string): Promise<SessionInfo>;
   forkSession(workspaceId: string, sessionId: string, paneId: string, panePid: number): Promise<{ original: SessionInfo; fork: SessionInfo }>;
   bindSession(workspaceId: string, sessionId: string, paneId: string): Promise<void>;
   watchSession(workspaceId: string, sessionId: string, view?: ChatView): Promise<SessionSnapshot>;

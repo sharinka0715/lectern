@@ -37,8 +37,11 @@ import { decodeStatusLineSample, readStatusLineSample, statusLineLaunch, statusL
 import { paneNavigationStatus, type NavigationStatus, type ViewportObservation } from './session-status';
 import { KeybindingUnconfirmed, NativeKeybindings } from './native-keybindings';
 import { effortFrameGuard, keysNotSent, NativeSettings, NavigationKeyNotSent, SessionSettingError, TranscriptChangedNoKeys, type SettingChoices, type SettingDriver } from './native-settings';
-import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
+import { launchChoiceArgs, modelProbeSettingsErrors, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
 import { launchSettings } from './launch-settings';
+import { inspectSettingsFiles, mergeSettings, normalizeSettingsPath, writePrivateSettings, type PrivateSettingsFile } from './conversation-settings';
+import type { ConversationSettingsRecord, SettingsFileValidation } from '../shared/conversation-settings';
+import type { ConversationSettingsStore } from '../main/conversation-settings-store';
 import type { DialogHookObservation } from '../shared/dialog-hooks';
 import { DialogHookStore, dialogHookDir, dialogHookOption, dialogHookPrefix, dialogHookSettings, readDialogHooks, removeDialogHookDir } from './dialog-hooks';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
@@ -76,9 +79,9 @@ const tmuxKey = (key: TerminalKey) => key === 'Backspace' ? 'BSpace' : key === '
 const SEP = '|~lectern~|';
 // Suffix of an input's not-sent receipt when the transcript revision guard (not the screen) refused it.
 const RECORD_CHANGED = '_RECORD';
-const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_config_override}', '#{@lectern_fork_origin}', `#{=1024:${dialogHookOption}}`, '#{pane_title}'].join(SEP);
+const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_settings_file}', '#{@lectern_fork_origin}', `#{=1024:${dialogHookOption}}`, '#{pane_title}'].join(SEP);
 interface ProcessRow { pid: number; ppid: number; pgid: number; tpgid: number; args: string }
-interface InternalPane extends PaneInfo { forkOrigin?: string; /** The launch's recording-hook folder as the pane option names it (dialog-hooks.ts). */ hooksDir?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; presenceTorn?: boolean; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
+interface InternalPane extends PaneInfo { processSettings?: ConversationSettingsRecord; previousSessionId?: string; forkOrigin?: string; /** The launch's recording-hook folder as the pane option names it (dialog-hooks.ts). */ hooksDir?: string; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; presenceTorn?: boolean; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
 interface Location { tmuxVersion: string; cwd: string; cwdAliases: string[]; claudeDir: string; projectDirs: string[]; /** `uname -s` of the target. */ os?: string }
 interface SettingRuntime { panePid?: number; instanceId?: string }
 function runtimeIdentity(workspace: Workspace, location: Location, pane?: InternalPane): string | undefined {
@@ -88,7 +91,7 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
   }
 }
 export type { LaunchPreferences } from '../shared/prompt-cache';
-export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'];
+export interface BackendOptions { conversationSettings?: Pick<ConversationSettingsStore, 'get' | 'save'>; historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'];
   /** Reach a machine over the master its ssh_config already runs (default), or only over Lectern's own connections. */
   reuseSshConnections?: boolean }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
@@ -228,16 +231,16 @@ export class Backend {
   private assertCurrentWorkspaceConfiguration(workspace: Workspace, revision: number): void {
     if (this.configRevision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== JSON.stringify(workspace)) throw new DirectoryTrustError(t('backend.workspaceConfigChanged'));
   }
-  private async locate(workspace: Workspace): Promise<Location> {
+  private async locate(workspace: Workspace, verifyTools = true): Promise<Location> {
     validateWorkspace(workspace);
     const signature = JSON.stringify(workspace);
     if (this.workspaceSignatures.has(workspace.id) && this.workspaceSignatures.get(workspace.id) !== signature) this.invalidateWorkspace(workspace.id);
     this.workspaceSignatures.set(workspace.id, signature);
     const revision = this.revision(workspace.id);
     // Session lists and everything after them need tmux: say so before trying.
-    await this.requireTools(workspace, ['tmux']);
+    if (verifyTools) await this.requireTools(workspace, ['tmux']);
     const cached = this.locations.get(signature); if (cached) return cached;
-    const configDirectory = workspace.claudeDir ? expandPath(workspace.claudeDir) : '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
+    const configDirectory = '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
     const script = `command -v tmux >/dev/null 2>&1 || { printf '%s\\n' ${q(this.toolsMessage(workspace, ['tmux']))} >&2; exit 1; }\ncd ${expandPath(workspace.cwd)} || exit 1\nprintf '%s\\0%s\\0%s\\0%s\\0%s\\0' "$(pwd -P)" ${configDirectory} "$PWD" "$(tmux -V)" "$(uname -s)"`;
     const { stdout } = await this.transport.run(workspace, script);
     const [cwd, claudeDir, logicalCwd, tmuxVersion, os] = stdout.toString('utf8').split('\0');
@@ -248,7 +251,7 @@ export class Backend {
     // An older lookup must not repopulate state cleared by a concurrent edit.
     this.assertCurrentWorkspace(workspace, revision);
     this.locations.set(signature, location);
-    diagnostic.event('backend.workspace.located', { workspaceId: workspace.id, kind: workspace.kind, host: workspace.host, cwd, cwdAliases, claudeDir, configMode: workspace.claudeDir ? 'explicit' : 'target-environment-or-default', tmuxVersion, os });
+    diagnostic.event('backend.workspace.located', { workspaceId: workspace.id, kind: workspace.kind, host: workspace.host, cwd, cwdAliases, claudeDir, tmuxVersion, os });
     return location;
   }
   private probeScript(location: Location): string {
@@ -275,7 +278,7 @@ ${presenceReadScript(location.claudeDir)}`;
     for (let attempt = 0; ; attempt++) {
       const { stdout } = await this.transport.run(workspace, this.probeScript(location), { tag: 'tmux.probe' });
       const panes = this.parseProbe(workspace, location, stdout);
-      if (attempt >= 2 || !panes.some(pane => pane.presenceTorn)) return panes;
+      if (attempt >= 2 || !panes.some(pane => pane.presenceTorn)) { await this.inheritSettings(workspace, location, panes); return panes; }
       await new Promise(resolve => setTimeout(resolve, 30));
     }
   }
@@ -286,19 +289,25 @@ ${presenceReadScript(location.claudeDir)}`;
     if (!registered) this.registeredPanes.set(workspace.id, registered = new Map());
     const panes: InternalPane[] = rawPanes.split('\n').filter(Boolean).flatMap(line => {
       const parts = line.split(SEP); if (parts.length < 22 || !/^%\d+$/.test(parts[0])) return [];
-      const [id, pid, cwd, sessionName, command, dead, rawId, mapping, boundCwd, boundClaudeDir, width, height, cursorX, cursorY, deadStatus, deadSignal, windowId, server, statusMarker, override, forkOrigin, hooksDir, ...title] = parts;
+      const [id, pid, cwd, sessionName, command, dead, rawId, mapping, boundCwd, boundClaudeDir, width, height, cursorX, cursorY, deadStatus, deadSignal, windowId, server, statusMarker, settingsFile, forkOrigin, hooksDir, ...title] = parts;
       const pids = dead === '1' ? [] : foregroundClaudePids(+pid, rows, this.options);
       const claudePid = pids.length === 1 ? pids[0] : undefined;
       const nativeTarget = `${sessionName}:${windowId}.${id}`, registration = `${nativeTarget}:${pid}`;
       const frame = claudePid ? frames.get(claudePid) : undefined;
       const native = frame ? matchPresence(frame, nativeTarget, presenceDirectories(location, { cwd, boundCwd, boundClaudeDir })) : undefined;
       const boundSessionId = UUID.test(rawId) ? rawId : undefined;
+      const previousSessionId = registered.get(registration);
       if (native || (frame && !registered.has(registration))) registered.set(registration, native?.sessionId);
       const lastNativeId = registered.get(registration);
       let identityError: string | undefined;
       if (pids.length > 1) identityError = t('backend.multipleClaude');
       else if (claudePid && !native && (unsafe || frame || UUID.test(forkOrigin) || registered.has(registration))) identityError = t('backend.identityUnverified');
-      return [{ id, pid: +pid, claudePid, cwd, forkOrigin: UUID.test(forkOrigin) ? forkOrigin : undefined, hooksDir: hooksDir || undefined, configOverride: override ? override === '1' : undefined, explicitlyBound: mapping === 'manual', sessionName, command, nativeTarget, native, statusMarker, serverInstance: /^[1-9]\d*:[1-9]\d*$/.test(server) ? server : undefined, presenceFingerprint: native && frame?.fingerprint, presenceTorn: !!frame && !native && tornPresence(frame), boundSessionId, identityError,
+      let processSettings: ConversationSettingsRecord | undefined;
+      if (settingsFile) {
+        try { processSettings = { settingsFile: normalizeSettingsPath(JSON.parse(Buffer.from(settingsFile, 'base64').toString('utf8'))) }; }
+        catch { /* Only Lectern's valid launch paths are carried across UUID changes. */ }
+      }
+      return [{ id, pid: +pid, claudePid, processSettings, previousSessionId, cwd, forkOrigin: UUID.test(forkOrigin) ? forkOrigin : undefined, hooksDir: hooksDir || undefined, explicitlyBound: mapping === 'manual', sessionName, command, nativeTarget, native, statusMarker, serverInstance: /^[1-9]\d*:[1-9]\d*$/.test(server) ? server : undefined, presenceFingerprint: native && frame?.fingerprint, presenceTorn: !!frame && !native && tornPresence(frame), boundSessionId, identityError,
         dead: dead === '1', deadStatus: /^\d+$/.test(deadStatus) ? +deadStatus : undefined, deadSignal: deadSignal || undefined, title: title.join(SEP),
         sessionId: native?.sessionId ?? lastNativeId ?? boundSessionId, managed: mapping === 'exact', boundCwd: boundCwd || undefined, boundClaudeDir: boundClaudeDir || undefined,
         width: +width, height: +height, cursorX: +cursorX, cursorY: +cursorY, active: !!claudePid && !identityError }];
@@ -624,70 +633,127 @@ exit 1`;
     if (!session) throw new Error('Session does not belong to this workspace');
     return session;
   }
-  /** The resolved Claude executable with the environment and per-process settings
-   * Lectern gives every Claude it runs: sessions in tmux and the model-list probe. */
-  private async claudeInvocation(workspace: Workspace, location: Location, statusLineFor?: string) {
+  conversationSettings(workspace: Workspace, sessionId: string): ConversationSettingsRecord | undefined {
+    assertSessionId(sessionId);
+    return this.options.conversationSettings?.get(workspace, sessionId);
+  }
+  async saveConversationSettings(workspace: Workspace, sessionId: string, file: string | null) {
+    await this.getSession(workspace, sessionId);
+    await this.options.conversationSettings?.save(workspace, sessionId, normalizeSettingsPath(file));
+  }
+  private async inheritSettings(workspace: Workspace, location: Location, panes: InternalPane[]) {
+    const store = this.options.conversationSettings;
+    if (!store) return;
+    for (const pane of panes) {
+      const id = pane.native?.sessionId;
+      const previous = pane.previousSessionId === id ? pane.boundSessionId : pane.previousSessionId ?? pane.boundSessionId;
+      if (!id || !previous || id === previous || !this.paneBelongs(pane, location) || store.get(workspace, id)) continue;
+      const saved = store.get(workspace, previous);
+      // A managed pane from before this feature started with the inline layer.
+      const record = pane.processSettings ?? (saved && pane.managed ? { settingsFile: null } : saved);
+      if (record) await store.save(workspace, id, record.settingsFile, true);
+    }
+  }
+  private get nativeCli() {
+    const executable = this.options.claudeCommand;
+    // Programmatic custom commands are demo/test doubles. A binary named
+    // claude accepts the same launch flags as the regular CLI.
+    return !executable || basename(executable) === 'claude';
+  }
+  private invocationSettings(location: Location, statusLineFor?: string, nonce = randomUUID().replace(/-/g, '')) {
+    const callback = statusLineFor && this.nativeCli ? statusLineLaunch(statusLineFor, nonce, location.tmuxVersion) : undefined;
+    const hooks = callback && this.launchPreferences.dialogHooks ? dialogHookSettings(nonce) : undefined;
+    const settings = this.nativeCli ? launchSettings({ statusLine: callback && JSON.parse(callback.settings), ...this.launchPreferences, hooks }) : undefined;
+    return { callback, hooks, nonce, settings };
+  }
+  async inspectConversationSettings(workspace: Workspace, file: string | null, options: { launch?: boolean; sessionId?: string; nonce?: string } = {}): Promise<SettingsFileValidation> {
+    try {
+      const normalized = normalizeSettingsPath(file);
+      if (!normalized && !options.launch) return { settingsFile: null, overrides: [] };
+      const location = await this.locate(workspace, false);
+      const { settings } = this.invocationSettings(location, options.sessionId ?? randomUUID(), options.nonce);
+      return (await inspectSettingsFiles(this.transport, workspace, location, normalized, settings ?? {}, !!options.launch)).validation;
+    } catch (error) {
+      return { settingsFile: null, overrides: [], error: error instanceof Error ? error.message : t('conversationSettings.unreadable') };
+    }
+  }
+  /** Resolve the executable once, then stage custom settings without putting
+   * their bytes in the command or substituting for the normal Claude config. */
+  private async claudeInvocation(workspace: Workspace, location: Location, options: {
+    statusLineFor?: string; nonce?: string; settingsFile?: string | null; fileId?: string;
+  } = {}) {
     const executable = this.options.claudeCommand ?? 'claude';
     const missing = q(this.toolsMessage(workspace, ['claude']));
     const resolution = await this.transport.run(workspace, `command -v ${q(executable)} || { printf '%s\\n' "\${lectern_claude_path_error:-$(printf '%s' ${missing})}" >&2; exit 1; }`, { tag: 'claude.executable', maxBytes: 8192 });
     const resolvedExecutable = resolution.stdout.toString('utf8').trim();
     if (!resolvedExecutable.startsWith('/') || /[\x00-\x1f\x7f]/.test(resolvedExecutable)) throw new Error('Claude must resolve to one absolute executable path on the target');
-    // Programmatic custom commands are demo/test doubles. A custom Claude binary
-    // named claude supports the same per-launch settings as the normal CLI.
-    const nativeCli = !this.options.claudeCommand || basename(executable) === 'claude';
-    const nonce = randomUUID().replace(/-/g, '');
-    const callback = statusLineFor && nativeCli ? statusLineLaunch(statusLineFor, nonce, location.tmuxVersion) : undefined;
-    // Recording hooks (Settings → Session, off by default) for a conversation's own process only:
-    // their folder is named by the status line's nonce, which the poll verifies for the pane.
-    const hooks = callback && this.launchPreferences.dialogHooks ? dialogHookSettings(nonce) : undefined;
-    // Only this process's settings change (auto mode, no prompt suggestions, workflows
-    // unless the user opted out, the prompt-cache lifetimes the user chose); the user's
-    // own settings files stay as they are. The model-list probe gets the same, though it
-    // makes no model request: the cache lifetimes do not change what it reports.
-    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), ...this.launchPreferences, hooks })) : undefined;
-    // Merely setting the default directory can change how native Claude resolves
-    // its global config/account state. Preserve the target's normal environment;
-    // only an explicitly selected configuration directory is an override.
-    const configOverride = workspace.claudeDir ? `export CLAUDE_CONFIG_DIR=${q(location.claudeDir)}; ` : '';
+    const { callback, hooks, nonce, settings } = this.invocationSettings(location, options.statusLineFor, options.nonce);
+    const file = normalizeSettingsPath(options.settingsFile ?? null);
+    let staged: PrivateSettingsFile | undefined;
+    if (file) {
+      try {
+        const { custom } = await inspectSettingsFiles(this.transport, workspace, location, file, {}, false);
+        staged = await writePrivateSettings(this.transport, workspace, mergeSettings(custom!, settings ?? {}), options.fileId);
+      } catch (error) {
+        throw new Error(t('conversationSettings.launchFile', { file, reason: error instanceof Error ? error.message : t('conversationSettings.unreadable') }));
+      }
+    }
+    const arg = staged?.path ?? (settings && JSON.stringify(settings));
     // Existing tmux servers may have an older PATH than this SSH connection.
-    // Keep the resolved launcher and its node/bin directory in the child too.
-    const environment = `export PATH=${q(posix.dirname(resolvedExecutable))}:"$HOME/.local/bin:$HOME/.claude/local:/opt/homebrew/bin:/usr/local/bin:$PATH"; ${configOverride}${callback ? callback.register + '; ' : ''}${hooks ? dialogHookPrefix(nonce) : ''}`;
-    return { argv: [resolvedExecutable, ...(this.options.claudeArgs ?? [])], settingsArgs: settings ? ['--settings', settings] : [], environment };
+    const environment = `export PATH=${q(posix.dirname(resolvedExecutable))}:"$HOME/.local/bin:$HOME/.claude/local:/opt/homebrew/bin:/usr/local/bin:$PATH"; ${callback ? callback.register + '; ' : ''}${hooks ? dialogHookPrefix(nonce) : ''}`;
+    return { argv: [resolvedExecutable, ...(this.options.claudeArgs ?? [])], settingsArgs: arg ? ['--settings', arg] : [], environment, staged };
   }
-  private async launchCommand(workspace: Workspace, location: Location, sessionId: string, resume: boolean, title?: string, choices: LaunchChoices = {}): Promise<string> {
-    const invocation = await this.claudeInvocation(workspace, location, title === undefined ? sessionId : undefined);
-    // A new chat's model and effort apply to that session only; nothing is saved as a default.
+  private async launchCommand(workspace: Workspace, location: Location, sessionId: string, resume: boolean,
+    title: string | undefined, choices: LaunchChoices, settingsFile: string | null, nonce?: string) {
     const flags = resume || title !== undefined ? [] : launchChoiceArgs(choices);
+    const invocation = await this.claudeInvocation(workspace, location, { statusLineFor: title === undefined ? sessionId : undefined, nonce, settingsFile, fileId: sessionId });
     const command = [...invocation.argv, ...invocation.settingsArgs, ...flags, resume ? '--resume' : '--session-id', sessionId, ...(title === undefined ? [] : ['--name', title])].map(q).join(' ');
-    // Under tmux's default terminal ("screen") Claude Code paints 16 colours, where the light
-    // theme's reply bullet and a finished call's are both black; with COLORTERM it paints 256 and
-    // they differ, which the live preview reads (core/reply-rows.ts). A COLORTERM of the user's stays.
+    // The live preview uses Claude Code's 256-colour markers when available.
     const colours = 'export COLORTERM="${COLORTERM:-truecolor}"; ';
-    return `${invocation.environment}${colours}exec ${command}`;
+    return { command: `${invocation.environment}${colours}exec ${command}`, staged: invocation.staged };
   }
-  /** The machine-level location for one Claude configuration: its home directory. */
+  /** Model lists exclude per-project settings, hooks and MCP servers. */
   private machineWorkspace(workspace: Workspace): Workspace {
-    const identity = JSON.stringify([workspace.kind, workspace.host, workspace.port, workspace.claudeDir]);
-    return { ...workspace, id: 'models-' + createHash('sha256').update(identity).digest('hex'), name: 'Model list', cwd: '~', claudeDir: workspace.claudeDir, historyScan: false };
+    const identity = JSON.stringify([workspace.kind, workspace.host, workspace.port, null]);
+    return { ...workspace, id: 'models-' + createHash('sha256').update(identity).digest('hex'), name: 'Model list', cwd: '~', historyScan: false };
   }
-  /** Ask Claude Code on the target which models and effort levels it offers,
-   * through its SDK control requests: no TUI, no tmux pane, no prompt, no transcript. */
-  async probeModelCatalog(workspace: Workspace): Promise<ModelCatalog> {
-    return diagnostic.operation('backend.model_probe', { workspaceId: workspace.id, kind: workspace.kind, host: workspace.host }, async () => {
-      const machine = this.machineWorkspace(workspace);
-      await this.requireTools(machine, ['tmux', 'claude']);
-      const location = await this.locate(machine);
-      const invocation = await this.claudeInvocation(machine, location);
+  private async probeSettings(workspace: Workspace, file: string | null, requireValid = !!file) {
+    const machine = this.machineWorkspace(workspace);
+    await this.requireTools(machine, ['tmux', 'claude']);
+    const location = await this.locate(machine);
+    const invocation = await this.claudeInvocation(machine, location, { settingsFile: file });
+    try {
       const command = [...invocation.argv, ...PROBE_ARGS, ...invocation.settingsArgs].map(q).join(' ');
-      // Run in the home directory: no project's settings, hooks or MCP servers.
-      const script = `${invocation.environment}cd ~ || exit 1\nprintf '%s' ${q(PROBE_INPUT)} | ${command}`;
-      const { stdout } = await this.transport.run(machine, script, { tag: 'claude.model_probe', timeoutMs: 45_000, maxBytes: 8 * 1024 * 1024 });
-      const catalog = parseModelProbe(stdout.toString('utf8'));
-      diagnostic.event('backend.model_probe.result', { workspaceId: workspace.id, version: catalog.version, models: catalog.models.length, defaults: catalog.defaults });
+      const script = `${invocation.environment}cd ~ || exit 1\nprintf '%s' ${q(PROBE_INPUT)} | ${command}${file ? ' 2>/dev/null' : ''}`;
+      const { stdout } = await this.transport.run(machine, script, { tag: 'claude.model_probe', privateContent: true, timeoutMs: 45_000, maxBytes: 8 * 1024 * 1024 });
+      const reply = stdout.toString('utf8');
+      const issues = modelProbeSettingsErrors(reply, invocation.staged?.path, file ?? undefined);
+      return { issues, catalog: requireValid && issues.length ? undefined : parseModelProbe(reply) };
+    } catch (error) {
+      if (!file) throw error;
+      throw new Error(t('conversationSettings.cliFailed'));
+    } finally { await invocation.staged?.remove().catch(() => {}); }
+  }
+  async validateConversationSettings(workspace: Workspace, file: string | null) {
+    const validation = await this.inspectConversationSettings(workspace, file);
+    if (validation.error) return { validation };
+    try {
+      const { issues, catalog } = await this.probeSettings(workspace, validation.settingsFile, true);
+      return { validation: { ...validation, ...(issues.length && { issues }) }, catalog };
+    } catch {
+      return { validation: { ...validation, error: t('conversationSettings.cliFailed') } };
+    }
+  }
+  async probeModelCatalog(workspace: Workspace, file: string | null = null): Promise<ModelCatalog> {
+    return diagnostic.operation('backend.model_probe', { workspaceId: workspace.id, kind: workspace.kind, host: workspace.host }, async () => {
+      const { catalog } = await this.probeSettings(workspace, file);
+      if (!catalog) throw new Error(t('conversationSettings.cliFailed'));
+      diagnostic.event('backend.model_probe.result', { workspaceId: workspace.id, version: catalog.version, models: catalog.models.length,
+        ...(!file && { defaults: catalog.defaults }) });
       return catalog;
     });
   }
-  private async launch(workspace: Workspace, sessionId: string, resume: boolean, name?: string, choices: LaunchChoices = {}): Promise<SessionInfo> {
+  private async launch(workspace: Workspace, sessionId: string, resume: boolean, name?: string, choices: LaunchChoices = {}, selectedFile?: string | null, nonce?: string): Promise<SessionInfo> {
     return diagnostic.operation('backend.launch', { workspaceId: workspace.id, sessionId, action: resume ? 'resume' : 'create' }, async () => {
     // A new or resumed conversation needs both: refuse with what to install, not a shell error.
     await this.requireTools(workspace, ['tmux', 'claude']);
@@ -712,20 +778,44 @@ exit 1`;
     const existing = discovery.sessions.find(s => s.id === sessionId);
     if (existing?.paneId) return existing;
     if (resume && !existing?.path) throw new Error('Cannot resume a missing transcript');
-    const shellCommand = await this.launchCommand(workspace, location, sessionId, resume, undefined, choices);
+    const file = normalizeSettingsPath(resume ? this.conversationSettings(workspace, sessionId)?.settingsFile ?? null : selectedFile ?? null);
+    const { command: shellCommand, staged } = await this.launchCommand(workspace, location, sessionId, resume, undefined, choices, file, nonce);
+    let paneId: string | undefined;
+    try {
     // exec prevents a failed/exited Claude process from falling back into an interactive shell.
     const script = `${this.tmux('new-session', '-d', '-P', '-F', '#{pane_id}', '-x', '120', '-y', '40', '-s', name ?? `lectern-${sessionId.slice(0, 8)}-${randomUUID().slice(0, 6)}`, '-c', location.cwd, `sh -c ${q(shellCommand)}`)}`;
     this.touchWorkspace(workspace.id);
     const revision = this.revision(workspace.id);
     const { stdout } = await this.transport.run(workspace, script);
-    const paneId = stdout.toString('utf8').trim(); assertPaneId(paneId);
-    await this.writeBinding(workspace, location, sessionId, paneId, 'exact');
+    const created = stdout.toString('utf8').trim(); assertPaneId(created);
+    paneId = created;
+    await this.writeBinding(workspace, location, sessionId, paneId, 'exact', file);
+    if (staged) await this.waitForSettingsStartup(workspace, paneId);
+    if (!resume) await this.options.conversationSettings?.save(workspace, sessionId, file);
     this.assertCurrentWorkspace(workspace, revision);
     this.touchWorkspace(workspace.id);
     const info: SessionInfo = { ...(existing ?? { id: sessionId, title: t('backend.newConversation') }), paneId, mapping: 'exact' };
     this.sessions.set(this.key(workspace, sessionId), info);
-    diagnostic.event('backend.launch.bound', { workspaceId: workspace.id, sessionId, paneId, cwd: location.cwd, mapping: 'exact', resume, configOverride: !!workspace.claudeDir });
+    diagnostic.event('backend.launch.bound', { workspaceId: workspace.id, sessionId, paneId, cwd: location.cwd, mapping: 'exact', resume });
     return info;
+    } catch (error) {
+      if (paneId) await this.transport.run(workspace, this.tmux('kill-pane', '-t', paneId), { tag: 'settings.launch.failed' }).catch(() => {});
+      throw error;
+    } finally { await staged?.remove().catch(() => {}); }
+    });
+  }
+  private async waitForSettingsStartup(workspace: Workspace, paneId: string) {
+    const alive = this.tmux('display-message', '-p', '-t', paneId, '#{pane_dead}');
+    const capture = this.tmux('capture-pane', '-p', '-t', paneId);
+    // new-session returns before exec. Wait until Claude has drawn its screen,
+    // including a trust prompt or settings error, before removing its argv file.
+    await this.transport.run(workspace, `for i in $(seq 1 300); do
+  [ "$(${alive} 2>/dev/null)" = 0 ] || exit 1
+  if ${capture} 2>/dev/null | grep -q '[^[:space:]]'; then exit 0; fi
+  sleep 0.1
+done
+exit 1`, { tag: 'settings.launch.ready', timeoutMs: 35_000, maxBytes: 0 }).catch(() => {
+      throw new Error(t('conversationSettings.launchReady'));
     });
   }
   /** A new conversation. Model and effort choices apply to this session only. */
@@ -741,7 +831,10 @@ exit 1`;
   uploadAttachment(workspace: Workspace, name: string, data: Buffer): Promise<string> {
     return uploadAttachment(this.transport, validateWorkspace(workspace), name, data);
   }
-  async createSession(workspace: Workspace, choices: LaunchChoices = {}): Promise<SessionInfo> { return this.launch(workspace, randomUUID(), false, undefined, choices); }
+  async createSession(workspace: Workspace, choices: LaunchChoices = {}, file: string | null = null, launch?: { id: string; nonce: string }): Promise<SessionInfo> {
+    if (launch) assertSessionId(launch.id);
+    return this.launch(workspace, launch?.id ?? randomUUID(), false, undefined, choices, file, launch?.nonce);
+  }
   async renameSession(workspace: Workspace, sessionId: string, value: string): Promise<SessionInfo> {
     const title = normalizeSessionTitle(value);
     return this.withInput(workspace, sessionId, async () => {
@@ -772,8 +865,10 @@ exit 1`;
         if (!confirmed) throw new Error(t('backend.renameUnconfirmed'));
       } else {
         if (!session.path || session.status !== 'history') throw new Error(t('backend.renameStateUnknown'));
-        const command = await this.launchCommand(workspace, location, sessionId, true, title);
-        await renameInactiveSession(this.transport, workspace, sessionId, title, location, command, async () => (await readTitle()) === title);
+        const file = this.conversationSettings(workspace, sessionId)?.settingsFile ?? null;
+        const { command, staged } = await this.launchCommand(workspace, location, sessionId, true, title, {}, file);
+        try { await renameInactiveSession(this.transport, workspace, sessionId, title, location, command, async () => (await readTitle()) === title); }
+        finally { await staged?.remove().catch(() => {}); }
         confirmed = title;
       }
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
@@ -784,7 +879,7 @@ exit 1`;
       return updated;
     });
   }
-  async resumeSession(workspace: Workspace, sessionId: string): Promise<SessionInfo> { assertSessionId(sessionId); return this.withInput(workspace, sessionId, () => this.launch(workspace, sessionId, true)); }
+  async resumeSession(workspace: Workspace, sessionId: string, nonce?: string): Promise<SessionInfo> { assertSessionId(sessionId); return this.withInput(workspace, sessionId, () => this.launch(workspace, sessionId, true, undefined, {}, undefined, nonce)); }
   pendingFork(workspace: Workspace, sessionId: string) {
     const scope = sessionSettingsTarget(workspace);
     for (const record of this.forks.values()) if (!record.completed && record.scope === scope && record.source.native?.sessionId === sessionId)
@@ -1008,9 +1103,10 @@ remaining=$(list_target)
         return discovery.sessions.find(item => item.id === sessionId) ?? null;
       }));
   }
-  private async writeBinding(workspace: Workspace, location: Location, sessionId: string, paneId: string, mapping: 'exact' | 'manual'): Promise<void> {
+  private async writeBinding(workspace: Workspace, location: Location, sessionId: string, paneId: string, mapping: 'exact' | 'manual', file?: string | null): Promise<void> {
     await this.transport.run(workspace, 'set -e\n' + [
-      ['@lectern_session_id', sessionId], ['@lectern_mapping', mapping], ['@lectern_cwd', location.cwd], ['@lectern_claude_dir', location.claudeDir], ['@lectern_config_override', workspace.claudeDir ? '1' : '0'],
+      ['@lectern_session_id', sessionId], ['@lectern_mapping', mapping], ['@lectern_cwd', location.cwd], ['@lectern_claude_dir', location.claudeDir],
+      ...(file === undefined ? [] : [['@lectern_settings_file', Buffer.from(JSON.stringify(file)).toString('base64')]]),
     ].map(([option, value]) => this.tmux('set-option', '-p', '-t', paneId, option, value)).join('\n'));
   }
   async bindSession(workspace: Workspace, sessionId: string, paneId: string): Promise<void> {
@@ -1179,6 +1275,7 @@ ${script}`;
     if (processEnd < 0 || processEnd > boundary) throw new Error('Incomplete session process response');
     const elsewhere = processSeparator ? sessionProcess(response.stdout.subarray(processStart, processEnd).toString('ascii').split('\0'), sessionId) : undefined;
     const paneData = this.parseProbe(workspace, location, response.stdout.subarray(processEnd + processSeparator.length, boundary));
+    await this.inheritSettings(workspace, location, paneData);
     const record = { stdout: response.stdout.subarray(boundary + separator.length) };
     const pane = this.currentPane(paneData, session, location, true);
     // This launch's recording-hook folder (dialog-hooks.ts): named by the pane option, bound to the
@@ -1324,7 +1421,7 @@ ${after}`;
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
     const dialogHooks = hookDir ? this.dialogHooks.observe(key) : undefined;
-    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, questionViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir, Date.now(), pane?.processSettings ? pane.processSettings.settingsFile : this.conversationSettings(workspace, sessionId)?.settingsFile), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, questionViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {

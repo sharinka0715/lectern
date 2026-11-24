@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
@@ -238,8 +239,9 @@ test('subagents: running first, then ended, then earlier ones whatever their met
 const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windows runs no local commands' : false };
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), 'lectern-subagents-')));
-  const workspace: Workspace = { id: 'subagents', name: 'Subagents', kind: 'local', cwd, claudeDir: join(cwd, 'config') };
-  const project = join(workspace.claudeDir!, 'projects', projectSlug(cwd));
+  const workspace: Workspace = { id: 'subagents', name: 'Subagents', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, 'config'));
+  const project = join(join(cwd, 'config'), 'projects', projectSlug(cwd));
   const subagents = join(project, sid, 'subagents');
   await mkdir(subagents, { recursive: true });
   await writeFile(join(project, sid + '.jsonl'), jsonl([{ type: 'user', uuid: 'u', sessionId: sid, cwd, message: { content: 'Start' } },

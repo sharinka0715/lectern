@@ -1,3 +1,4 @@
+import { ConversationSettingsStore } from './conversation-settings-store';
 import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,10 +14,11 @@ export async function setupDemo(root: string, fixturePath = 'scripts/mock-claude
   const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-demo-')));
   const cwd = path.join(directory, 'workspace');
   const config = path.join(directory, 'claude-fixture');
+  process.env.CLAUDE_CONFIG_DIR = config;
   const socket = `lectern-demo-${process.pid}`;
   await mkdir(cwd, { recursive: true });
   const store = new WorkspaceStore(path.join(directory, 'preferences'));
-  const workspace: Workspace = { id: 'demo-local', name: t('demo.folder'), kind: 'local', cwd, claudeDir: config };
+  const workspace: Workspace = { id: 'demo-local', name: t('demo.folder'), kind: 'local', cwd };
   await store.save(workspace);
   const id = randomUUID();
   const project = path.join(config, 'projects', cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
@@ -35,7 +37,10 @@ export async function setupDemo(root: string, fixturePath = 'scripts/mock-claude
     await writeFile(sshConfig, '');
     await store.save({ id: 'demo-ssh', name: t('demo.sshFolder'), kind: 'ssh', host: sshHost, cwd: '~/project', historyScan: false });
   }
+  const conversationSettings = new ConversationSettingsStore(path.join(directory, 'preferences'));
+  await conversationSettings.save(workspace, id, null);
   const backend = new Backend({
+    conversationSettings,
     ...(sshHost && { sshConfigPath: sshConfig }),
     tmuxSocket: socket,
     claudeCommand: process.env.LECTERN_NODE_BINARY || 'node',

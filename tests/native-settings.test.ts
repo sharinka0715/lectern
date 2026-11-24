@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -17,9 +18,10 @@ const context: SettingContext = { workspaceId: 'fixture', sessionId: randomUUID(
 
 test('the model list comes from one SDK probe without a tmux pane, and each explicit change runs one native command in the session', { skip: process.platform === 'win32', timeout: 30_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-catalog-apply-')));
-  const workspace: Workspace = { id: 'catalog-fixture', name: 'Fixture', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
+  const workspace: Workspace = { id: 'catalog-fixture', name: 'Fixture', kind: 'local', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const socket = 'catalog-apply-' + randomUUID().slice(0, 8);
-  const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', workspace.claudeDir!] });
+  const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config')] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const session = await backend.createSession(workspace);
@@ -34,11 +36,11 @@ test('the model list comes from one SDK probe without a tmux pane, and each expl
     assert.deepEqual(catalog.defaults, { model: 'fixture-alpha', effort: 'medium', ultracodeAvailable: false });
     assert.equal(await capture(), before, 'the session is not touched');
     assert.deepEqual((await tmux('list-panes', '-a', '-F', '#{pane_id}')).trim().split('\n'), [paneId], 'no query pane');
-    const [call, ...more] = readFileSync(join(workspace.claudeDir!, 'probe-calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const [call, ...more] = readFileSync(join(join(root, 'config'), 'probe-calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.equal(more.length, 0);
     assert.deepEqual(call.args.slice(-7), ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--no-session-persistence']);
     assert.equal(call.cwd, await realpath(process.env.HOME!), 'asked from the home directory, outside any project');
-    assert.equal(call.claudeConfigDir, workspace.claudeDir, 'the folder\'s Claude configuration');
+    assert.equal(call.claudeConfigDir, join(root, 'config'), 'the target Claude configuration');
     const rows = {
       model: catalog.models.map(row => ({ label: row.label, description: row.description, value: row.value })),
       effort: catalog.models[0].efforts.map(level => ({ label: level, value: level })),
@@ -70,9 +72,10 @@ function choicesOf(fixture: NativeMenuFixture, kind: SessionSettingKind): Settin
 
 test('one-page settings use bounded round trips and protect external drafts and permission dialogs at dispatch', { skip: process.platform === 'win32', timeout: 30_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-setting-read-')));
-  const workspace: Workspace = { id: 'settings-fixture', name: 'Fixture', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
+  const workspace: Workspace = { id: 'settings-fixture', name: 'Fixture', kind: 'local', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const socket = 'settings-' + randomUUID().slice(0, 8);
-  const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', workspace.claudeDir!] });
+  const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config')] });
   const tmux = (...args: string[]) => ['tmux', '-L', socket, ...args].map(quoteShell).join(' ');
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
@@ -120,7 +123,7 @@ test('one-page settings use bounded round trips and protect external drafts and 
       }
       if (intervention === 'permission' && script.includes("'paste-buffer'")) {
         intervention = undefined;
-        const stateFile = quoteShell(join(workspace.claudeDir!, 'screen-state'));
+        const stateFile = quoteShell(join(join(root, 'config'), 'screen-state'));
         script = script.replace('sleep 0.1', `echo waiting > ${stateFile}\nsleep 0.3`);
       }
       return run(target, script, options);

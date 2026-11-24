@@ -7,7 +7,7 @@ const workspace = (id: string, endpoint: Partial<Workspace>): Workspace => ({ id
 
 test('保存空机器不生成项目；旧工作区按 SSH 身份和端口归组，不按目录名混合', () => {
   const machines = workspaceMachines('darwin', [{ id:'build', name:'示例机器', host:'devbox' }, { id:'empty', name:'空机器', host:'empty' }], [
-    workspace('one', { kind:'ssh', host:'devbox' }), workspace('local', {}), workspace('two', {kind:'ssh', host:'devbox', claudeDir:'/configs/two'}),
+    workspace('one', { kind:'ssh', host:'devbox' }), workspace('local', {}), workspace('two', {kind:'ssh', host:'devbox'}),
     workspace('port', {kind:'ssh', host:'devbox', port:22}), workspace('login', {kind:'ssh', host:'other@devbox'}),
   ]);
   assert.deepEqual(machines.map(m => [m.name, m.folders.map(w => w.id)]), [

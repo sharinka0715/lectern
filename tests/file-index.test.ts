@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -28,7 +29,7 @@ class Counting extends Transport {
     const invocation = commandInvocation(ws, script);
     assert.equal(invocation.file, 'ssh');
     const { stdout, stderr } = await promisify(execFile)('/bin/sh', ['-c', String(invocation.input)],
-      { env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME }, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
+      { env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR }, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
     return { stdout, stderr: stderr.toString() };
   }
 }
@@ -38,7 +39,8 @@ async function fixture(t: TestContext, limits: Partial<FileIndexLimits> = {}) {
   const cwd = join(root, 'repo'), transport = new Counting();
   const clock = { now: 1_000_000 };
   const artifacts = new WorkspaceArtifacts(transport, { fanout: 20, ...limits, now: () => clock.now });
-  const ws: Workspace = { id: 'files', name: 'repo', kind: 'local', cwd, claudeDir: join(cwd, 'profile-config') };
+  const ws: Workspace = { id: 'files', name: 'repo', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, 'profile-config'));
   t.after(async () => { await transport.dispose(); await rm(root, { recursive: true, force: true }); });
   for (const path of ['README.md', 'src/app.ts', 'src/lib/util.ts', 'deep/a/b/c/needle.txt', 'node_modules/pkg/index.js',
     'node_modules/pkg/lib/inner.js', '.env', '.git/HEAD', 'profile-config/settings.json', 'quote"name.txt']) await write(join(cwd, path));

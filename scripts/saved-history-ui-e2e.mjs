@@ -87,7 +87,7 @@ function renderHistory() {
 let app;
 try {
   await Promise.all([profile, cwd, project].map(dir => mkdir(dir, { recursive: true })));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'fixture', name: '历史记录检查', kind: 'local', cwd, claudeDir: config }]));
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'fixture', name: '历史记录检查', kind: 'local', cwd }]));
   await writeFile(path.join(cwd, noticeChat.filename), '验证文件引用');
   await writeFile(path.join(cwd, 'app.css'), '.button { color: blue; }\n');
   await writeFile(path.join(project, `${noticeChat.sid}.jsonl`), noticeHistory());

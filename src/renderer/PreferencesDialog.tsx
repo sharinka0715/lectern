@@ -426,6 +426,9 @@ export function PreferencesDialog({
               </label>
               <p id="cache-ttl-default-help">{t('prefs.cacheTtlDefaultHelp')}</p>
               <p id="cache-ttl-help">{t('prefs.cacheTtlHelp')}</p>
+              <label>{t('conversationSettings.warn')}
+                <input type="checkbox" checked={settings.warnSettingsOverrides} onChange={e => setDesktop({ warnSettingsOverrides: e.currentTarget.checked })} />
+              </label>
               <label>{t('prefs.dialogHooks')}
                 <input type="checkbox" aria-describedby="dialog-hooks-help" checked={settings.dialogHooks} onChange={e => setDesktop({ dialogHooks: e.currentTarget.checked })} />
               </label>

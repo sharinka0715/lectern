@@ -60,10 +60,13 @@ export class SessionViews {
   }
   /** The reader that already shows or caches this conversation keeps its
    * history; one immediate read binds it to the resumed pane. */
-  async resumeSession(workspace: string, session: string) {
-    const resumed = await this.primary.resumeSession(workspace, session);
+  async resumeSession(workspace: string, session: string, nonce?: string) {
+    const resumed = await this.primary.resumeSession(workspace, session, nonce);
     await this.find(workspace, session)?.controller.refresh(workspace, session);
     return resumed;
+  }
+  saveConversationSettings(workspace: string, session: string, file: string | null) {
+    return (this.find(workspace, session)?.controller ?? this.primary).saveConversationSettings(workspace, session, file);
   }
   renameSession(workspace: string, session: string, title: string) {
     // A sidebar action can target a session outside both visible panes.

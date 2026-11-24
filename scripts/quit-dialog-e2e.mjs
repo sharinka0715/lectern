@@ -82,6 +82,7 @@ async function launch(name, { locale = 'zh-CN', userData, ssh = false, prompt = 
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-session-live') === 'true');
   const workspaces = await page.evaluate(() => window.desktop.listWorkspaces());
   run.workspace = workspaces.find(item => item.id === 'demo-local');
+  run.config = await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR);
   run.demoDir = path.dirname(run.workspace.cwd);
   run.demoSession = await page.locator('.session-row.active').getAttribute('data-session-id');
   // Nothing answers at sshHost: once the SSH folder's read has failed, quitting lists that machine from
@@ -97,7 +98,7 @@ async function addConversation(run, title) {
   await tmux(run.socket, 'send-keys', '-t', info.paneId, '-l', `/rename ${title}`);
   await tmux(run.socket, 'send-keys', '-t', info.paneId, 'Enter');
   // Once the new title is on disk, read the folder now rather than on the sidebar's next 5-second read.
-  const transcript = path.join(run.workspace.claudeDir, 'projects', run.workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${info.id}.jsonl`);
+  const transcript = path.join(run.config, 'projects', run.workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${info.id}.jsonl`);
   for (let n = 0; n < 100 && !(await readFile(transcript, 'utf8').catch(() => '')).includes(JSON.stringify(title)); n++) await pause(50);
   await refreshFolderUntil(run.page, run.workspace.id, run.page.locator(`.session-row[data-session-id="${info.id}"]`, { hasText: title }));
   return info;
@@ -105,7 +106,7 @@ async function addConversation(run, title) {
 
 /** Two background shells and a monitor still running in the demo conversation (synthetic records). */
 async function addBackgroundWork(run) {
-  const file = path.join(run.workspace.claudeDir, 'projects', run.workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${run.demoSession}.jsonl`);
+  const file = path.join(run.config, 'projects', run.workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'), `${run.demoSession}.jsonl`);
   let parent = (await readFile(file, 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.uuid).at(-1)?.uuid ?? null;
   const at = new Date().toISOString(), sessionId = run.demoSession, cwd = run.workspace.cwd;
   const record = (type, fields) => { const uuid = randomUUID(), row = { type, uuid, parentUuid: parent, sessionId, cwd, timestamp: at, ...fields }; parent = uuid; return row; };

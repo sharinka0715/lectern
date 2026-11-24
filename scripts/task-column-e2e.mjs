@@ -86,7 +86,7 @@ try {
   const sid = await page.locator('.session-row.active').getAttribute('data-session-id');
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
   const slug = workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-');
-  const main = path.join(workspace.claudeDir, 'projects', slug, `${sid}.jsonl`);
+  const main = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'projects', slug, `${sid}.jsonl`);
   const tasks = path.join(taskTmp, `claude-${process.getuid()}`, slug, sid, 'tasks');
   await mkdir(tasks, { recursive: true, mode: 0o700 });
   const output = name => path.join(tasks, `${ids[name]}.output`);
@@ -122,7 +122,7 @@ try {
   ]));
 
   // Subagents whose launch is not in the transcript: their folder (Claude Code 2.1.310+) lists them.
-  const subagents = path.join(workspace.claudeDir, 'projects', slug, sid, 'subagents');
+  const subagents = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'projects', slug, sid, 'subagents');
   await mkdir(subagents, { recursive: true });
   const agents = { review: ['aereview000000001', '审查改动', {}], docs: ['aedocs0000000002', '整理文档', { finished: true }], lint: ['aelint0000000003', '检查格式', { finished: true, stoppedByUser: true }] };
   for (const [name, [agent, description, state]] of Object.entries(agents)) {

@@ -10,5 +10,6 @@ export function settingMenuNeedsRefresh(menu?: SessionSettingSnapshot, now = Dat
 }
 
 export function sessionSettingsTarget(workspace: Workspace): string {
-  return JSON.stringify([workspace.kind, workspace.host, workspace.port, workspace.cwd, workspace.claudeDir]);
+  // Keep the old null slot so saved tickets keep their target identity.
+  return JSON.stringify([workspace.kind, workspace.host, workspace.port, workspace.cwd, null]);
 }

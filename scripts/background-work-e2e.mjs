@@ -93,10 +93,10 @@ try {
   await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['bg-e2e'] } }));
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash', 'ToolSearch', 'SendMessage'], defaultMode: 'acceptEdits' },
     env: { ANTHROPIC_API_KEY: 'bg-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'bg', name: '后台任务', kind: 'local', cwd, claudeDir: config }]));
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'bg', name: '后台任务', kind: 'local', cwd }]));
   // Auto mode's check runs locally (answered by the loopback model), not on the server, which
   // this loopback "gateway" cannot run; the variable reaches Claude Code through the app and tmux.
-  const env = { ...process.env, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(output, 'diagnostics') };
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(output, 'diagnostics') };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
@@ -108,6 +108,7 @@ try {
   const input = page.getByRole('textbox', { name: '发送给 Claude 的消息' });
   await input.fill('启动后台任务');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await page.locator('.settings-override-dialog').getByRole('button', { name: '接受', exact: true }).click();
   // The app starts the session in auto mode and gets past any auto-mode prompt itself.
   for (let i = 0; i < 80 && !requests.includes('start'); i++) await new Promise(r => setTimeout(r, 250));
   await page.locator('.message-assistant').getByText('已在后台启动。').waitFor();

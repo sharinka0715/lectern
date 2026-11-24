@@ -32,6 +32,7 @@ export const misc = {
   currentVersion: ['当前版本', 'Current'],
   pending: ['待发布', 'Upcoming'],
   features: ['新功能', 'New features'],
+  changes: ['变化', 'Changes'],
   fixes: ['问题修复', 'Fixes'],
   crashTitle: ['界面遇到了问题', 'Something went wrong'],
   crashBody: ['错误已尝试写入本机诊断日志。远端 tmux 会话仍独立运行。', 'The error was written to the local diagnostic log if possible. Remote tmux sessions keep running.'],

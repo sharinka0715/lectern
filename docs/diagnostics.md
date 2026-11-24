@@ -34,7 +34,7 @@ npm run diagnostics:replay -- /absolute/path/to/saved-diagnostics --session SESS
 | 环节 | 主要证据 |
 | --- | --- |
 | IPC / Controller / Backend / transport | `traceId`、`rootOperationId`、`parentOperationId`、`operationId` 串联调用；耗时、退出码、stderr 摘要和错误堆栈 |
-| 目录与会话发现 | 工作目录、配置目录模式、JSONL 与 pane 数量、UUID 绑定、失效和冲突原因 |
+| 目录与会话发现 | 工作目录、实际配置目录、JSONL 与 pane 数量、UUID 绑定、失效和冲突原因 |
 | 轮询 | `workspaceId`、`sessionId`、`watchId`、`pollId`、pane、游标、文件大小、重置、后续片段和前台进程状态 |
 | 原文 | `capture.jsonl` 保存本次实际读取的字节；`capture.screen` 保存含滚屏的原屏；`capture.viewport` 保存当前视口用于状态判定；input / messages 保存输入与消息状态 |
 | 解析与合并 | 解码字节、半行缓冲、记录类型、跳过或重复原因、屏幕锚点、候选预览、权威正文接管及消息摘要 |

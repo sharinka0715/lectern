@@ -36,11 +36,12 @@ Nothing extra is installed on the remote machine. Claude Code there keeps its ow
 - **Comfortable input.** Type `@` to mention project files and `/` for commands and skills. Drag in, paste or pick files and screenshots; they show as cards in the input box and in the sent message, and are uploaded to the SSH machine when needed. Queue a message or steer a reply that is still running.
 - **Permission and question cards.** Allow or deny tool calls, trust a folder and answer Claude's questions without leaving the chat.
 - **Auto mode by default.** New and resumed conversations start in Claude Code's auto mode, without changing your settings files. If you turn auto mode off with `permissions.disableAutoMode`, tools are confirmed on permission cards instead.
+- **Per-conversation Claude settings.** Choose an optional JSON file on the target when starting or first resuming a conversation, and edit the path by right-clicking the conversation. Lectern warns when it overrides explicit settings at launch. Folders use Claude Code's usual configuration directory, typically `~/.claude`.
 - **Model, effort and usage at a glance.** Switch model and effort from the input box. Below it you see the permission mode, context use, prompt cache time and subscription usage.
 - **Host check.** Lectern checks each machine for tmux and Claude Code and, when one is missing, shows install commands for that system.
 - **Update check.** Lectern looks for new releases on GitHub and asks before downloading. Downloads are verified against `SHA256SUMS` and never installed automatically.
 - **English and Simplified Chinese.** Lectern follows the system language; switch it any time in Settings › Appearance.
-- **Private.** No telemetry. Apart from the update check on GitHub, Lectern only talks to your own machines. Lectern does not read Claude credentials, and remote images in Markdown are not loaded.
+- **Private.** No telemetry. Apart from the update check on GitHub, Lectern only talks to your own machines. Lectern does not read Claude's credential store, and remote images in Markdown are not loaded.
 - **Conversation sorting.** Browse chats by project, or sort chats across all local and SSH projects by last update. The active-first view puts replies, confirmations, and background work ahead of other chats.
 
 ## Screenshots

@@ -83,6 +83,9 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
   let backend: Backend | undefined;
   let daemonLog = '';
   let userMasterConfig: string | undefined;
+  const previousTmux = process.env.TMUX_TMPDIR;
+  process.env.TMUX_TMPDIR = directory;
+  t.after(() => { if (previousTmux === undefined) delete process.env.TMUX_TMPDIR; else process.env.TMUX_TMPDIR = previousTmux; });
   const local: Workspace = { id: 'cleanup', name: 'Cleanup', kind: 'local', cwd: directory };
   try {
     await exec('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', join(directory, 'host-key')]);
@@ -93,10 +96,11 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     });
     await writeFile(join(directory, 'authorized_keys'), await readFile(join(directory, 'client-key.pub')), { mode: 0o600 });
     await writeFile(join(directory, 'known_hosts'), `lectern-loopback ${await readFile(join(directory, 'host-key.pub'), 'utf8')}`, { mode: 0o600 });
+    const config = join(directory, 'claude');
     const serverConfig = join(directory, 'sshd_config');
     await writeFile(serverConfig, [
       `Port ${port}`, 'ListenAddress 127.0.0.1', `HostKey ${join(directory, 'host-key')}`, `PidFile ${join(directory, 'sshd.pid')}`,
-      `AuthorizedKeysFile ${join(directory, 'authorized_keys')}`, `SetEnv HOME=${join(directory, 'workspace')}`, 'StrictModes no', 'UsePAM no', 'PasswordAuthentication no',
+      `AuthorizedKeysFile ${join(directory, 'authorized_keys')}`, `SetEnv HOME=${join(directory, 'workspace')} CLAUDE_CONFIG_DIR=${config} TMUX_TMPDIR=${directory}`, 'StrictModes no', 'UsePAM no', 'PasswordAuthentication no',
       'KbdInteractiveAuthentication no', 'PubkeyAuthentication yes', 'PermitRootLogin no', `AllowUsers ${userInfo().username}`, 'LogLevel ERROR',
     ].join('\n') + '\n', { mode: 0o600 });
     const clientConfig = join(directory, 'ssh_config');
@@ -109,7 +113,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     daemon.stderr?.on('data', b => { daemonLog += b.toString(); });
     await wait(250);
     if (daemon.exitCode !== null) { t.skip(`Unprivileged sshd unavailable: ${daemonLog.trim()}`); return; }
-    const workspace: Workspace = { id: 'loopback', name: 'Loopback SSH', kind: 'ssh', host: 'lectern-loopback', cwd: join(directory, 'workspace'), claudeDir: join(directory, 'claude') };
+    const workspace: Workspace = { id: 'loopback', name: 'Loopback SSH', kind: 'ssh', host: 'lectern-loopback', cwd: join(directory, 'workspace') };
     await mkdir(workspace.cwd);
     try {
       assert.equal((await runCommand(workspace, 'printf ssh-ready', { sshConfigPath: clientConfig, timeoutMs: 3000 })).stdout.toString(), 'ssh-ready');
@@ -147,7 +151,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
       await uploads.dispose();
       if (uploaded) await rm(join(uploaded, '..'), { recursive: true, force: true });
     }
-    backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', workspace.claudeDir!], sshConfigPath: clientConfig });
+    backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', config], sshConfigPath: clientConfig });
     const artifactName = "远端 ' quote.md", artifactContent = '# real OpenSSH artifact\n';
     await writeFile(join(workspace.cwd, artifactName), artifactContent);
     assert.equal((await backend.artifacts.list(workspace)).entries[0].path, artifactName);
@@ -189,7 +193,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
       assert.equal(frames.at(-1)!.includes('link probe'), false);
       link.close();
     }
-    const childDir = join(workspace.claudeDir!, 'projects', projectSlug(workspace.cwd), session.id, 'subagents');
+    const childDir = join(config, 'projects', projectSlug(workspace.cwd), session.id, 'subagents');
     await mkdir(childDir, { recursive:true });
     const childRow = { parentUuid:null, isSidechain:true, type:'assistant', sessionId:session.id, agentId:'a123',
       message:{ content:[{type:'text',text:'Loopback child progress'}] } };
@@ -250,7 +254,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
     assert.equal(parsed.filter(r => r.type === 'assistant').length, 1);
     assert.equal((await backend.discover(workspace)).sessions[0].paneId, session.paneId);
     const historyId = randomUUID();
-    const historyFile = join(workspace.claudeDir!, 'projects', projectSlug(workspace.cwd), historyId + '.jsonl');
+    const historyFile = join(config, 'projects', projectSlug(workspace.cwd), historyId + '.jsonl');
     const history = Array.from({ length: 57 }, (_, i) => JSON.stringify({ type: 'user', uuid: String(i), cwd: workspace.cwd,
       sessionId: historyId, message: { content: '历史' + i } }) + '\n').join('');
     await writeFile(historyFile, history);
@@ -276,7 +280,7 @@ test('loopback SSH: actual OpenSSH transports tmux input, capture, and authorita
       const large = '# ' + 'mux'.repeat(55_000) + '\ncat';
       const copy = await runCommand(workspace, large, { input: binary, sshConfigPath: clientConfig, reuseExistingMaster: true });
       assert.deepEqual(copy.stdout, binary, 'large scripts and byte-exact stdin share the existing authenticated master');
-      const scan = await reusing.discoverHistoryProjects({ kind: 'ssh', host: 'lectern-loopback', claudeDir: workspace.claudeDir });
+      const scan = await reusing.discoverHistoryProjects({ kind: 'ssh', host: 'lectern-loopback' });
       assert.equal(scan.projects.find(project => project.cwd === workspace.cwd)?.sessionCount, 2);
     } finally { await reusing.dispose(); }
     const master = await exec('ssh', ['-F', clientConfig, '-O', 'check', 'lectern-loopback']);

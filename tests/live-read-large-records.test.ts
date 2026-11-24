@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -22,7 +23,8 @@ test('a record larger than one live read does not hold back the question after i
   await mkdir(cwd, { recursive: true }); await mkdir(project, { recursive: true });
   await writeFile(file, line({ ...base, type: 'user', uuid: 'u1', parentUuid: null, timestamp: at(0), promptSource: 'typed', message: { role: 'user', content: 'Read the log, then ask me.' } })
     + line({ ...base, type: 'assistant', uuid: 'a1', parentUuid: 'u1', timestamp: at(1), message: { id: 'm1', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_read', name: 'Bash', input: { command: 'cat big.log' } }] } }));
-  const workspace: Workspace = { id: 'large', name: 'Large records', kind: 'local', cwd, claudeDir };
+  const workspace: Workspace = { id: 'large', name: 'Large records', kind: 'local', cwd };
+  fixtureClaudeConfig(claudeDir);
   const backend = new Backend({ tmuxSocket: `lectern-live-large-${randomUUID().slice(0, 8)}` });
   const display = new MessageDisplay(sessionId);
   const read = async () => {

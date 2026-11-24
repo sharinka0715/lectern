@@ -43,7 +43,7 @@ try {
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.getAttribute('data-session-live') === 'true');
   const sid = await page.locator('.session-row.active').getAttribute('data-session-id');
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
-  const project = path.join(workspace.claudeDir, 'projects', workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'projects', workspace.cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
   const main = path.join(project, `${sid}.jsonl`), subagents = path.join(project, sid, 'subagents');
   await mkdir(subagents, { recursive: true });
 
@@ -291,8 +291,8 @@ try {
   try {
     const start = process.platform === 'linux' ? (await readFile(`/proc/${outside.pid}/stat`, 'utf8')).replace(/^.*\) /s, '').split(' ')[19]
       : execFileSync('ps', ['-p', String(outside.pid), '-o', 'lstart='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).toString().trim();
-    await mkdir(path.join(workspace.claudeDir, 'sessions'), { recursive: true });
-    await writeFile(path.join(workspace.claudeDir, 'sessions', `${outside.pid}.json`), JSON.stringify({ pid: outside.pid, sessionId: sid, cwd: workspace.cwd,
+    await mkdir(path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'sessions'), { recursive: true });
+    await writeFile(path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'sessions', `${outside.pid}.json`), JSON.stringify({ pid: outside.pid, sessionId: sid, cwd: workspace.cwd,
       procStart: start, startedAt: Date.now() - 600_000, kind: 'interactive', entrypoint: 'cli', status: 'busy' }));
     await page.waitForFunction(id => document.querySelector(`.task-column-list button[data-agent-id="${id}"]`)?.dataset.state === 'running', live, { timeout: 30_000 });
     assert.deepEqual((await rows()).filter(([, state]) => state === 'running').map(([agent]) => agent).sort(), interrupted, 'the same ones run again');

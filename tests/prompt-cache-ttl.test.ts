@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -57,7 +58,8 @@ test('the preset is stored with the other session options; the two old choices c
 test('new and resumed chats get the chosen preset\'s cache lifetimes in --settings; the default adds nothing', { skip: process.platform === 'win32', timeout: 40_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-cache-ttl-')));
   const config = join(root, 'config');
-  const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root, claudeDir: config };
+  const workspace: Workspace = { id: randomUUID(), name: 'fixture', kind: 'local', cwd: root };
+  fixtureClaudeConfig(config);
   const socket = 'cache-ttl-' + randomUUID().slice(0, 8), exe = join(root, 'claude'), fixture = join(root, 'fixture.mjs');
   // A custom executable named claude gets the same per-launch settings as the real CLI.
   const backend = new Backend({ claudeCommand: exe, tmuxSocket: socket, claudeArgs: [fixture] });

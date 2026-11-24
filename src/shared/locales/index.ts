@@ -6,6 +6,7 @@ import { backend } from './backend';
 import { cards } from './cards';
 import { chat } from './chat';
 import { composer } from './composer';
+import { conversationSettings } from './conversation-settings';
 import { controller } from './controller';
 import { core } from './core';
 import { demo } from './demo';
@@ -33,6 +34,7 @@ export const dictionaries = {
   cards,
   chat,
   composer,
+  conversationSettings,
   controller,
   core,
   demo,

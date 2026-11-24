@@ -7,6 +7,9 @@ import { execFileSync } from 'node:child_process';
 const args = process.argv.slice(2);
 const arg = name => args[args.indexOf(name) + 1];
 const config = arg('--fixture-config');
+const settingsArg = args.includes('--settings') ? arg('--settings') : undefined;
+const settingsFixture = process.env.LECTERN_SETTINGS_FIXTURE === '1';
+const settings = settingsFixture && settingsArg ? JSON.parse(settingsArg.startsWith('/') ? readFileSync(settingsArg, 'utf8') : settingsArg) : undefined;
 // --alias-models: native alias labels, so `/model <alias>` and `/effort <level>` apply inline.
 const aliasModels = args.includes('--alias-models');
 // One model table for the native menu rows and the SDK probe, as in Claude Code.
@@ -29,7 +32,8 @@ if (args.includes('-p') || args.includes('--print')) {
   appendFileSync(path.join(config, 'probe-calls.jsonl'), JSON.stringify({ args, cwd: process.cwd(), claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null }) + '\n');
   if (behavior.fail) { process.stderr.write(behavior.fail + '\n'); process.exit(1); }
   const reply = (requestId, response) => process.stdout.write(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } }) + '\n');
-  const models = behavior.models ?? fixtureTable.map(row => ({ value: row.value, resolvedModel: row.value, displayName: row.label, description: row.description,
+  const rows = Array.isArray(settings?.availableModels) ? fixtureTable.filter(row => settings.availableModels.includes(row.value)) : fixtureTable;
+  const models = behavior.models ?? rows.map(row => ({ value: row.value, resolvedModel: row.value, displayName: row.label, description: row.description,
     supportsEffort: true, supportedEffortLevels: efforts }));
   let buffer = '';
   process.stdin.setEncoding('utf8');
@@ -41,7 +45,8 @@ if (args.includes('-p') || args.includes('--print')) {
       if (request.type !== 'control_request') continue;
       const kind = request.request?.subtype;
       if (kind === 'initialize') reply(request.request_id, { models, account: { subscriptionType: 'Fixture', apiProvider: 'firstParty' }, claude_code_version: '0.0.0-fixture' });
-      else if (kind === 'get_settings' && !behavior.noSettings) reply(request.request_id, { applied: { model: models[0]?.value, effort: 'medium', ultracodeAvailable: false }, effective: {} });
+      else if (kind === 'get_settings' && !behavior.noSettings) reply(request.request_id, { applied: { model: models[0]?.value, effort: 'medium', ultracodeAvailable: false }, effective: settings ?? {},
+        ...(settings && typeof settings.model === 'number' && { errors: [{ file: settingsArg, path: 'model', message: 'Expected string, but received number' }] }) });
       else process.stdout.write(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: request.request_id, error: `Unsupported control request: ${kind}` } }) + '\n');
     }
   });
@@ -51,7 +56,11 @@ const id = args.includes('--resume') ? arg('--resume') : arg('--session-id');
 if (!id || !config) throw new Error('The fixture requires an isolated config and session ID');
 // Launch options are recorded so tests can see what Lectern started.
 mkdirSync(config, { recursive: true });
-appendFileSync(path.join(config, 'launches.jsonl'), JSON.stringify({ args, id }) + '\n');
+appendFileSync(path.join(config, 'launches.jsonl'), JSON.stringify({ args, id, ...(settingsFixture && {
+  fileMode: settingsArg?.startsWith('/') ? statSync(settingsArg).mode & 0o777 : undefined,
+  dirMode: settingsArg?.startsWith('/') ? statSync(path.dirname(settingsArg)).mode & 0o777 : undefined,
+  settings,
+}) }) + '\n');
 const cwd = process.cwd();
 // Where it works now: a prompt with `mock-cd:<dir>` runs `cd <dir>` first. Like Claude Code, later
 // records carry the new directory and @-mentions are read from it; the file stays in the launch's project.

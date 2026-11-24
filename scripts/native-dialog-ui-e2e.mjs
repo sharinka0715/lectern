@@ -61,8 +61,8 @@ try {
   await writeFile(path.join(config, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, theme: 'dark', projects: { [cwd]: { hasTrustDialogAccepted: true } }, customApiKeyResponses: { approved: ['dialog-e2e'] } }));
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: 'dialog-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'gateway', name: '网关', kind: 'local', cwd, claudeDir: config }]));
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1' };
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'gateway', name: '网关', kind: 'local', cwd }]));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF: '1' };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   // Lectern's default: nothing moves auto mode's check off the server.
   delete env.CLAUDE_CODE_AUTO_MODE_SERVER;

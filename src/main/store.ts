@@ -14,8 +14,8 @@ export class WorkspaceStore {
       const content = JSON.parse(await readFile(path.join(this.directory, 'workspaces.json'), 'utf8'));
       if (!Array.isArray(content)) throw new Error(t('main.workspaceConfigInvalid'));
       this.items = content.map(item => {
-        const { id, name, kind, cwd, host, port, claudeDir, historyScan } = validateWorkspace(item);
-        return { id, name, kind, cwd, host, port, claudeDir, ...(historyScan === false && { historyScan }) };
+        const { id, name, kind, cwd, host, port, historyScan } = validateWorkspace(item);
+        return { id, name, kind, cwd, host, port, ...(historyScan === false && { historyScan }) };
       });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;

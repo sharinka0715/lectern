@@ -50,7 +50,7 @@ try {
   const idle = () => page.waitForFunction(() => !document.querySelector('.interrupt-button') && !!document.querySelector('.send-button'));
   const records = async () => (await readFile(session.path, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
   // The mock holds a goal-hold or mock-hold reply until this file appears (or Esc): no timing involved.
-  const release = () => writeFile(path.join(workspace.claudeDir, 'mock-release'), '');
+  const release = async () => writeFile(path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), 'mock-release'), '');
 
   part = 'send';
   // The slash list offers /goal with what it does.

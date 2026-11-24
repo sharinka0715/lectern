@@ -1,3 +1,5 @@
+import { SettingsFileEditor, SettingsOverrideDialog, type OverrideDecision } from './ConversationSettingsDialog';
+import type { SettingsOverrideSource } from '../shared/conversation-settings';
 import { PreferencesDialog } from "./PreferencesDialog";
 import { WindowTitlebar } from "./WindowTitlebar";
 import { SplitButtons, SplitWorkspace } from "./SplitWorkspace";
@@ -143,6 +145,8 @@ function mergeDraft(existing: string, text: string) {
   return `${text}\n\n${existing}`;
 }
 type ResumeState = 'pending' | { error: string };
+
+const launchNonce = () => crypto.randomUUID().replace(/-/g, '');
 
 export default function App() {
   // A split can promote a conversation to the other pane during its resume.
@@ -488,6 +492,13 @@ function ChatPane({ view, resumes, setResume }: {
   const composerFocus = useComposerFocus({ inputRef, area: composerDock, canType, scope: `${workspaceId}:${sessionId}`,
     card: !!(question || permission || directoryTrust) });
   const typing = canType || composerFocus.lock.holding;
+  const [draftFile, setDraftFile] = useState<string | null>(null);
+  const [draftVersion, setDraftVersion] = useState(0);
+  const [settingsEditor, setSettingsEditor] = useState<{
+    workspaceId: string; initial: string | null; mode: 'resume' | 'edit'; running?: boolean;
+    onApply(file: string | null): void | Promise<void>; onClose(): void;
+  }>();
+  const [overrides, setOverrides] = useState<{ sources: SettingsOverrideSource[]; decide(decision: OverrideDecision): void }>();
   const [draftChoices, setDraftChoicesState] = useState<LaunchChoices>({});
   useEffect(() => { setDraftChoicesState(launchChoicesByFolder.get(workspaceId) ?? {}); }, [workspaceId]);
   const setDraftChoices = useCallback((next: LaunchChoices) => {
@@ -615,6 +626,8 @@ function ChatPane({ view, resumes, setResume }: {
       setArtifact(undefined);
       setSnapshot(undefined);
       setDraft(unsentDrafts.get(draftKey(ws.id, "")) || "");
+    setDraftFile(null);
+    setDraftVersion(version => version + 1);
       setError("");
       setTerminalOpen(false);
       setFolderState("resolving");
@@ -874,9 +887,45 @@ function ChatPane({ view, resumes, setResume }: {
     });
   }
 
+  async function approveSettingsOverrides(target: Workspace, file: string | null, sid: string, nonce: string) {
+    const warn = desktopState().warnSettingsOverrides;
+    if (!warn || !window.desktop.inspectConversationSettings) return true;
+    const inspection = await window.desktop.inspectConversationSettings(target.id, file, { launch: true, sessionId: sid, nonce });
+    if (inspection.error) throw new Error(file ? t('conversationSettings.launchFile', { file, reason: inspection.error }) : inspection.error);
+    if (!inspection.overrides.length) return true;
+    const decision = await new Promise<OverrideDecision>(resolve => setOverrides({
+      sources: inspection.overrides,
+      decide: value => { setOverrides(undefined); resolve(value); },
+    }));
+    if (decision === 'acceptAlways') setDesktop({ warnSettingsOverrides: false });
+    return decision !== 'cancel';
+  }
+
+  function firstResumeSettings(target: Workspace, sid: string) {
+    return new Promise<string | null | undefined>(resolve => {
+      let result: string | null | undefined;
+      setSettingsEditor({
+        workspaceId: target.id, initial: null, mode: 'resume',
+        onApply: async file => { await window.desktop.saveConversationSettings(target.id, sid, file); result = file; },
+        onClose: () => { setSettingsEditor(undefined); resolve(result); },
+      });
+    });
+  }
+
+  async function editConversationSettings(target: Workspace, chat: SessionInfo) {
+    try {
+      const record = await window.desktop.getConversationSettings(target.id, chat.id);
+      setSettingsEditor({
+        workspaceId: target.id, initial: record?.settingsFile ?? null, mode: 'edit', running: !!chat.paneId,
+        onApply: file => window.desktop.saveConversationSettings(target.id, chat.id, file),
+        onClose: () => setSettingsEditor(undefined),
+      });
+    } catch (error) { setError(errorText(error), target); }
+  }
+
   async function resume() {
     markNavigated();
-    if (!workspace || !sessionId || hostBlocked || busy) return;
+    if (!workspace || !sessionId || hostBlocked || busy || resuming) return;
     const shown = snapshot?.workspaceId === workspace.id && snapshot.sessionId === sessionId;
     // Do not advance the selection: the transcript is keyed by it and would remount.
     // If the user navigates away, let the resume finish in the background.
@@ -886,10 +935,16 @@ function ChatPane({ view, resumes, setResume }: {
     setResume(activityScope, 'pending');
     setError("");
     try {
-      const resumed = await window.desktop.resumeSession(
-        workspace.id,
-        sessionId,
-      );
+      const record = await window.desktop.getConversationSettings?.(workspace.id, sessionId);
+      let file = record?.settingsFile ?? null;
+      if (!record) {
+        const chosen = await firstResumeSettings(workspace, sessionId);
+        if (chosen === undefined) { setResume(activityScope); return; }
+        file = chosen;
+      }
+      const nonce = launchNonce();
+      if (!await approveSettingsOverrides(workspace, file, sessionId, nonce)) { setResume(activityScope); return; }
+      const resumed = await window.desktop.resumeSession(workspace.id, sessionId, nonce);
       if (stillShowing()) {
         patchWorkspace(workspace.id, (current) => ({
           ...(current ?? { workspace, panes: [] }),
@@ -987,6 +1042,18 @@ function ChatPane({ view, resumes, setResume }: {
     if (policy.kind === 'route' && policy.target === 'goal') { setDraft(''); showToast(t('app.goalNone')); return; }
     if (policy.kind === 'route') { setError(t('app.draftNoRewind'), target); return; }
     const id = `outgoing:${Date.now()}`, choices = draftChoices, request = sessionRequest.current;
+    const newLaunch = { id: crypto.randomUUID(), nonce: launchNonce() };
+    setBusy(true);
+    try {
+      if (!await approveSettingsOverrides(target, draftFile, newLaunch.id, newLaunch.nonce) || request !== sessionRequest.current) {
+        setBusy(false);
+        return;
+      }
+    } catch (error) {
+      setBusy(false);
+      if (request === sessionRequest.current) setError(errorText(error), target);
+      return;
+    }
     // Used by this launch only; they come back if it does not start.
     launchChoicesByFolder.delete(target.id);
     const pending = showsOutgoing(text) ? startOutgoing(`${target.id}:`, text, [], id) : undefined;
@@ -996,7 +1063,7 @@ function ChatPane({ view, resumes, setResume }: {
     setBusy(true);
     setLaunch({ id, workspaceId: target.id, text, choices, phase: 'creating', startedAt: Date.now() });
     try {
-      const next = await window.desktop.createSession(target.id, { ...choices, validateMessage: text });
+      const next = await window.desktop.createSession(target.id, { ...choices, validateMessage: text, settingsFile: draftFile, launch: newLaunch });
       patchWorkspace(target.id, current => ({ ...(current ?? { workspace: target, panes: [] }),
         sessions: [next, ...(current?.sessions ?? []).filter(item => item.id !== next.id)] }));
       if (!mounted.current || sessionRequest.current !== request || selected.current.workspaceId !== target.id || selected.current.sessionId) {
@@ -1218,6 +1285,7 @@ function ChatPane({ view, resumes, setResume }: {
     open: (target, id) => selectFromTree(target, id),
     openBeside: (target, chat) => splitChat({ workspaceId: target.id, sessionId: chat.id, title: chat.title || t('app.chat') }, "right"),
     archiveSession: archiveTreeSession,
+    editConversationSettings: (target, chat) => void editConversationSettings(target, chat),
   };
 
   async function removeWorkspace(id: string) {
@@ -1246,7 +1314,6 @@ function ChatPane({ view, resumes, setResume }: {
   async function importHistoryProjects(
     target: HistoryTarget,
     projects: HistoryProject[],
-    resolvedClaudeDir: string,
   ) {
     markNavigated();
     if (info.demo)
@@ -1262,7 +1329,6 @@ function ChatPane({ view, resumes, setResume }: {
           inventory,
           target,
           project.cwd,
-          resolvedClaudeDir,
         );
         if (existing) {
           firstWorkspace ??= existing;
@@ -1819,7 +1885,8 @@ function ChatPane({ view, resumes, setResume }: {
             {attachments.fileInput}
             {/* Model and effort sit in the input box's bottom right, before the send button. */}
             <div className="composer-settings" ref={composerContext}>
-              {isDraft ? <DraftSettings key={workspaceId} workspaceId={workspaceId} choices={draftChoices} onChange={setDraftChoices}
+              {isDraft ? <DraftSettings key={workspaceId + ":" + draftVersion} workspaceId={workspaceId} choices={draftChoices} onChange={setDraftChoices}
+                file={draftFile} onFile={setDraftFile}
                 disabled={!!launch || busy} /> : <SessionSettings key={settingScope} workspaceId={workspaceId} sessionId={sessionId} paneId={paneId} status={activeStatus}
                 navigationStatus={snapshot?.navigationStatus} nativeInputReady={snapshot?.settingsInputReady}
                 pendingSettingCommand={snapshot?.pendingSettingCommand} settings={snapshot?.settings}
@@ -1932,6 +1999,8 @@ function ChatPane({ view, resumes, setResume }: {
           }}
         />
       )}
+      {settingsEditor && <SettingsFileEditor {...settingsEditor} />}
+      {overrides && <SettingsOverrideDialog {...overrides} />}
       {preferencesOpen && <PreferencesDialog workspaces={workspaces} platform={info.platform} newMachine={preferencesOpen === "new-machine"} onClose={()=>setPreferencesOpen(false)}
         hookStatus={snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId ? snapshot.dialogHooks : undefined}/>}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}

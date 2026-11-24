@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, mkdtemp, open, realpath, rename, rm, writeFile } from 'node:fs/promises';
@@ -14,8 +15,9 @@ import type { Workspace } from '../src/shared/types';
 const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windows runs no local commands' : false };
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "lectern-tail-'")));
-  const workspace: Workspace = { id: 'pages', name: 'History', kind: 'local', cwd, claudeDir: join(cwd, 'config') };
-  const dir = join(workspace.claudeDir!, 'projects', projectSlug(cwd));
+  const workspace: Workspace = { id: 'pages', name: 'History', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, 'config'));
+  const dir = join(join(cwd, 'config'), 'projects', projectSlug(cwd));
   await mkdir(dir, { recursive: true });
   const sessionId = randomUUID();
   const file = join(dir, sessionId + '.jsonl');

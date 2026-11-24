@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -19,7 +20,8 @@ async function fixture(t: TestContext) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'lectern-files-')));
   const cwd = join(base, 'Project with spaces'), config = join(cwd, 'custom config');
   await mkdir(config, { recursive: true });
-  const workspace: Workspace = { id: 'artifact', name: '目录', kind: 'local', cwd, claudeDir: config };
+  const workspace: Workspace = { id: 'artifact', name: '目录', kind: 'local', cwd };
+  fixtureClaudeConfig(config);
   const backend = new Backend();
   t.after(async () => { await backend.dispose(); await rm(base, { recursive: true, force: true }); });
   return { base, cwd, config, workspace, artifacts: backend.artifacts };
@@ -243,7 +245,8 @@ test('automatic name searches from a home-folder workspace never walk into macOS
     writeFile(join(home, 'Documents/plan-notes.md'), 'in documents'),
     writeFile(join(home, 'src/code-notes.md'), 'in the project'),
   ]);
-  const workspace: Workspace = { id: 'home', name: 'home', kind: 'local', cwd: home, claudeDir: join(home, '.claude') };
+  const workspace: Workspace = { id: 'home', name: 'home', kind: 'local', cwd: home };
+  fixtureClaudeConfig(join(home, '.claude'));
   const found = await backend.artifacts.resolveReferences(workspace, ['draft-notes.md', 'plan-notes.md', 'code-notes.md', 'Desktop/thesis/draft-notes.md']);
   assert.deepEqual(found, ['missing', 'missing', { path: 'src/code-notes.md' }, { path: 'Desktop/thesis/draft-notes.md' }],
     'bare names are searched outside the privacy folders; an explicit path still resolves');

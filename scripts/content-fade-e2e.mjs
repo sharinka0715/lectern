@@ -32,7 +32,7 @@ const report = {};
 
 /** A finished conversation of 40 turns (long replies), as Claude Code saves it. */
 async function seedArchive(workspace) {
-  const project = path.join(workspace.claudeDir, "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
   const sessionId = randomUUID(), lines = [];
   let parentUuid = null;
   for (let i = 0; i < 40; i++) for (const role of ["user", "assistant"]) {
@@ -328,6 +328,7 @@ try {
   // 3. Resuming: the resume bar fades out where it was while the input area settles.
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
   await page.getByRole("button", { name: "续接会话", exact: true }).click();
+  await page.getByRole("dialog", { name: "续接前设置配置文件" }).getByRole("button", { name: "续接", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30000 });
   await page.waitForFunction(() => !document.querySelector(".resume-bar"));
   seen = await fades();
@@ -336,7 +337,7 @@ try {
 
   // 4. Above the input box: the progress pill and a permission card fade in, and when they go
   // they fade out where they were while the input area eases to its height (no jump below).
-  const stateFile = path.join(workspace.claudeDir, "screen-state");
+  const stateFile = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "screen-state");
   /** Shows something in the input area, then removes it: what faded and how the area moved. */
   async function dockRoundTrip(show, selector, hide) {
     await reset();

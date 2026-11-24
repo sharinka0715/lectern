@@ -24,7 +24,7 @@ const report = {};
 
 async function seedArchive() {
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
-  const project = path.join(workspace.claudeDir, "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
   const sessionId = randomUUID(), lines = [];
   let parentUuid = null;
   for (let i = 0; i < 40; i++) {
@@ -123,6 +123,7 @@ try {
 
   // A taller input box pushes the conversation up, not over its last lines.
   await page.getByRole("button", { name: "续接会话", exact: true }).click();
+  await page.getByRole("dialog", { name: "续接前设置配置文件" }).getByRole("button", { name: "续接", exact: true }).click();
   const input = page.getByRole("textbox", { name: "发送给 Claude 的消息" });
   await page.waitForFunction(() => !document.querySelector('textarea[aria-label="发送给 Claude 的消息"]')?.matches(':disabled, [aria-disabled="true"]'), null, { timeout: 30000 });
   await atLatest("resumed");

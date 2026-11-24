@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -158,8 +159,9 @@ test('older or foreground subagents in a 2.1.310+ session keep their transcript 
 const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windows runs no local commands' : false };
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), 'lectern-subagent-status-')));
-  const workspace: Workspace = { id: 'subagent-status', name: 'Subagent status', kind: 'local', cwd, claudeDir: join(cwd, 'config') };
-  const project = join(workspace.claudeDir!, 'projects', projectSlug(cwd)), folder = join(project, sid, 'subagents');
+  const workspace: Workspace = { id: 'subagent-status', name: 'Subagent status', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, 'config'));
+  const project = join(join(cwd, 'config'), 'projects', projectSlug(cwd)), folder = join(project, sid, 'subagents');
   await mkdir(folder, { recursive: true });
   await writeFile(join(project, sid + '.jsonl'), [{ type: 'user', uuid: 'u', sessionId: sid, cwd, version: '2.1.330', message: { content: 'Start' } },
     { type: 'assistant', uuid: 'a', parentUuid: 'u', sessionId: sid, cwd, version: '2.1.330', message: { id: 'm', content: [{ type: 'text', text: 'Started.' }], stop_reason: 'end_turn' } }]

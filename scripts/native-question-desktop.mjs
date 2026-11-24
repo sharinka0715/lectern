@@ -14,7 +14,7 @@ const { root, env, cwd, config } = fixture;
 const run = promisify(execFile);
 const tmux = (...args) => run('tmux', ['-f', '/dev/null', ...args], {env, cwd});
 const session = randomUUID();
-const workspace = {id:'question-fixture', name:'问答验证', kind:'local', cwd, claudeDir:config};
+const workspace = {id:'question-fixture', name:'问答验证', kind:'local', cwd};
 const basic = {header:'饮品', question:'午餐时喝什么？', multiSelect:false, options:[
   {label:'茶', description:'热饮'}, {label:'果汁', description:'冷饮'},
 ]};

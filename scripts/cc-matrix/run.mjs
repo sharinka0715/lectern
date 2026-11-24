@@ -52,47 +52,68 @@ const report = { generatedAt: new Date().toISOString(), platform: `${process.pla
 let failed = 0;
 // GitHub annotations for CI, most telling first: failed scenarios, aborted runs, then isolation and cleanup.
 const annotations = [];
-// Ctrl+C or a CI cancel: close the app and the sandbox's private tmux server first.
-let active;
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
+// A cancellation ends the scenario wait; the normal finally block owns cleanup.
+let stopped = false, stop;
+const cancellation = new Promise(resolve => { stop = resolve; });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
+  if (stopped) return;
+  stopped = true;
   log(`${signal}: cleaning up`);
-  const app = active?.launched?.app.process()?.pid;
-  const tracked = app ? descendants(app) : [];
-  await active?.launched?.app.close().catch(() => {});
-  await active?.sandbox?.close({ keep }).catch(() => {});
-  await reap(tracked);
-  await active?.api?.close().catch(() => {});
-  process.exit(130);
+  stop();
 });
 
+function matrixPhase(sandbox) {
+  let open = true;
+  // A timed-out or cancelled scenario may still hold these helpers during cleanup.
+  const whileOpen = (read, fallback) => (...args) => open && existsSync(sandbox.env.TMUX_TMPDIR) ? read(...args) : fallback;
+  return {
+    sandbox: { ...sandbox, tmux: whileOpen(sandbox.tmux, ''), panes: whileOpen(sandbox.panes, []), capture: whileOpen(sandbox.capture, '') },
+    stopTmuxAccess: () => { open = false; },
+  };
+}
+
 for (const version of versions) {
+  if (stopped) break;
   const started = Date.now();
   const dir = path.join(output, version);
   await mkdir(dir, { recursive: true });
   const run = { version, tags: Object.entries(distTags).filter(([tag, value]) => value === version && tag !== 'next').map(([tag]) => tag), features: {}, scenarios: {}, notes: {} };
   for (const scenario of scenarios) for (const feature of scenario.features) run.features[feature] = { status: 'not-covered' };
   const nudges = new Set();
-  let api, sandbox, launched;
+  let api, watcher, watching = false;
+  const phases = new Map();
   try {
     const binary = await ensureVersion(version, { log });
     api = await startFakeApi({ logFile: path.join(dir, 'fake-api.jsonl') });
-    sandbox = await createSandbox({ version, binary, api });
-    active = { api, sandbox };
-    const folders = await prepareFolders(sandbox);
-    await writeWorkspaces(sandbox, Object.values(folders));
-    launched = await launchApp(sandbox, { output: dir, executable });
-    active.launched = launched;
-    const helpers = ui(launched.page, sandbox);
-    let watching = true;
-    // Native one-time prompts are recorded for the report, never answered here.
-    const watcher = (async () => { while (watching) { observeNativeNudges(sandbox, nudges); await new Promise(resolve => setTimeout(resolve, 400)); } })();
+    watching = true;
+    // Each phase has its own app, account state and tmux environment.
+    watcher = (async () => {
+      while (watching) {
+        for (const { sandbox } of phases.values()) observeNativeNudges(sandbox, nudges);
+        await new Promise(resolve => setTimeout(resolve, 400));
+      }
+    })();
     for (const scenario of scenarios) {
+      if (stopped) break;
       const t0 = Date.now();
       if (t0 - started > budgetMs) {
         for (const feature of scenario.features) run.features[feature] = { status: 'fail', error: `not run: the ${budgetMs / 60000} min budget for this release was used up` };
         continue;
       }
       log(`${version} · ${scenario.id}`);
+      const phase = scenario.sandboxPhase ?? 'main';
+      if (!phases.has(phase)) {
+        const sandbox = await createSandbox({ version, binary, api, label: version + '-' + phase });
+        const state = matrixPhase(sandbox);
+        phases.set(phase, state);
+        state.folders = await prepareFolders(sandbox, phase);
+        await writeWorkspaces(sandbox, Object.values(state.folders));
+        state.launched = await launchApp(sandbox, { output: phase === 'main' ? dir : path.join(dir, phase), executable });
+        state.child = state.launched.app.process();
+      }
+      if (stopped) break;
+      const { sandbox, launched, folders } = phases.get(phase);
+      const helpers = ui(launched.page, sandbox);
       const results = {};
       const ctx = {
         version, api, sandbox, folders, page: launched.page, app: launched.app, ui: helpers, dir,
@@ -110,9 +131,13 @@ for (const version of versions) {
         },
       };
       let error;
+      let timeout;
       try {
-        await Promise.race([scenario.run(ctx), new Promise((_, reject) => setTimeout(() => reject(new Error(`scenario timed out after ${scenario.timeoutMs / 1000}s`)), scenario.timeoutMs))]);
+        await Promise.race([scenario.run(ctx), cancellation,
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`scenario timed out after ${scenario.timeoutMs / 1000}s`)), scenario.timeoutMs); })]);
       } catch (caught) { error = caught; }
+      finally { clearTimeout(timeout); }
+      if (stopped) break;
       if (error) {
         const pane = await helpers.pane().catch(() => undefined);
         const evidence = { error: String(error?.stack ?? error), screen: sandbox.capture(pane).split('\n'), transcript: await helpers.transcript().catch(() => []), tools: await helpers.tools().catch(() => []),
@@ -130,22 +155,25 @@ for (const version of versions) {
       await helpers.closeChat().catch(() => {});
       await launched.page.keyboard.press('Escape').catch(() => {});
     }
-    watching = false;
-    await watcher;
   } catch (error) {
     run.error = String(error?.stack ?? error);
     log(`${version} aborted: ${error?.message ?? error}`);
     annotations.push({ title: `claude-code ${version} aborted`, message: errorSummary(error) });
     for (const [id, item] of Object.entries(run.features)) if (item.status === 'not-covered') run.features[id] = { status: 'fail', error: `run aborted: ${error?.message ?? error}` };
   } finally {
-    // Everything the app started (its own shells, the model-list probe) is tracked by PID.
-    const appTree = launched?.app.process()?.pid ? descendants(launched.app.process().pid) : [];
-    if (launched) {
-      run.rendererErrors = launched.errors.slice(0, 20);
-      await launched.app.close().catch(() => {});
+    watching = false;
+    for (const phase of phases.values()) phase.stopTmuxAccess();
+    await watcher;
+    const appTrees = [];
+    run.rendererErrors = [];
+    for (const { launched, child } of phases.values()) {
+      if (child?.pid && child.exitCode === null && child.signalCode === null) appTrees.push(...descendants(child.pid));
+      if (launched) run.rendererErrors.push(...launched.errors.slice(0, 20));
+      await launched?.app.close().catch(() => {});
     }
     if (api) {
-      const ssh = sandbox ? (await sandbox.blockedSsh()).map(args => `ssh:${args.split(/\s+/).find(arg => /@|^[a-z0-9.-]+\.[a-z]+$/i.test(arg)) ?? args.slice(0, 40)}`) : [];
+      const ssh = (await Promise.all([...phases.values()].map(({ sandbox }) => sandbox.blockedSsh()))).flat()
+        .map(args => `ssh:${args.split(/\s+/).find(arg => /@|^[a-z0-9.-]+\.[a-z]+$/i.test(arg)) ?? args.slice(0, 40)}`);
       const hosts = [...new Set([...api.external.map(entry => entry.host), ...ssh])];
       run.api = { requests: api.requests.length, kinds: api.requests.reduce((acc, r) => ({ ...acc, [r.kind]: (acc[r.kind] ?? 0) + 1 }), {}), unknown: api.unknown, externalHosts: hosts };
       // Every outside connection was refused; one aimed at the Anthropic API means
@@ -157,7 +185,12 @@ for (const version of versions) {
     }
     run.nudges = [...nudges];
     const anyFailed = Object.values(run.features).some(item => item.status === 'fail');
-    const leftovers = [...(sandbox ? await sandbox.close({ keep: keep || anyFailed && process.env.CI !== 'true' && flag('--keep-failed') }) : []), ...await reap(appTree)];
+    // Stop any remaining app workers before their tmux directories can disappear.
+    const appLeftovers = await reap(appTrees);
+    const leftovers = [
+      ...appLeftovers,
+      ...(await Promise.all([...phases.values()].map(({ sandbox }) => sandbox.close({ keep: keep || anyFailed && process.env.CI !== 'true' && flag('--keep-failed') })))).flat(),
+    ];
     // A process that outlives the run (a Claude, a shell, the app) is a bug in what was tested.
     run.leftovers = leftovers;
     run.features.cleanup = leftovers.length ? { status: 'fail', error: `still running after the run: ${leftovers.map(item => `${item.pid} ${item.command}`).join('; ')}` } : { status: 'pass' };
@@ -177,4 +210,4 @@ for (const version of versions) {
 }
 log(`report: ${path.join(output, 'report.md')}`);
 if (inGitHubActions) for (const line of failureAnnotations(annotations, { what: 'matrix failures' })) console.log(line);
-process.exit(failed ? 1 : 0);
+process.exit(stopped ? 130 : failed ? 1 : 0);

@@ -73,3 +73,27 @@ export function launchChoiceArgs(choices: LaunchChoices = {}): string[] {
   if (effort !== undefined && !isEffortLevel(effort)) throw new Error(t('backend.invalidEffort'));
   return [...(model !== undefined && model !== 'default' ? ['--model', model] : []), ...(effort !== undefined ? ['--effort', effort] : [])];
 }
+
+/** Claude includes validation errors in a successful get_settings reply. */
+export function modelProbeSettingsErrors(stdout: string, privatePath?: string, settingsFile?: string) {
+  const issues: import('../shared/conversation-settings').SettingsValidationIssue[] = [];
+  // macOS may report the resolved /private path of the temporary file.
+  const privateSuffix = privatePath && '/' + privatePath.split('/').slice(-2).join('/');
+  for (const line of stdout.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    let record: Record<string, unknown>;
+    try { record = object(JSON.parse(line)); } catch { continue; }
+    const response = object(record.response);
+    if (record.type !== 'control_response' || response.request_id !== 'lectern-settings') continue;
+    const errors = object(response.response).errors;
+    if (!Array.isArray(errors)) continue;
+    for (const value of errors) {
+      const row = object(value);
+      if (typeof row.message !== 'string') continue;
+      const file = typeof row.file === 'string' ? row.file : '';
+      issues.push({ file: privateSuffix && settingsFile && file.endsWith(privateSuffix) ? settingsFile : file,
+        path: typeof row.path === 'string' ? row.path : '', message: row.message });
+    }
+  }
+  return issues;
+}

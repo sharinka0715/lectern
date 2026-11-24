@@ -77,7 +77,7 @@ try {
     {...common,type:'assistant',uuid:randomUUID(),parentUuid:userId,message:{id:'msg_fixture',type:'message',role:'assistant',model:'claude-sonnet-5-5',content:[{type:'text',text:'Stored fixture response.'}],stop_reason:'end_turn',stop_sequence:null,usage:{input_tokens:25000,cache_read_input_tokens:3000,cache_creation_input_tokens:2000,output_tokens:10}}},
   ];
   await writeFile(path.join(project,history+'.jsonl'),records.map(x=>JSON.stringify(x)).join('\n')+'\n');
-  await writeFile(path.join(profile,'workspaces.json'),JSON.stringify([{id:workspaceId,kind:'local',cwd:work,name:'Status line fixture',claudeDir:config}]));
+  await writeFile(path.join(profile,'workspaces.json'),JSON.stringify([{id:workspaceId,kind:'local',cwd:work,name:'Status line fixture'}]));
   const regularPane = await startOrdinary('ordinary');
   report.ordinaryPane = regularPane;
 
@@ -185,6 +185,10 @@ try {
   await close.click();
   await page.locator('.session-row[data-session-id="'+history+'"]').click();
   await resume.click();
+  if (!baseline) {
+    await page.getByRole('dialog', { name: '续接前设置配置文件' }).getByRole('button', { name: '续接', exact: true }).click();
+    await page.locator('.settings-override-dialog').getByRole('button', { name: '接受', exact: true }).click();
+  }
   const resumed=await waitForLine(history);
   await assertScoped(resumed);
   assert.equal(resumed.statusLine.inputTokens,30000);

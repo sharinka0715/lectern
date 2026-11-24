@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -67,10 +68,11 @@ test('the receipt of an inline command is read only under that exact typed line'
 
 async function withFixture(t: { skip(message: string): void }, aliases: boolean, body: (backend: Backend, workspace: Workspace, capture: (pane: string) => Promise<string>, socket: string) => Promise<void>) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-inline-')));
-  const workspace: Workspace = { id: 'inline-' + randomUUID().slice(0, 6), name: 'Inline', kind: 'local', cwd: root, claudeDir: join(root, 'config') };
+  const workspace: Workspace = { id: 'inline-' + randomUUID().slice(0, 6), name: 'Inline', kind: 'local', cwd: root };
+  fixtureClaudeConfig(join(root, 'config'));
   const socket = 'inline-' + randomUUID().slice(0, 8);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath,
-    claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', workspace.claudeDir!, ...(aliases ? ['--alias-models'] : [])] });
+    claudeArgs: [resolve('scripts/mock-claude.mjs'), '--fixture-config', join(root, 'config'), ...(aliases ? ['--alias-models'] : [])] });
   try {
     try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux unavailable'); return; }
     const capture = async (pane: string) => (await runCommand(workspace, ['tmux', '-L', socket, 'capture-pane', '-p', '-t', pane].map(quoteShell).join(' '))).stdout.toString();
@@ -129,8 +131,8 @@ test('two OSC-8 links on screen no longer erase the rows between them (custom mo
 // Claude Code 2.1.329+ lists running subagents below the input box, their timers ticking
 // (tests/fixtures/task-rows-2.1.330/), and adds "↓ to manage" to the idle footer. The mock
 // lists five, or seven ("↓ 2 more"), ticking every 250 ms, or every 40 ms for the stop key.
-const listAgents = (workspace: Workspace, state: string) => mkdir(workspace.claudeDir!, { recursive: true })
-  .then(() => writeFile(join(workspace.claudeDir!, 'screen-state'), state));
+const listAgents = (workspace: Workspace, state: string) => mkdir(join(workspace.cwd, 'config'), { recursive: true })
+  .then(() => writeFile(join(workspace.cwd, 'config', 'screen-state'), state));
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 for (const timer of ['goal', 'background task'] as const) {

@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -25,6 +26,7 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
   }
   const socket = 'lectern-branch-' + randomUUID().slice(0,8);
   const env = {...fixture, TMUX_TMPDIR: process.env.TMUX_TMPDIR};
+  fixtureClaudeConfig(config);
   const tmux = (...args: string[]) => execFileSync('tmux',['-L',socket,'-f','/dev/null',...args],{env,encoding:'utf8'}).trim();
   const backend = new Backend({tmuxSocket:socket});
   const frame = (pane: string) => tmux('capture-pane','-p','-J','-t',pane);

@@ -45,7 +45,7 @@ const history = [
 ].map(record => JSON.stringify({ ...record, cwd, sessionId, timestamp: new Date().toISOString() })).join('\n') + '\n';
 
 async function launch(locale) {
-  const env = { ...process.env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs'), TMUX_TMPDIR: root,
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, LECTERN_LOCALE: locale, LECTERN_USER_DATA: profile, LECTERN_LOG_DIR: path.join(root, 'logs'), TMUX_TMPDIR: root,
     LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOCAL_PATH: `${tools}:${sys}`, PATH: `${stubs}:${process.env.PATH}` };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX; delete env.TMUX_PANE;
   const exe = process.argv[2];
@@ -78,7 +78,7 @@ try {
   await writeFile(path.join(stubs, 'ssh'), `#!/bin/sh\necho "dev@${sshHost}: Permission denied (publickey)." >&2\nexit 255\n`, { mode: 0o755 });
   await writeFile(path.join(project, `${sessionId}.jsonl`), history);
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([
-    { id: 'local-folder', name: '主机检查', kind: 'local', cwd, claudeDir: config },
+    { id: 'local-folder', name: '主机检查', kind: 'local', cwd },
     { id: 'ssh-folder', name: '远程目录', kind: 'ssh', host: sshHost, cwd: '/srv/work' },
   ]));
 

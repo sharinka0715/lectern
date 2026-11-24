@@ -1,3 +1,4 @@
+import { ConversationSettingsStore } from './conversation-settings-store';
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeTheme, powerMonitor, session, shell, type MessageBoxOptions } from 'electron';
 import { editMenuItems } from './edit-menu';
 import { artifactMediaType } from '../backend/artifact-media';
@@ -324,8 +325,10 @@ async function boot() {
   } else {
     const store = new WorkspaceStore(app.getPath('userData'));
     await store.load();
+    const conversationSettings = new ConversationSettingsStore(app.getPath('userData'));
+    await conversationSettings.load();
     const cache = new SessionSettingsCache(new SessionSettingsDiskStore(app.getPath('userData')));
-    controller = new Controller(store, new Backend({ historyIndexStore: new HistoryIndexDiskStore(app.getPath('userData')), reuseSshConnections: sshPreferences.reuseConnections }), cache);
+    controller = new Controller(store, new Backend({ conversationSettings, historyIndexStore: new HistoryIndexDiskStore(app.getPath('userData')), reuseSshConnections: sshPreferences.reuseConnections }), cache);
   }
   controller.warmModelCatalogs();
   // An open `@` list asks again when a background scan of its folder lands.
@@ -534,7 +537,11 @@ async function boot() {
       // Ultracode's availability in the model list depends on it (the cache lifetimes do not).
       controller.refreshModelCatalogs();
     },
-    modelCatalog: (id, retry) => controller.modelCatalog(id, retry === true),
+    modelCatalog: (id, retry, file) => controller.modelCatalog(id, retry === true, file),
+    getConversationSettings: (id, sid) => controller.getConversationSettings(id, sid),
+    inspectConversationSettings: (id, file, options) => controller.inspectConversationSettings(id, file, options),
+    validateConversationSettings: (id, file) => controller.validateConversationSettings(id, file),
+    saveConversationSettings: (id, sid, file) => controllers.saveConversationSettings(id, sid, file),
     revealWorkspace: async id => {
       const workspace = controller.store.get(id);
       if (workspace.kind !== 'local' || demo) throw new Error(t('main.revealLocalOnly'));
@@ -565,7 +572,7 @@ async function boot() {
     renameSession: (id, sid, title) => controllers.renameSession(id, sid, title),
     setTerminalVisible: (id, sid, visible, view) => controllers.setTerminalVisible(id, sid, visible, view),
     closeSession: (id, sid, pane, pid) => controllers.forSession(id, sid).closeSession(id, sid, pane, pid),
-    resumeSession: (id, sid) => controllers.resumeSession(id, sid),
+    resumeSession: (id, sid, nonce) => controllers.resumeSession(id, sid, nonce),
     forkSession: (id, sid, pane, pid) => controllers.forSession(id, sid).forkSession(id, sid, pane, pid),
     bindSession: (id, sid, pane) => controller.bindSession(id, sid, pane),
     watchSession: (id, sid, view) => controllers.watch(id, sid, view),

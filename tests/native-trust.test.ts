@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -137,7 +138,8 @@ function render(){process.stdout.write('\\x1b[2J\\x1b[H'+(closed?${JSON.stringif
 process.stdin.setRawMode(true);process.stdin.resume();render();
 process.stdin.on('data',data=>{const text=data.toString();fs.appendFileSync(report,JSON.stringify([...data])+'\\n');if(data.includes(3))process.exit(0);if(text.includes('B'))focus='trust';if(text.includes('A'))focus='exit';if(text.includes('\\r')){if(focus==='exit')process.exit(0);closed=true;}render();});
 `);
-  const workspace = { ...base, cwd, claudeDir: config };
+  const workspace = { ...base, cwd };
+  fixtureClaudeConfig(config);
   const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] });
   const waitTrust = async (id: string) => {
     for (let count = 0; count < 30; count++) { const read = await backend.readSession(workspace, id); if (read.directoryTrust) return read.directoryTrust; await new Promise(resolve => setTimeout(resolve, 30)); }

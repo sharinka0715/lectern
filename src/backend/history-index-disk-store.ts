@@ -92,7 +92,8 @@ export class HistoryIndexDiskStore {
     const { projectDirs, cwdAliases } = location, file = this.file(workspace.id);
     // An omitted port honors OpenSSH config; it is not necessarily port 22.
     // Include the physical cwd: distinct cwd values can have the same project slug.
-    const scope = digest(JSON.stringify([workspace.kind, workspace.host, workspace.port, workspace.cwd, workspace.claudeDir,
+    // Keep the removed directory override's null slot for existing snapshots.
+    const scope = digest(JSON.stringify([workspace.kind, workspace.host, workspace.port, workspace.cwd, null,
       location.cwd, cwdAliases, location.claudeDir, projectDirs]));
     return {
       proofsOnly: workspace.kind !== 'ssh',

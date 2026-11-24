@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Folder, History, Loader2, RefreshCw, X } from "lucide-react";
+import { Check, Folder, History, Loader2, X } from "lucide-react";
 import type {
   HistoryProject,
   HistoryScan,
@@ -33,7 +33,6 @@ export function HistoryImportDialog({
   onImport(
     target: HistoryTarget,
     projects: HistoryProject[],
-    resolvedClaudeDir: string,
   ): Promise<void>;
   onView(workspace: Workspace): void;
 }) {
@@ -47,7 +46,6 @@ export function HistoryImportDialog({
   const [scan, setScan] = useState<HistoryScan>();
   const [scannedTarget, setScannedTarget] = useState<HistoryTarget>();
   const [chosen, setChosen] = useState(new Set<string>());
-  const [claudeDir, setClaudeDir] = useState("");
   const scanProjects = useCallback(async (target: HistoryTarget) => {
     const generation = ++request.current;
     setLoading(true);
@@ -70,7 +68,7 @@ export function HistoryImportDialog({
                   currentWorkspaces.current,
                   target,
                   project.cwd,
-                  result.claudeDir,
+
                 ),
             )
             .map((project) => project.cwd),
@@ -98,7 +96,7 @@ export function HistoryImportDialog({
       workspaces,
       scannedTarget,
       project.cwd,
-      scan?.claudeDir,
+
     );
   const eligible =
     scan?.projects.filter(
@@ -110,18 +108,12 @@ export function HistoryImportDialog({
   const missingCount =
     scan?.projects.filter((project) => !project.exists).length ?? 0;
 
-  function rescan() {
-    void scanProjects({
-      kind: "local",
-      ...(claudeDir.trim() ? { claudeDir: claudeDir.trim() } : {}),
-    });
-  }
   async function importSelected() {
     if (!scan || !scannedTarget || !selection.length) return;
     setImporting(true);
     setError("");
     try {
-      await onImport(scannedTarget, selection, scan.claudeDir);
+      await onImport(scannedTarget, selection);
       onClose();
     } catch (e) {
       reportActionError(e, "添加历史工作目录失败");
@@ -168,31 +160,6 @@ export function HistoryImportDialog({
       <p className="modal-description">
         {t('dialogs.discoverIntro')}
       </p>
-      <details className="history-scan-options">
-        <summary>{t('dialogs.scanSettings')}</summary>
-        <div className="history-scan-fields">
-          <label className="field-label">
-            {t('dialogs.claudeConfigDir')}
-            <input
-              value={claudeDir}
-              onChange={(event) => setClaudeDir(event.target.value)}
-              placeholder={t('dialogs.inheritTarget')}
-              spellCheck={false}
-              disabled={loading || importing}
-            />
-          </label>
-          <button
-            className="secondary-button"
-            type="button"
-            aria-label={t('dialogs.rescanLabel')}
-            onClick={rescan}
-            disabled={loading || importing}
-          >
-            <RefreshCw size={14} />
-            {t('dialogs.rescan')}
-          </button>
-        </div>
-      </details>
       {loading ? (
         <div className="history-scan-loading" role="status">
           <Loader2 className="rotating" size={20} />
@@ -325,7 +292,7 @@ export function HistoryImportDialog({
           {error}
           <button
             className="text-button"
-            onClick={rescan}
+            onClick={() => void scanProjects({ kind: "local" })}
             disabled={loading || importing}
           >
             {t('dialogs.rescan')}

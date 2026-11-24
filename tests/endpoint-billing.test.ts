@@ -37,7 +37,7 @@ test('auth probes are lazy, coalesced per endpoint/config, expire and fail close
   assert.equal(calls, 1);
   await flush();
   assert.equal(cache.observe(project, '/config'), 'api');
-  cache.observe({ ...project, claudeDir: '/other' }, '/other');
+  cache.observe(project, '/other');
   cache.observe({ ...project, port: 9999 }, '/config');
   cache.observe({ ...project, kind: 'ssh', host: 'a' }, '/config');
   cache.observe({ ...project, kind: 'ssh', host: 'b' }, '/config');
@@ -45,4 +45,20 @@ test('auth probes are lazy, coalesced per endpoint/config, expire and fail close
   assert.equal(cache.observe(project, '/config', Date.now() + 6 * 60_000), undefined);
   await flush();
   assert.equal(cache.observe(project, '/config'), 'unknown');
+});
+
+test('the conversation file contributes the endpoint without exposing its URL in the auth command', async () => {
+  let command = '';
+  const cache = new EndpointBillingCache({ run: async (_workspace, script, options) => {
+    if (options?.tag === 'settings.file.read') return { stdout: Buffer.from('o{"env":{"ANTHROPIC_BASE_URL":"https://service.example.invalid"}}'), stderr: '' };
+    command = script;
+    return { stdout: Buffer.from('third-party\n'), stderr: '' };
+  } });
+  const project: Workspace = { id: 'sample', kind: 'local', name: 'Fixture', cwd: '/sample' };
+  cache.observe(project, '/sample/config', Date.now(), '~/chat.json');
+  await flush();
+  assert.match(command, /custom=1/);
+  assert.match(command, /--settings "\$HOME"\/'chat\.json'/);
+  assert.doesNotMatch(command, /service\.example\.invalid/);
+  assert.equal(cache.observe(project, '/sample/config', Date.now(), '~/chat.json'), 'third-party');
 });

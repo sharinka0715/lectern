@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -345,6 +346,7 @@ test('installed CLI: rewind past one-step /model and /effort switches; a failed 
   await writeFile(file, lines.join('\n') + '\n');
   const socket = 'lectern-rewind-' + randomUUID().slice(0, 8);
   const env = { ...fixtureEnv, TMUX_TMPDIR: process.env.TMUX_TMPDIR };
+  fixtureClaudeConfig(env.CLAUDE_CONFIG_DIR!);
   const tmux = (...args: string[]) => execFileSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], { env, encoding: 'utf8' }).trim();
   const backend = new Backend({ tmuxSocket: socket });
   const wait = async (condition: () => boolean | Promise<boolean>, label: string) => {

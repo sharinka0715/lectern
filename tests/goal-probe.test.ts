@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -15,8 +16,9 @@ const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windo
 
 test('the last goal record before the first page: exact shape, this session, quoted copies ignored', posix, async t => {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), 'lectern-goal-probe-')));
-  const workspace: Workspace = { id: 'probe', name: 'Goal', kind: 'local', cwd, claudeDir: join(cwd, 'config') };
-  const dir = join(workspace.claudeDir!, 'projects', projectSlug(cwd));
+  const workspace: Workspace = { id: 'probe', name: 'Goal', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, 'config'));
+  const dir = join(join(cwd, 'config'), 'projects', projectSlug(cwd));
   await mkdir(dir, { recursive: true });
   const sessionId = randomUUID(), file = join(dir, sessionId + '.jsonl');
   const backend = new Backend({ tmuxSocket: 'probe-' + sessionId, claudeCommand: 'false' });
@@ -51,8 +53,9 @@ test('the last goal record before the first page: exact shape, this session, quo
 
 test("matrix F1: the first page of a /goal turn begins at the command, past its set record; the turn still shows its setting", posix, async t => {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), 'lectern-goal-page-')));
-  const workspace: Workspace = { id: 'page', name: 'Goal', kind: 'local', cwd, claudeDir: join(cwd, 'config') };
-  const dir = join(workspace.claudeDir!, 'projects', projectSlug(cwd));
+  const workspace: Workspace = { id: 'page', name: 'Goal', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, 'config'));
+  const dir = join(join(cwd, 'config'), 'projects', projectSlug(cwd));
   await mkdir(dir, { recursive: true });
   // Claude Code 2.1.331's own records of one /goal turn; the prompt snapshots and API dumps Lectern never
   // shows are stubs that keep their original size, so the bytes lie as they did (about 133 KB in all).

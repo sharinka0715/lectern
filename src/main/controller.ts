@@ -1,3 +1,5 @@
+import type { NewConversationOptions, SettingsInspection } from '../shared/conversation-settings';
+import { normalizeSettingsPath } from '../backend/conversation-settings';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -164,19 +166,38 @@ export class Controller extends EventEmitter {
   }
   private readonly onCatalogChange = (changed: object) => {
     const watch = this.watch;
-    if (watch && this.catalogs.isChangeFor(watch.workspace, changed)) this.hydrateSettings(watch);
+    if (watch && this.catalogs.isChangeFor(watch.workspace, changed, this.settingsFile(watch))) this.hydrateSettings(watch);
   };
   /** Local folders need no connection: read their model lists at startup.
    * An SSH machine's list is read after its first successful discovery. */
   warmModelCatalogs() { for (const workspace of this.store.list()) if (workspace.kind !== 'ssh') this.catalogs.warm(workspace); }
   /** The model and effort lists for a folder's machine, for a new chat's pickers. */
-  async modelCatalog(workspaceId: string, retry = false): Promise<ModelCatalogState> {
+  async modelCatalog(workspaceId: string, retry = false, file: string | null = null): Promise<ModelCatalogState> {
     const workspace = this.store.get(workspaceId);
-    const entry = this.catalogs.get(workspace);
+    const entry = this.catalogs.get(workspace, file);
     // Wait for a read in flight too (a retry started elsewhere), so the picker
     // always gets a settled list or error.
-    if (retry || !entry?.error || entry.loading) await this.catalogs.read(workspace).catch(() => {});
-    return this.catalogs.state(workspace);
+    if (retry || !entry?.error || entry.loading) await this.catalogs.read(workspace, file).catch(() => {});
+    return this.catalogs.state(workspace, file);
+  }
+  private settingsFile({ workspace, sessionId }: Pick<Watch, 'workspace' | 'sessionId'>) {
+    return this.backend.conversationSettings?.(workspace, sessionId)?.settingsFile ?? null;
+  }
+  getConversationSettings(workspaceId: string, sessionId: string) {
+    return this.backend.conversationSettings(this.store.get(workspaceId), sessionId);
+  }
+  inspectConversationSettings(workspaceId: string, file: string | null, options?: SettingsInspection) {
+    return this.backend.inspectConversationSettings(this.store.get(workspaceId), file, options);
+  }
+  async validateConversationSettings(workspaceId: string, file: string | null) {
+    const workspace = this.store.get(workspaceId);
+    const { validation, catalog } = await this.backend.validateConversationSettings(workspace, file);
+    if (catalog) this.catalogs.remember(workspace, validation.settingsFile, catalog);
+    return { ...validation, catalog };
+  }
+  async saveConversationSettings(workspaceId: string, sessionId: string, file: string | null) {
+    await this.backend.saveConversationSettings(this.store.get(workspaceId), sessionId, file);
+    if (this.watch?.workspace.id === workspaceId && this.watch.sessionId === sessionId) this.hydrateSettings(this.watch);
   }
   /** Dynamic workflows decide Ultracode's availability: read the lists again. */
   refreshModelCatalogs() { this.catalogs.refreshAll(); }
@@ -218,8 +239,8 @@ export class Controller extends EventEmitter {
     if (this.watch?.workspace.id === workspace.id) this.unwatchSession();
     this.backend.invalidateWorkspace(workspace.id);
     // Whitelist persisted fields; do not retain caller supplied extra properties.
-    const { id, name, kind, cwd, host, port, claudeDir, historyScan } = workspace;
-    return this.store.save({ id, name, kind, cwd, host, port, claudeDir, ...(historyScan === false && { historyScan }) });
+    const { id, name, kind, cwd, host, port, historyScan } = workspace;
+    return this.store.save({ id, name, kind, cwd, host, port, ...(historyScan === false && { historyScan }) });
   }
   /** Only the scan flag changes: open conversations and cached locations stay as they are. */
   async enableHistoryScan(id: string) {
@@ -242,18 +263,19 @@ export class Controller extends EventEmitter {
   /** A new conversation. Model and effort apply to this launch only and must be
    * rows of the machine's model list; the first message, when given, is checked
    * before anything starts so a refused message leaves no running Claude behind. */
-  async createSession(id: string, options: { model?: string; effort?: string; validateMessage?: string } = {}) {
+  async createSession(id: string, options: NewConversationOptions = {}) {
     const workspace = this.store.get(id);
     if (!options || typeof options !== 'object') throw new Error(t('controller.invalidNewChatOptions'));
     if (options.validateMessage !== undefined) {
       if (typeof options.validateMessage !== 'string') throw new Error(t('controller.invalidMessage'));
       await this.assertSendable(id, options.validateMessage);
     }
+    const file = normalizeSettingsPath(options.settingsFile ?? null);
     const choices: LaunchChoices = {};
     if (options.model !== undefined || options.effort !== undefined) {
       if (options.model !== undefined && !isModelValue(options.model)) throw new Error(t('controller.invalidModel'));
       if (options.effort !== undefined && !isEffortLevel(options.effort)) throw new Error(t('controller.invalidEffort'));
-      const catalog = this.catalogs.get(workspace)?.catalog;
+      const catalog = this.catalogs.get(workspace, file)?.catalog;
       if (!catalog) throw new Error(t('controller.catalogPending'));
       // "default" is what a new session starts with anyway: no --model.
       const model = options.model === 'default' && !catalog.models.some(row => row.value === 'default') ? undefined : options.model;
@@ -262,7 +284,7 @@ export class Controller extends EventEmitter {
       if (options.model !== undefined && options.model !== 'default') choices.model = options.model;
       if (options.effort !== undefined) choices.effort = options.effort;
     }
-    return this.backend.createSession(workspace, choices);
+    return this.backend.createSession(workspace, choices, file, options.launch);
   }
   async renameSession(workspaceId: string, sessionId: string, title: string) {
     const watch = this.watch;
@@ -278,10 +300,10 @@ export class Controller extends EventEmitter {
       if (this.watch === watch) this.schedulePoll(watch, 0, true);
     }
   }
-  async resumeSession(id: string, sessionId: string) {
+  async resumeSession(id: string, sessionId: string, nonce?: string) {
     const workspace = this.store.get(id);
-    const session = await this.backend.resumeSession(workspace, sessionId);
-    this.catalogs.warm(workspace);
+    const session = await this.backend.resumeSession(workspace, sessionId, nonce);
+    this.catalogs.warm(workspace, this.settingsFile({ workspace, sessionId }));
     return session;
   }
   async forkSession(workspaceId: string, sessionId: string, paneId: string, panePid: number) {
@@ -896,7 +918,7 @@ export class Controller extends EventEmitter {
       const settingsInputReady = settingsPaneReady && isIdleEmptyComposer(result.viewport ?? result.screen);
       const nativeInputReady = paneCanAcceptInput && settingsInputReady;
       // The machine answered: read its model list once (cached until the app quits).
-      this.catalogs.warm(watch.workspace);
+      this.catalogs.warm(watch.workspace, this.settingsFile(watch));
       const cliVersion = statusLine?.version ?? watch.display.cliVersion ?? watch.snapshot.cliVersion;
       const { activity, listed } = activityOf(watch, cliVersion);
       const pendingBackground = watch.display.pendingBackground;
@@ -945,7 +967,7 @@ export class Controller extends EventEmitter {
         settingBusy,
         trustBusy, terminalControl: watch.snapshot.terminalControl,
         statusLineManaged, statusLine, endpointBilling: result.endpointBilling, dialogHooks,
-        settings: handle ? this.settingsCache.state(handle, this.catalogs.get(watch.workspace), statusLine) : undefined,
+        settings: handle ? this.settingsCache.state(handle, this.catalogs.get(watch.workspace, this.settingsFile(watch)), statusLine) : undefined,
         executionMode: watch.settingsHandle ? this.executionModes.get(watch.settingsHandle) : undefined,
         executionModeLastObserved: !!watch.settingsHandle && !executionMode && this.executionModes.has(watch.settingsHandle),
         contextUsage: result.hasMore ? watch.snapshot.contextUsage : watch.display.contextUsage,
@@ -1329,7 +1351,7 @@ export class Controller extends EventEmitter {
   }
   private hydrateSettings(watch: Watch): void {
     if (this.watch !== watch || !watch.settingsHandle) return;
-    watch.snapshot = { ...watch.snapshot, settings: this.settingsCache.state(watch.settingsHandle, this.catalogs.get(watch.workspace), watch.snapshot.statusLine) };
+    watch.snapshot = { ...watch.snapshot, settings: this.settingsCache.state(watch.settingsHandle, this.catalogs.get(watch.workspace, this.settingsFile(watch)), watch.snapshot.statusLine) };
     this.publish(watch, 'settings-cache');
   }
   async getSessionSetting(workspaceId: string, sessionId: string, kind: SessionSettingKind): Promise<SessionSettingSnapshot> {
@@ -1339,9 +1361,9 @@ export class Controller extends EventEmitter {
     // An explicit open means this renderer still needs a snapshot. It may
     // have missed the original warmup publication while attaching its view.
     const alreadyPublished = watch.snapshot.settings?.menus[kind]?.token;
-    await this.catalogs.read(watch.workspace);
+    await this.catalogs.read(watch.workspace, this.settingsFile(watch));
     if (this.watch !== watch || watch.settingsHandle !== handle) throw new Error(t('controller.reopenMenu'));
-    const settings = this.settingsCache.state(handle, this.catalogs.get(watch.workspace), watch.snapshot.statusLine);
+    const settings = this.settingsCache.state(handle, this.catalogs.get(watch.workspace, this.settingsFile(watch)), watch.snapshot.statusLine);
     const menu = settings?.menus[kind];
     if (!menu) throw new Error(t('controller.reopenMenu'));
     if (alreadyPublished === menu.token || watch.snapshot.settings?.menus[kind]?.token !== menu.token) {
@@ -1355,7 +1377,7 @@ export class Controller extends EventEmitter {
     return this.withSessionSetting(workspaceId, sessionId, async () => {
       if (!watch || !handle || watch.failures || watch.snapshot.directoryTrust || !watch.snapshot.settingsInputReady)
         throw new Error(t('controller.confirmIdleEmpty'));
-      const catalog = this.catalogs.get(watch.workspace);
+      const catalog = this.catalogs.get(watch.workspace, this.settingsFile(watch));
       const menus = this.settingsCache.state(handle, catalog, watch.snapshot.statusLine)?.menus;
       const menu = Object.values(menus ?? {}).find(item => item.token === token);
       const index = menu?.options.findIndex(option => option.id === optionId && !option.disabled) ?? -1;
@@ -1508,7 +1530,7 @@ export class Controller extends EventEmitter {
         watch.question = undefined;
         watch.permission = undefined;
         watch.snapshot = { ...watch.snapshot, question: undefined, questionBusy: undefined, questionUnconfirmed: undefined, permission: undefined, permissionBusy: undefined, permissionUnconfirmed: undefined, terminalControl: control, statusLine: undefined,
-          settings: handle ? this.settingsCache.state(handle, this.catalogs.get(watch.workspace), watch.snapshot.statusLine) : undefined };
+          settings: handle ? this.settingsCache.state(handle, this.catalogs.get(watch.workspace, this.settingsFile(watch)), watch.snapshot.statusLine) : undefined };
         diagnostic.event('controller.terminal_control.acquired', { watchId: watch.id, sessionId, ...control });
         this.publish(watch, 'terminal-control-start');
         void this.openTerminalLink(watch, control);

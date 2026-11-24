@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, writeFile, appendFile, chmod, mkdir, rm, symlink, rename, realpath, readFile, readdir, stat } from 'node:fs/promises';
@@ -168,7 +169,8 @@ process.stdin.on('data', data => { if(data.includes(3)) process.exit(0); });
 setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR,'move-cwd'),'utf8'); } catch(error) { if(error.code!=='ENOENT') throw error; } if(to) process.chdir(to); }, 30);
 `);
   const socket = `lectern-discovery-${randomUUID().slice(0, 8)}`;
-  const target: Workspace = { ...workspace, id: randomUUID(), cwd: alias, claudeDir };
+  const target: Workspace = { ...workspace, id: randomUUID(), cwd: alias };
+  fixtureClaudeConfig(claudeDir);
   const options = { tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] };
   const backend = new Backend(options);
   const tmux = async (...args: string[]) => (await runCommand(target, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '))).stdout.toString().trim();
@@ -313,10 +315,10 @@ test('workspace validation rejects SSH argument injection and non-POSIX working 
   assert.equal(invocation.args.at(-2), 'dev-alias');
 });
 
-test('default launches preserve Claude config environment while explicit directories override it', { timeout: 30_000 }, async t => {
+test('default launches preserve Claude config environment without exporting a configuration directory', { timeout: 30_000 }, async t => {
   try { await runCommand(workspace, 'command -v tmux'); } catch { t.skip('tmux is not installed'); return; }
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-config-env-')));
-  const cwd = join(root, 'workspace'), inherited = join(root, 'inherited-config'), explicit = join(root, 'explicit-config');
+  const cwd = join(root, 'workspace'), inherited = join(root, 'inherited-config');
   await mkdir(cwd);
   const mock = join(root, 'config-fixture.mjs');
   await writeFile(mock, `import fs from 'node:fs'; import path from 'node:path';
@@ -328,14 +330,13 @@ process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('Read
   const previousConfig = process.env.CLAUDE_CONFIG_DIR;
   try {
     for (const scenario of [
-      { name: 'default-unset', inherited: undefined, configured: undefined, expected: undefined },
-      { name: 'default-inherited', inherited, configured: undefined, expected: inherited },
-      { name: 'explicit-override', inherited, configured: explicit, expected: explicit },
+      { name: 'default-unset', inherited: undefined, expected: undefined },
+      { name: 'default-inherited', inherited, expected: inherited },
     ]) {
       if (scenario.inherited === undefined) delete process.env.CLAUDE_CONFIG_DIR;
       else process.env.CLAUDE_CONFIG_DIR = scenario.inherited;
       const socket = `lectern-env-${randomUUID().slice(0, 8)}`;
-      const target: Workspace = { ...workspace, id: randomUUID(), cwd, claudeDir: scenario.configured };
+      const target: Workspace = { ...workspace, id: randomUUID(), cwd };
       const backend = new Backend({ tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock, root] });
       try {
         const session = await backend.createSession(target);
@@ -402,7 +403,8 @@ let text='',paste=false;
 process.stdin.on('data', chunk=>{const s=chunk.toString(); for(let i=0;i<s.length;i++){if(s.startsWith('\\x1b[200~',i)){paste=true;i+=5;continue;}if(s.startsWith('\\x1b[201~',i)){paste=false;i+=5;continue;}const c=s[i];if(c==='\\x03')process.exit();if(c==='\\r'&&!paste){fs.appendFileSync(file,JSON.stringify({type:'user',uuid:'u-'+Date.now(),sessionId:id,cwd:process.cwd(),timestamp:new Date().toISOString(),message:{role:'user',content:text}})+'\\n');process.stdout.write('\\r\\nreceived: '+text+'\\r\\n');text='';}else text+=c;}});
 `);
   const socket = `lectern-test-${randomUUID().slice(0, 8)}`;
-  const target: Workspace = { ...workspace, id: randomUUID(), cwd, claudeDir };
+  const target: Workspace = { ...workspace, id: randomUUID(), cwd };
+  fixtureClaudeConfig(claudeDir);
   const options = { tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] };
   const backend = new Backend(options);
   try {

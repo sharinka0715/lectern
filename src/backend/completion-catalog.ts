@@ -25,7 +25,7 @@ const paths = (v: unknown) => (Array.isArray(v) ? v : [v]).filter((p): p is stri
 /** Read installation metadata on the same endpoint as Claude. No shell profiles, skill bodies,
  * hook evaluation, plugin loading, user executables, CLI invocation or marketplace fetches. */
 export async function readCommandCatalog(transport: Transport, workspace: Workspace, signal: AbortSignal, isolated = false): Promise<CompletionItem[]> {
-  const config = workspace.claudeDir ? pathExpr(workspace.claudeDir) : '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
+  const config = '"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"';
   const metadata = await reader(transport, workspace, `${metadataReader}
 cd -P ${pathExpr(workspace.cwd)} || exit 1
 cwd=$(pwd -P); config=${config}; plugins=${isolated ? '"$config/plugins"' : '"${CLAUDE_CODE_PLUGIN_CACHE_DIR:-$config/plugins}"'}

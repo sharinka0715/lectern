@@ -41,10 +41,9 @@ async function prepareProjects() {
   for (const [index, project] of [...projects, newProject].entries()) {
     const id = 'project-' + index;
     const cwd = path.posix.join(root, id);
-    const claudeDir = path.posix.join(root, 'claude');
     const dir = path.join(env.CLAUDE_CONFIG_DIR, 'projects', cwd.replace(/[^a-z0-9-]/gi, '-'));
     await Promise.all([path.join(root, id), dir].map(value => mkdir(value, { recursive: true })));
-    workspaces.push({ id, name: project.name, kind: 'local', cwd, claudeDir });
+    workspaces.push({ id, name: project.name, kind: 'local', cwd });
     if (!project.reply) continue;
     const sessionId = randomUUID(), uuid = randomUUID(), timestamp = new Date().toISOString();
     const records = [
@@ -242,8 +241,6 @@ try {
   await button(picker, '选择此目录').click();
   assert.equal(await cwdInput.inputValue(), toAdd.cwd);
   assert.equal(await dialog.getByLabel('名称', {exact:true}).inputValue(), toAdd.name);
-  await dialog.getByText('高级选项', { exact: true }).click();
-  await dialog.getByLabel('Claude 配置目录', { exact: true }).fill(toAdd.claudeDir);
   await button(dialog, '添加目录').click();
   await dialog.waitFor({ state: 'hidden' });
   // A new folder lists no saved conversations until asked.

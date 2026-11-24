@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
 import { startFakeApi } from './cc-matrix/fake-api.mjs';
+import { descendants } from './cc-matrix/sandbox.mjs';
 import { LOCAL_AUTO_MODE_CHECK } from './fixtures/auto-mode-check.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-cache-ttl-')));
@@ -42,9 +43,9 @@ try {
   const userSettings = hour => writeFile(path.join(config, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: key, ANTHROPIC_BASE_URL: api.url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1', ...(hour && { ENABLE_PROMPT_CACHING_1H: '1' }) } }));
   await userSettings(true);
-  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'cache', name: '缓存', kind: 'local', cwd, claudeDir: config }]));
+  await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'cache', name: '缓存', kind: 'local', cwd }]));
   // The Agent call is one auto mode checks: locally here (the fake API is a gateway).
-  const env = { ...process.env, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics') };
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: config, ...LOCAL_AUTO_MODE_CHECK, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics') };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX; delete env.TMUX_PANE;
   // The developer's own cache variables would decide the lifetimes for every chat.
   for (const name of ['FORCE_PROMPT_CACHING_5M', 'ENABLE_PROMPT_CACHING_1H', 'CLAUDE_CODE_PROMPT_CACHE_TTL', 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL', 'DISABLE_PROMPT_CACHING']) delete env[name];
@@ -123,8 +124,10 @@ try {
     const ttls = script => [...new Set(mine().filter(r => r.script === script).flatMap(r => r.cacheTtl))].sort();
     const fresh = lecternPanes().filter(([id]) => !known.has(id));
     assert.equal(fresh.length, 1, `${label}: one new pane`);
-    // The pane runs `exec claude …`, so its pid is Claude Code's; -ww: the whole command line.
-    const args = execFileSync('ps', ['-ww', '-o', 'args=', '-p', fresh[0][1]]).toString();
+    // Some tmux shells keep an outer sh -c as the pane process.
+    const claude = descendants(Number(fresh[0][1])).find(row => /^(?:\S*\/)?claude(?:\s|$)/.test(row.command));
+    assert.ok(claude, `${label}: Claude Code's process in the new pane`);
+    const args = execFileSync('ps', ['-ww', '-o', 'args=', '-p', String(claude.pid)]).toString();
     assert.match(args, /--settings /, `${label}: Claude Code's command line`);
     const variable = name => new RegExp(`"${name}":"([^"]*)"`).exec(args)?.[1] ?? null;
     const launched = { main: variable('CLAUDE_CODE_PROMPT_CACHE_TTL'), other: variable('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL') };

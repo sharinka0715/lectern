@@ -23,8 +23,8 @@ const report = {};
 
 async function seedArchive() {
   const [workspace] = await page.evaluate(() => window.desktop.listWorkspaces());
-  assert.ok(workspace.claudeDir.startsWith(root + path.sep) && workspace.cwd.startsWith(root + path.sep));
-  const project = path.join(workspace.claudeDir, "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
+  assert.ok((await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR)).startsWith(root + path.sep) && workspace.cwd.startsWith(root + path.sep));
+  const project = path.join(await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR), "projects", workspace.cwd.replace(/[^a-z0-9-]/gi, "-"));
   const sessionId = randomUUID(), lines = [];
   let parentUuid = null;
   for (let i = 0; i < 48; i++) {
@@ -169,6 +169,8 @@ try {
   report.live = await observeRefreshes(1, false);
   await row(archiveId).click();
   await resume.click();
+  const settings = page.getByRole('dialog', { name: '续接前设置配置文件' });
+  await settings.getByRole('button', { name: '续接', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.session-row.active')?.dataset.sessionLive === "true" &&
     document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]') === false);
   await resume.waitFor({ state: "hidden" });

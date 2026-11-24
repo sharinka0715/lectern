@@ -27,11 +27,9 @@ export function validateWorkspace(value: Workspace): Workspace {
   if (!value || typeof value !== 'object') throw new Error('Invalid workspace');
   if (!/^[\w-]{1,100}$/.test(value.id)) throw new Error('Invalid workspace ID');
   if (!['local', 'ssh'].includes(value.kind)) throw new Error('Invalid connection type');
-  for (const [label, path] of [['Working directory', value.cwd], ['Claude directory', value.claudeDir]] as const) {
-    if (path === undefined && label === 'Claude directory') continue;
-    if (typeof path !== 'string' || !path || path.length > 4096 || path.includes('|~lectern~|') || /[\x00-\x1f\x7f]/.test(path) || !(path.startsWith('/') || path === '~' || path.startsWith('~/'))) {
-      throw new Error(`${label} must be an absolute POSIX path or ~/path`);
-    }
+  const path = value.cwd;
+  if (typeof path !== 'string' || !path || path.length > 4096 || path.includes('|~lectern~|') || /[\x00-\x1f\x7f]/.test(path) || !(path.startsWith('/') || path === '~' || path.startsWith('~/'))) {
+    throw new Error('Working directory must be an absolute POSIX path or ~/path');
   }
   if (value.kind === 'ssh') {
     // ssh receives separate argv, but reject option-like destinations and URI syntax too.
@@ -46,6 +44,8 @@ export function validateWorkspace(value: Workspace): Workspace {
 
 export interface CommandOptions {
   signal?: AbortSignal; input?: string | Buffer; timeoutMs?: number; maxBytes?: number; controlPath?: string; sshConfigPath?: string; reuseExistingMaster?: boolean; tag?: string; output?: Writable;
+  /** Skip the channel's request/output files for sensitive command data. */
+  privateContent?: boolean;
   /** Called once the command's process is gone, which for SSH means its session has ended on the target
    * (`confirmed` false: the client had to be killed, the session may linger). The promise may settle earlier. */
   onSessionEnd?: (confirmed: boolean) => void;
@@ -105,7 +105,7 @@ export function remoteRequest(command: string, input?: string | Buffer, statusMa
     + (statusMarker ? `(exit "$lectern_status")\n${report}exit 0\n` : 'exit "$lectern_status"\n') + '}\n';
 }
 
-export function commandInvocation(workspace: Workspace, script: string, controlPath?: string, sshConfigPath?: string, reuseExistingMaster = false, input?: string | Buffer, statusMarker?: string): { file: string; args: string[]; input?: string | Buffer } {
+export function commandInvocation(workspace: Workspace, script: string, controlPath?: string, sshConfigPath?: string, reuseExistingMaster = false, input?: string | Buffer, statusMarker?: string, privateContent = false): { file: string; args: string[]; input?: string | Buffer; closeInput?: boolean } {
   validateWorkspace(workspace);
   // Windows has no tmux: Lectern runs Claude Code on macOS and Linux machines over SSH only.
   if (sshOnly(process.platform) && workspace.kind !== 'ssh') throw new Error(sshOnlyMessage());
@@ -119,6 +119,15 @@ export function commandInvocation(workspace: Workspace, script: string, controlP
     // so every later request reuses one authenticated connection.
     else if (controlPath && process.platform !== 'win32') args.push('-o', 'ControlMaster=auto', '-o', 'ControlPersist=yes', '-o', `ControlPath=${controlPath}`);
     if (workspace.port) args.push('-p', String(workspace.port));
+    if (privateContent && input !== undefined) {
+      // Keep the payload out of the remote command and the shell's here-document
+      // storage. Only the script is in argv, and SSH streams the bytes on stdin.
+      const commandWithStatus = statusMarker
+        ? `(${command}\n)\nprintf '\\n%s%s\\n' ${quoteShell(statusMarker)} "$?"`
+        : command;
+      args.push(workspace.host!, 'exec sh -c ' + quoteShell(commandWithStatus));
+      return { file: 'ssh', args, input, closeInput: true };
+    }
     // OpenSSH sends the remote command and then three file descriptors over
     // its local mux socket. A full macOS socket can reject the fd transfer
     // with EMSGSIZE. Keep that command constant for every SSH operation.
@@ -137,11 +146,11 @@ export async function runCommand(workspace: Workspace, script: string, options: 
   // A one-off SSH session reports its command's status itself (see remoteRequest);
   // streamed downloads keep their bytes untouched.
   const marker = workspace.kind === 'ssh' && !options.output ? `__LECTERN_STATUS_${randomUUID()}__:` : undefined;
-  const invocation = commandInvocation(workspace, script, options.controlPath, options.sshConfigPath, options.reuseExistingMaster, options.input, marker);
+  const invocation = commandInvocation(workspace, script, options.controlPath, options.sshConfigPath, options.reuseExistingMaster, options.input, marker, options.privateContent);
   const started = performance.now();
-  diagnostic.event('transport.command.request', { script: summarize(script), input: options.input === undefined ? undefined : summarize(options.input),
+  diagnostic.event('transport.command.request', { script: options.privateContent ? undefined : summarize(script), input: options.input === undefined || options.privateContent ? undefined : summarize(options.input),
     sshCommandBytes: workspace.kind === 'ssh' ? Buffer.byteLength(invocation.args.at(-1)!) : undefined,
-    stdinBytes: invocation.input === undefined ? 0 : Buffer.byteLength(invocation.input),
+    stdinBytes: options.privateContent ? undefined : invocation.input === undefined ? 0 : Buffer.byteLength(invocation.input),
     timeoutMs: options.timeoutMs ?? 20_000, maxBytes: options.maxBytes ?? 20 * 1024 * 1024 });
   return new Promise<CommandResult>((resolve, reject) => {
     options.signal?.throwIfAborted();
@@ -206,15 +215,18 @@ export async function runCommand(workspace: Workspace, script: string, options: 
         reported = /^\d{1,3}\n$/.test(rest);
         if (reported) { status = Number(rest.trim()); stdout = stdout.subarray(0, at); }
       }
-      diagnostic.event('transport.command.exited', { code, status, reported, signal, durationMs: Math.round(performance.now() - started), stdoutBytes: size, stderrBytes: Buffer.byteLength(stderr), stderr: stderr.slice(0, 8192), stderrTruncated: stderr.length > 8192 }, status === 0 && reported !== false ? 'debug' : 'error');
+      diagnostic.event('transport.command.exited', { code, status, reported, signal, durationMs: Math.round(performance.now() - started),
+        ...(!options.privateContent && { stdoutBytes: size, stderrBytes: Buffer.byteLength(stderr), stderr: stderr.slice(0, 8192), stderrTruncated: stderr.length > 8192 }),
+      }, status === 0 && reported !== false ? 'debug' : 'error');
       if (stdout.length > maxBytes) { reject(new Error('Command output exceeded safety limit')); return; }
       // No report: the command never ran (a jump host refused the session) or was
       // cut off. Never read that as an empty result; nothing is retried.
-      if (reported === false) reject(new Error(stderr.trim() || 'SSH session ended before its command reported a result'));
-      else if (status !== 0) reject(new Error(stderr.trim() || `Command exited with status ${status}`));
+      const message = options.privateContent ? '' : stderr.trim();
+      if (reported === false) reject(new Error(message || 'SSH session ended before its command reported a result'));
+      else if (status !== 0) reject(new Error(message || `Command exited with status ${status}`));
       else resolve({ stdout, stderr });
     });
-    if (ssh) child.stdin.write(invocation.input!);
+    if (ssh && !invocation.closeInput) child.stdin.write(invocation.input!);
     else child.stdin.end(invocation.input);
   });
     });
@@ -587,7 +599,7 @@ export class Transport {
     const state = this.host(workspace);
     // Cancellable scans and streamed downloads keep their own session: aborting
     // one must not cost a warm channel.
-    const channelOk = this.channelKinds.has(workspace.kind) && !options.signal && !options.output;
+    const channelOk = this.channelKinds.has(workspace.kind) && !options.signal && !options.output && !options.privateContent;
     for (;;) {
       let channel = channelOk ? this.idleChannel(workspace) : undefined, place: SessionPlace | undefined;
       if (!channel) {

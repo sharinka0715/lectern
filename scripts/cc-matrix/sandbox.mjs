@@ -48,6 +48,8 @@ export async function createSandbox({ version, binary, api, label = version }) {
     PATH: [path.join(dirs.home, '.local', 'bin'), dirs.bin, ...systemPath].join(':'),
     LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', TERM: 'xterm-256color', TZ: process.env.TZ || 'UTC',
     TMPDIR: process.env.TMPDIR || '/tmp',
+    // Make Claude's task output location explicit when the caller isolates TMPDIR.
+    CLAUDE_CODE_TMPDIR: process.env.TMPDIR || '/tmp',
     TMUX_TMPDIR: dirs.tmux,
     CLAUDE_CONFIG_DIR: dirs.config,
     ANTHROPIC_BASE_URL: api.url, ANTHROPIC_API_KEY: API_KEY,
@@ -82,11 +84,12 @@ export async function createSandbox({ version, binary, api, label = version }) {
     /** Close the private tmux server and make sure every process it ran is gone.
      * Returns the processes that outlived it (a bug in what was tested). */
     async close({ keep = false } = {}) {
-      // Only the private server (its own TMUX_TMPDIR socket), never the default one;
-      // processes are checked and stopped by exact PID, never by name.
-      const server = Number(tmux('display-message', '-p', '#{pid}').trim());
+      // tmux 3.2a falls back to the user's server when TMUX_TMPDIR is missing.
+      const socket = path.join(dirs.tmux, `tmux-${process.getuid()}`, 'default');
+      const privateTmux = (...args) => existsSync(dirs.tmux) ? tmux('-S', socket, ...args) : '';
+      const server = Number(privateTmux('display-message', '-p', '#{pid}').trim());
       const tracked = server > 1 ? descendants(server) : [];
-      tmux('kill-server');
+      privateTmux('kill-server');
       const leftovers = await reap(tracked);
       if (!keep) for (let i = 0; i < 5; i++) { try { await rm(root, { recursive: true, force: true }); break; } catch { await new Promise(resolve => setTimeout(resolve, 300)); } }
       return leftovers;

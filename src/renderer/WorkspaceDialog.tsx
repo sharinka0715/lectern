@@ -42,7 +42,6 @@ export function WorkspaceDialog({
   const folderName = projectPath.split('/').filter(Boolean).at(-1) || (projectPath.startsWith('/') ? '/' : '');
   const [host, setHost] = useState(endpoint?.host || "");
   const [port, setPort] = useState(String(endpoint?.port || ""));
-  const [claudeDir, setClaudeDir] = useState(workspace?.claudeDir || "");
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState("");
@@ -84,7 +83,6 @@ export function WorkspaceDialog({
         id: workspace?.id || crypto.randomUUID(),
         name: name === defaultName ? defaultName : name.trim() || defaultName,
         cwd: path,
-        ...(claudeDir.trim() ? { claudeDir: claudeDir.trim() } : {}),
         // A new folder starts without scanning its saved conversations; editing keeps the choice.
         ...(workspace ? workspace.historyScan === false && { historyScan: false as const } : { historyScan: false as const }),
       });
@@ -214,21 +212,6 @@ export function WorkspaceDialog({
             {t('dialogs.sshHint')}
           </p>
         )}
-        <details className="advanced-options">
-          <summary>{t('dialogs.advanced')}</summary>
-          <label className="field-label">
-            {t('dialogs.claudeConfigDir')}
-            <input
-              value={claudeDir}
-              onChange={(e) => setClaudeDir(e.target.value)}
-              placeholder={t('dialogs.inheritTarget')}
-              spellCheck={false}
-            />
-          </label>
-          <p className="field-hint">
-            {t('dialogs.configHelp')}
-          </p>
-        </details>
         {error && (
           <div className="form-error" role="alert">
             {error}

@@ -20,8 +20,10 @@ const list = (title: string, items: ReleaseItem[], locale: 'zh-CN' | 'en') => {
   lines.push(`## ${title}`, '', ...items.map((item, i) => `${i + 1}. ${releaseItemText(item, locale)}`), '');
 };
 list('新功能', note.features, 'zh-CN');
+list('变化', note.changes ?? [], 'zh-CN');
 list('问题修复', note.fixes, 'zh-CN');
 list('New features', note.features, 'en');
+list('Changes', note.changes ?? [], 'en');
 list('Fixes', note.fixes, 'en');
 lines.push('---', '',
   '安装包未经过平台签名时，macOS 需在「系统设置 → 隐私与安全性」中允许打开，Windows SmartScreen 需选择「仍要运行」。', '',

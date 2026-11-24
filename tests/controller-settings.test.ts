@@ -89,15 +89,16 @@ async function harness(t: TestContext) {
 test('local folders are read at startup, an SSH machine once it connects, once per machine and Claude configuration', async t => {
   const h = await harness(t);
   await h.store.save({ ...workspace, id: 'same-machine', cwd: '/elsewhere' });
-  await h.store.save({ ...workspace, id: 'another-config', cwd: '/elsewhere', claudeDir: '/alt' });
   await h.store.save({ ...workspace, id: 'ssh1', kind: 'ssh', host: 'host' });
   await h.store.save({ ...workspace, id: 'ssh2', kind: 'ssh', host: 'host', cwd: '/var' });
   await h.store.save({ ...workspace, id: 'ssh-port', kind: 'ssh', host: 'host', port: 2222 });
   h.controller.warmModelCatalogs(); await tick();
-  assert.deepEqual(h.probes, [workspace.id, 'another-config'], 'no SSH machine before it connects');
+  assert.deepEqual(h.probes, [workspace.id], 'no SSH machine before it connects');
+  await h.controller.modelCatalog('same-machine', false, '/sample.json');
+  await h.controller.modelCatalog(workspace.id, false, '/sample.json');
   for (const id of ['ssh1', 'ssh2', 'ssh-port']) await h.controller.discover(id);
   await tick();
-  assert.deepEqual(h.probes, [workspace.id, 'another-config', 'ssh1', 'ssh-port']);
+  assert.deepEqual(h.probes, [workspace.id, 'same-machine', 'ssh1', 'ssh-port']);
   h.controller.warmModelCatalogs(); await h.controller.discover('ssh2'); await tick();
   assert.equal(h.probes.length, 4, 'kept until the app quits');
   assert.deepEqual(h.writes, []);

@@ -1,3 +1,4 @@
+import { fixtureClaudeConfig } from './helpers/claude-config';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -51,7 +52,8 @@ async function counted(t: TestContext) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'lectern-attached-')));
   const cwd = join(base, 'Project'), outside = join(base, 'Uploads'), counter = join(base, 'decodes');
   await mkdir(cwd); await mkdir(outside); await writeFile(counter, '');
-  const workspace: Workspace = { id: 'attached', name: 'Project', kind: 'local', cwd, claudeDir: join(cwd, '.claude') };
+  const workspace: Workspace = { id: 'attached', name: 'Project', kind: 'local', cwd };
+  fixtureClaudeConfig(join(cwd, '.claude'));
   const bodies: number[] = [];
   const prefix = `lectern_count() { printf x >> ${quoteShell(counter)}; }
 od() { lectern_count; command od "$@"; }
@@ -136,8 +138,8 @@ test('attached thumbnails stay out of macOS privacy folders unless the project f
   const image = png(64, 32, () => [40, 120, 200]);
   for (const file of ['Downloads/shot.png', 'Documents/figure.png', 'src/plot.png']) await writeFile(join(home, file), image);
   const workspaces: Workspace[] = [
-    { id: 'src', name: 'src', kind: 'local', cwd: join(home, 'src'), claudeDir: join(home, '.claude') },
-    { id: 'thesis', name: 'thesis', kind: 'local', cwd: join(home, 'Documents/thesis'), claudeDir: join(home, '.claude') },
+    { id: 'src', name: 'src', kind: 'local', cwd: join(home, 'src') },
+    { id: 'thesis', name: 'thesis', kind: 'local', cwd: join(home, 'Documents/thesis') },
   ];
   const access = new ArtifactAccess(id => workspaces.find(ws => ws.id === id)!, backend.artifacts, { allowOutside: async () => true, saveAs: async () => undefined });
   await assert.rejects(() => access.attachmentThumbnail('src', join(home, 'Downloads/shot.png')), /隐私文件夹/);

@@ -13,7 +13,7 @@ const cwd = path.join(root, "work");
 const project = path.join(config, "projects", cwd.replace(/[^a-z0-9-]/gi, "-"));
 const output = path.resolve("test-results", "history-pagination-" + Date.now());
 const logs = path.join(output, "diagnostics");
-const workspace = { id: "project", name: "历史分页", cwd, kind: "local", claudeDir: config };
+const workspace = { id: "project", name: "历史分页", cwd, kind: "local" };
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config,
   TMUX_TMPDIR: root, LECTERN_LOG_DIR: logs, LECTERN_DIAGNOSTIC_CONTENT: "0" };
 delete env.TMUX;

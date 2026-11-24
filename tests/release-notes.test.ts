@@ -30,15 +30,15 @@ test('the current version has release notes: features and fixes listed separatel
     assert.ok(a[0] > b[0] || a[0] === b[0] && (a[1] > b[1] || a[1] === b[1] && a[2] > b[2]), `${versions[i - 1]} before ${versions[i]}`);
   }
   for (const note of releaseNotes) {
-    assert.ok(note.features.length + note.fixes.length > 0, `${note.version} lists something`);
-    for (const item of [...note.features, ...note.fixes]) assertChinese(typeof item === 'string' ? item : item[0]);
+    assert.ok(note.features.length + (note.changes?.length ?? 0) + note.fixes.length > 0, `${note.version} lists something`);
+    for (const item of [...note.features, ...(note.changes ?? []), ...note.fixes]) assertChinese(typeof item === 'string' ? item : item[0]);
   }
 });
 
 test('released versions are in both languages; only the pending entry may have Chinese-only items', () => {
   for (const note of releaseNotes) {
     const pending = isLaterVersion(note.version, version);
-    for (const item of [...note.features, ...note.fixes]) {
+    for (const item of [...note.features, ...(note.changes ?? []), ...note.fixes]) {
       if (typeof item === 'string') {
         assert.ok(pending, `${note.version} is released: translate “${item}” into an ['中文', 'English'] pair`);
         continue;

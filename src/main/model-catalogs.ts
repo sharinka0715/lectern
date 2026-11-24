@@ -20,11 +20,11 @@ export interface CatalogEntry {
   effortIds: Record<EffortLevel, string>;
 }
 
-/** One configuration of Claude Code on one machine: the endpoint, plus the
- * folder's explicit CLAUDE_CONFIG_DIR (another account or settings). */
-export function catalogKey(workspace: Workspace): string {
+/** One configuration of Claude Code on one machine: the endpoint, and the
+ * conversation's optional settings file. */
+export function catalogKey(workspace: Workspace, file: string | null = null): string {
   return JSON.stringify([workspace.kind, workspace.kind === 'ssh' ? workspace.host : null, workspace.kind === 'ssh' ? workspace.port ?? null : null,
-    workspace.claudeDir ?? null]);
+    file]);
 }
 
 /** Model and effort lists read once per machine and configuration through the
@@ -36,8 +36,8 @@ export class ModelCatalogs extends EventEmitter {
 
   constructor(private readonly backend: Pick<Backend, 'probeModelCatalog'>) { super(); }
 
-  private entry(workspace: Workspace): CatalogEntry {
-    const key = catalogKey(workspace);
+  private entry(workspace: Workspace, file: string | null): CatalogEntry {
+    const key = catalogKey(workspace, file);
     let entry = this.entries.get(key);
     if (!entry) {
       entry = { generation: 0, rowIds: [], effortIds: Object.fromEntries(EFFORT_LEVELS.map(level => [level, randomUUID()])) as Record<EffortLevel, string> };
@@ -46,28 +46,28 @@ export class ModelCatalogs extends EventEmitter {
     return entry;
   }
 
-  get(workspace: Workspace): CatalogEntry | undefined {
-    return this.entries.get(catalogKey(workspace));
+  get(workspace: Workspace, file: string | null = null): CatalogEntry | undefined {
+    return this.entries.get(catalogKey(workspace, file));
   }
 
-  state(workspace: Workspace): ModelCatalogState {
-    const entry = this.get(workspace);
+  state(workspace: Workspace, file: string | null = null): ModelCatalogState {
+    const entry = this.get(workspace, file);
     if (entry?.catalog) return { status: 'ready', catalog: entry.catalog };
     if (entry?.error && !entry.loading) return { status: 'failed', error: entry.error };
     return { status: 'loading' };
   }
 
-  isChangeFor(workspace: Workspace, changed: unknown): boolean {
-    return changed === this.get(workspace);
+  isChangeFor(workspace: Workspace, changed: unknown, file: string | null = null): boolean {
+    return changed === this.get(workspace, file);
   }
 
   /** The cached list, or one probe shared by every concurrent caller. */
-  read(workspace: Workspace): Promise<ModelCatalog> {
+  read(workspace: Workspace, file: string | null = null): Promise<ModelCatalog> {
     if (this.closed) return Promise.reject(new Error(t('main.appQuitting')));
-    const entry = this.entry(workspace);
+    const entry = this.entry(workspace, file);
     if (entry.catalog) return Promise.resolve(entry.catalog);
     if (entry.loading) return entry.loading;
-    const loading = this.probe(workspace, entry).finally(() => {
+    const loading = this.probe(workspace, entry, file).finally(() => {
       entry.loading = undefined;
       if (!this.closed) this.emit('change', entry);
     });
@@ -78,29 +78,39 @@ export class ModelCatalogs extends EventEmitter {
 
   /** One probe; if launch preferences changed while it ran (a list read with
    * the old dynamic-workflows setting), it reads again before anyone sees it. */
-  private probe(workspace: Workspace, entry: CatalogEntry): Promise<ModelCatalog> {
+  private probe(workspace: Workspace, entry: CatalogEntry, file: string | null): Promise<ModelCatalog> {
     const generation = entry.generation;
-    return Promise.resolve().then(() => this.backend.probeModelCatalog(workspace)).then(catalog => {
+    return Promise.resolve().then(() => this.backend.probeModelCatalog(workspace, file)).then(catalog => {
       if (this.closed) throw new Error(t('main.appQuitting'));
-      if (entry.generation !== generation) return this.probe(workspace, entry);
+      if (entry.generation !== generation) return entry.catalog ?? this.probe(workspace, entry, file);
       entry.catalog = catalog;
       entry.error = undefined;
       // Rows keep their IDs if the same list is read again (a configuration change).
       entry.rowIds = catalog.models.map((_, index) => entry.rowIds[index] ?? randomUUID());
       return catalog;
     }, error => {
-      if (!this.closed && entry.generation !== generation) return this.probe(workspace, entry);
+      if (!this.closed && entry.generation !== generation) return entry.catalog ?? this.probe(workspace, entry, file);
       entry.error = error instanceof Error ? error.message : String(error);
       diagnostic.event('settings.model_catalog.failed', { workspaceId: workspace.id, error: errorDetails(error) }, 'warn');
       throw error;
     });
   }
 
+  /** Use the same probe result the user just authorized in the settings editor. */
+  remember(workspace: Workspace, file: string | null, catalog: ModelCatalog) {
+    const entry = this.entry(workspace, file);
+    entry.generation++;
+    entry.error = undefined;
+    entry.catalog = catalog;
+    entry.rowIds = catalog.models.map((_, index) => entry.rowIds[index] ?? randomUUID());
+    this.emit('change', entry);
+  }
+
   /** Read in the background unless a list is cached, loading, or failed before. */
-  warm(workspace: Workspace): void {
-    const entry = this.get(workspace);
+  warm(workspace: Workspace, file: string | null = null): void {
+    const entry = this.get(workspace, file);
     if (this.closed || entry?.catalog || entry?.loading || entry?.error) return;
-    void this.read(workspace).catch(() => {});
+    void this.read(workspace, file).catch(() => {});
   }
 
   /** Launch preferences changed (dynamic workflows): read again, keeping row IDs.

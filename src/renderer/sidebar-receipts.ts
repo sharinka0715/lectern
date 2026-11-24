@@ -85,7 +85,8 @@ function store(scope: string, receipts: ReplyReceipts) {
   try { localStorage.setItem(storageKey(scope), receipts.serialize()); } catch { /* Read-only profile. */ }
 }
 export function workspaceReceipts(ws: Workspace) {
-  const scope = JSON.stringify([ws.id, ws.kind, ws.host, ws.port, ws.cwd, ws.claudeDir]);
+  // Keep the old null slot so previously read conversations stay read.
+  const scope = JSON.stringify([ws.id, ws.kind, ws.host, ws.port, ws.cwd, null]);
   let entry = ledgers.get(ws.id);
   if (entry?.scope !== scope) {
     let saved: string | undefined;

@@ -94,7 +94,7 @@ try {
   await page.waitForTimeout(400);
   const { version } = JSON.parse(await readFile('package.json', 'utf8'));
   await notes.getByText(`v${version}Current`, { exact: true }).waitFor();
-  assert.deepEqual([...new Set(await notes.locator('h4').allTextContents())].sort(), ['Fixes', 'New features']);
+  assert.deepEqual([...new Set(await notes.locator('h4').allTextContents())].sort(), ['Changes', 'Fixes', 'New features']);
   await noChinese(notes.locator('.release-note').filter({ hasText: `v${version}Current` }), 'the release notes of the running version');
   // A click inside lets the modal finish painting before the screenshot.
   await notes.locator('.release-note h3').first().click();

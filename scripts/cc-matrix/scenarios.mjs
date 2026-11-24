@@ -15,6 +15,8 @@ import { hookStatus, launchedHooks, setDialogHooks } from '../fixtures/dialog-ho
 import { previewQuestions } from './question-preview-input.mjs';
 
 export const FEATURES = [
+  { id: 'custom-settings', title: 'Default and custom settings layer correctly in all four combinations' },
+  { id: 'settings-override', title: 'Explicit permission defaults show the launch override warning' },
   { id: 'model-catalog', title: 'Model/effort lists from the stream-json control-request probe' },
   { id: 'launch-flags', title: 'New chat launches with the chosen --model/--effort' },
   { id: 'first-prompt', title: 'First prompt delivered once the native composer is ready' },
@@ -172,23 +174,22 @@ const paragraph = 'The compatibility matrix streams this reply slowly so the des
  * scenarios test what they are about (`onboard`, with a configuration of its own, only
  * gets plain replies). `server` has its own configuration without the variable: the
  * product's default path, which ends in a dialog (scenario server-check). */
-export async function prepareFolders(sandbox) {
+export async function prepareFolders(sandbox, phase = 'main') {
+  if (phase === 'onboard') {
+    await writeFile(path.join(sandbox.config, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, lastOnboardingVersion: sandbox.version, theme: 'dark',
+    }));
+    await writeFile(path.join(sandbox.config, 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'default' } }));
+    return { onboard: { id: 'ccm-onboard', name: 'ccm-onboard', cwd: sandbox.work } };
+  }
+  if (phase === 'server') return { server: { id: 'ccm-server', name: 'ccm-server', cwd: sandbox.work } };
   const main = sandbox.work;
   const perm = path.join(sandbox.root, 'perm-work');
   const fresh = path.join(sandbox.root, 'fresh-work');
   // Background tasks run without permission questions: auto mode off, the tools allowed.
   const tasks = path.join(sandbox.root, 'tasks-work');
-  const onboard = path.join(sandbox.root, 'onboard-work'), onboardConfig = path.join(sandbox.root, 'onboard-config');
-  const server = path.join(sandbox.root, 'server-work'), serverConfig = path.join(sandbox.root, 'server-config');
-  for (const dir of [perm, fresh, onboard, onboardConfig, server, serverConfig, path.join(tasks, '.claude')]) await mkdir(dir, { recursive: true });
+  for (const dir of [perm, fresh, path.join(tasks, '.claude')]) await mkdir(dir, { recursive: true });
   await writeFile(path.join(tasks, '.claude', 'settings.json'), JSON.stringify({ permissions: { disableAutoMode: 'disable', allow: ['Bash', 'Monitor', 'ToolSearch', 'TaskStop'] } }));
-  // Onboarding itself (theme, connectivity check against api.anthropic.com) cannot run
-  // offline; this configuration has finished it and nothing else: the API key is not
-  // approved yet and no folder is trusted.
-  await writeFile(path.join(onboardConfig, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, lastOnboardingVersion: sandbox.version, theme: 'dark' }));
-  // ... and its user has chosen manual mode as the default (which makes Claude Code
-  // offer "Make auto mode your default permission mode?" at startup).
-  await writeFile(path.join(onboardConfig, 'settings.json'), JSON.stringify({ permissions: { defaultMode: 'default' } }));
   // The permission folder turns auto mode off, Claude Code's documented opt-out
   // (permissions.disableAutoMode): sessions there start in manual mode and ask.
   await mkdir(path.join(perm, '.claude'), { recursive: true });
@@ -201,19 +202,13 @@ export async function prepareFolders(sandbox) {
   config.projects[perm] = { ...config.projects[main] };
   config.projects[tasks] = { ...config.projects[main] };
   await writeFile(configFile, JSON.stringify(config, null, 2));
-  // The same first-run state for `server` (onboarded, API key approved, folder trusted) and
-  // the same settings, but not the variable that moves auto mode's check off the server.
   const settingsFile = path.join(sandbox.config, 'settings.json'), settings = JSON.parse(await readFile(settingsFile, 'utf8'));
-  await writeFile(path.join(serverConfig, '.claude.json'), JSON.stringify({ ...config, projects: { [server]: { ...config.projects[main] } } }, null, 2));
-  await writeFile(path.join(serverConfig, 'settings.json'), JSON.stringify(settings, null, 2));
   await writeFile(settingsFile, JSON.stringify({ ...settings, env: { CLAUDE_CODE_AUTO_MODE_SERVER: '0' } }, null, 2));
   return {
     main: { id: 'ccm-main', name: 'ccm-main', cwd: main },
     perm: { id: 'ccm-perm', name: 'ccm-perm', cwd: perm },
     fresh: { id: 'ccm-fresh', name: 'ccm-fresh', cwd: fresh },
     tasks: { id: 'ccm-tasks', name: 'ccm-tasks', cwd: tasks },
-    onboard: { id: 'ccm-onboard', name: 'ccm-onboard', cwd: onboard, claudeDir: onboardConfig },
-    server: { id: 'ccm-server', name: 'ccm-server', cwd: server, claudeDir: serverConfig },
   };
 }
 
@@ -335,6 +330,7 @@ export const SCENARIOS = [
   },
   {
     id: 'onboarding',
+    sandboxPhase: 'onboard',
     features: ['onboarding', 'auto-mode-user-manual'],
     timeoutMs: 180_000,
     async run({ ui, page, api, sandbox, folders, check, note }) {
@@ -342,6 +338,7 @@ export const SCENARIOS = [
       await check('onboarding', async () => {
         await ui.openDraft(folders.onboard.name);
         await ui.send('Hello on first run ccm:onboard');
+        await page.locator('.settings-override-dialog').getByRole('button', { name: '接受', exact: true }).click();
         // Answer each native first-run screen in the terminal, as a user would;
         // the directory trust prompt is answered from the app's own card.
         const seen = [];
@@ -371,9 +368,84 @@ export const SCENARIOS = [
         await waitMode(page, 'auto');
         const screen = await ui.screen();
         assert.doesNotMatch(screen, /Make auto mode your default permission mode\?/);
-        const settings = JSON.parse(await readFile(path.join(folders.onboard.claudeDir, 'settings.json'), 'utf8'));
+        const settings = JSON.parse(await readFile(path.join(sandbox.config, 'settings.json'), 'utf8'));
         assert.deepEqual(settings.permissions, { defaultMode: 'default' }, "the user's own settings stay as they were");
       });
+    },
+  },
+  {
+    id: 'custom-settings',
+    // This scenario rewrites and removes settings.json between launches.
+    sandboxPhase: 'settings',
+    features: ['custom-settings', 'settings-override'],
+    timeoutMs: 180_000,
+    async run({ ui, page, api, sandbox, folders, check }) {
+      const defaults = path.join(sandbox.config, 'settings.json');
+      const saved = await readFile(defaults);
+      const project = path.join(folders.main.cwd, '.claude', 'settings.json');
+      const projectSettings = await readFile(project);
+      const custom = path.join(sandbox.root, 'conversation.json');
+      const defaultModel = 'claude-haiku-4-5-20251001', customModel = 'claude-sonnet-4-5-20250929';
+      const runCase = async (name, base, extra) => {
+        const marker = 'settings-' + name;
+        let answer;
+        api.script(marker, ({ step, toolResults }) => {
+          if (!step) return { blocks: [{ type: 'tool_use', name: 'Bash', input: {
+            command: "node -p 'JSON.stringify([process.env.LECTERN_SAMPLE_DEFAULT || null, process.env.LECTERN_SAMPLE_CUSTOM || null])'",
+            description: 'Read two test markers',
+          } }] };
+          if (step === 1) answer = toolResults[0]?.text;
+          return { text: 'Settings case completed ' + name };
+        });
+        if (base) await writeFile(defaults, JSON.stringify({ model: defaultModel, env: { LECTERN_SAMPLE_DEFAULT: 'user-layer' } }));
+        else await rm(defaults, { force: true });
+        await ui.openDraft(folders.main.name);
+        if (extra) {
+          await page.locator('[data-setting-kind="file"]').click();
+          const editor = page.locator('[data-setting-menu="file"]');
+          await editor.locator('input').fill(custom);
+          await editor.getByRole('button', { name: '应用', exact: true }).click();
+          await page.locator('[data-setting-kind="file"]').getByText(path.basename(custom)).waitFor();
+        }
+        await ui.send('Read the two markers ccm:' + marker);
+        await ui.waitReply('Settings case completed ' + name);
+        assert.ok(answer?.includes(JSON.stringify([base ? 'user-layer' : null, extra ? 'flag-layer' : null])), answer);
+        const request = api.requests.find(row => row.script === marker && row.kind === 'main');
+        assert.ok(request);
+        if (extra || base) assert.equal(request.model, extra ? customModel : defaultModel);
+        const argv = await ui.claudeArgv();
+        const setting = argv[argv.indexOf('--settings') + 1];
+        if (extra) {
+          assert.match(setting, /\/lectern-settings-\d+\/[a-f0-9-]+\.json$/);
+          await assert.rejects(readFile(setting), { code: 'ENOENT' });
+        } else {
+          assert.equal(JSON.parse(setting).permissions.defaultMode, 'auto');
+        }
+        await ui.closeChat();
+      };
+      try {
+        await writeFile(project, JSON.stringify({ ...JSON.parse(projectSettings), env: { CLAUDE_CODE_AUTO_MODE_SERVER: '0' } }));
+        await writeFile(custom, JSON.stringify({ model: customModel, env: { LECTERN_SAMPLE_CUSTOM: 'flag-layer' } }));
+        await check('custom-settings', async () => {
+          await runCase('a', false, false);
+          await runCase('b', true, false);
+          await runCase('c', false, true);
+          await runCase('d', true, true);
+        });
+        await check('settings-override', async () => {
+          await writeFile(defaults, JSON.stringify({ permissions: { defaultMode: 'default' } }));
+          api.script('settings-override', () => ({ text: 'Override accepted.' }));
+          await ui.openDraft(folders.main.name);
+          await ui.send('Confirm a launch override ccm:settings-override');
+          const dialog = page.locator('.settings-override-dialog');
+          await dialog.getByText('permissions.defaultMode', { exact: true }).waitFor();
+          await dialog.getByRole('button', { name: '接受', exact: true }).click();
+          await ui.waitReply('Override accepted.');
+        });
+      } finally {
+        await writeFile(defaults, saved);
+        await writeFile(project, projectSettings);
+      }
     },
   },
   {
@@ -531,6 +603,7 @@ export const SCENARIOS = [
   },
   {
     id: 'server-check',
+    sandboxPhase: 'server',
     features: ['auto-mode-billing', 'auto-mode-unavailable', 'auto-mode-unavailable-leave'],
     timeoutMs: 300_000,
     async run(ctx) {
@@ -598,7 +671,7 @@ export const SCENARIOS = [
         await ui.waitReply('ccm-server-continue-done', { timeout: 60_000 });
         assert.ok(existsSync(path.join(cwd, 'billing-continue.txt')), 'the action ran');
         assert.ok(api.requests.filter(r => r.kind === 'classifier').length > checks, 'checked by Claude Code with a request of its own');
-        const config = JSON.parse(await readFile(path.join(folders.server.claudeDir, '.claude.json'), 'utf8'));
+        const config = JSON.parse(await readFile(path.join(sandbox.config, '.claude.json'), 'utf8'));
         assert.equal(typeof config.autoModeClassifierBillingNoticeAcknowledgedAt, 'number', 'Claude Code remembers the answer');
         assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'auto');
       });

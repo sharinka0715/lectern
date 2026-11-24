@@ -14,7 +14,7 @@ const noop = () => {};
 const actions = (patch: Partial<SidebarMenuActions> = {}): SidebarMenuActions => ({
   platform: 'darwin', demo: false, busy: false, connections: [], addFolder: noop, login: noop, editConnections: noop, importHistory: noop,
   newSession: noop, refresh: noop, scanHistory: noop, editWorkspace: noop, saveWorkspace: async () => {}, removeWorkspace: async () => {},
-  open: noop, openBeside: noop, archiveSession: noop, ...patch,
+  open: noop, openBeside: noop, archiveSession: noop, editConversationSettings: noop, ...patch,
 });
 
 test('menus drop empty entries and leading, doubled or trailing separators', () => {
@@ -48,7 +48,7 @@ test('session menus: a stopped conversation can be archived; a running one canno
   const saved: SessionInfo = { id: '11111111-2222-4333-8444-555555555555', title: '修复登录', path: '/h/.claude/projects/x/1.jsonl', mapping: 'exact' };
   let renamed = false;
   const menu = sessionMenu(workspace, saved, { ...actions(), rename: () => { renamed = true; } });
-  assert.deepEqual(labels(menu), ['打开', '在旁边分屏打开', '标记为未读', '—', '重命名…', '复制标题', '复制会话 ID', '复制续接命令', '—', '归档对话']);
+  assert.deepEqual(labels(menu), ['打开', '在旁边分屏打开', '标记为未读', '—', '重命名…', '自定义配置文件…', '复制标题', '复制会话 ID', '复制续接命令', '—', '归档对话']);
   item(menu, '重命名…').onSelect();
   assert.equal(renamed, true);
   let archived = '';
