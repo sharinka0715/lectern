@@ -9,16 +9,17 @@ import { MessageDisplay } from '../src/core/message-display';
 import type { Workspace } from '../src/shared/types';
 
 // The offline mock's /goal (scripts/mock-claude.mjs) in a real tmux, driven through the backend: the
-// indicator ticks every 25 ms (LECTERN_MOCK_GOAL_TICK_MS) so that every guarded key meets a changed row.
+// indicator ticks every 25 ms so it can change between the reads of a guarded key.
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 test('with the goal indicator ticking above the input box: /goal clear during a reply, an inline switch, the stop key', { skip: process.platform === 'win32', timeout: 90_000 }, async t => {
-  // Split inside the indicator and bring a timer width change close to the switch.
+  // Split inside the timer without holding the whole frame across several ticks.
   const mockEnv = {
     LECTERN_MOCK_GOAL_TICK_MS: '25',
     LECTERN_MOCK_STREAM_MS: '60',
-    LECTERN_MOCK_GOAL_EVAL_MS: process.env.LECTERN_MOCK_GOAL_EVAL_MS ?? '250',
+    LECTERN_MOCK_GOAL_EVAL_MS: process.env.LECTERN_MOCK_GOAL_EVAL_MS ?? '850',
     LECTERN_MOCK_CHUNK_BYTES: process.env.LECTERN_MOCK_CHUNK_BYTES ?? '216',
-    LECTERN_MOCK_CHUNK_MS: process.env.LECTERN_MOCK_CHUNK_MS ?? '10',
+    LECTERN_MOCK_CHUNK_MS: process.env.LECTERN_MOCK_CHUNK_MS ?? '5',
+    LECTERN_MOCK_CHUNK_GOAL_ROW: '1',
   };
   const saved = Object.keys(mockEnv).map(key => [key, process.env[key]] as const);
   Object.assign(process.env, mockEnv);

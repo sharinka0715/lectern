@@ -87,6 +87,8 @@ if (existsSync(file)) {
   });
 }
 let input = '', pasted = false, busy = false, preview = '', generation = 0;
+const pasteEchoMs = Number(process.env.LECTERN_MOCK_PASTE_ECHO_MS ?? 0);
+let echoedInput = '', echoTimer;
 let nativeMenu, selectedModel = 0, selectedEffort = 1, focus = 0;
 const fixtureModels = fixtureTable.map(row => row.label);
 const customModel = { label: 'Custom X', id: 'gateway/custom-x' };
@@ -124,15 +126,26 @@ const replyRow = text => `\x1b[97m⏺\x1b[39m ${text.replace(/\n/g, '\n  ')}`;
 const noted = text => text.replace(/^⏺ /u, '\x1b[37m⏺\x1b[39m ');
 const callBullet = blink => `\x1b[2m${blink ? ' ' : '⏺'}\x1b[0m`;
 const chunkBytes = Number(process.env.LECTERN_MOCK_CHUNK_BYTES), chunkMs = Number(process.env.LECTERN_MOCK_CHUNK_MS);
+const chunkGoalRow = process.env.LECTERN_MOCK_CHUNK_GOAL_ROW === '1';
 const chunkWait = Number.isSafeInteger(chunkBytes) && chunkBytes > 0 && Number.isFinite(chunkMs) && chunkMs > 0
   ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
-function writeFrame(frame) {
+function writeFrame(frame, indicator = '') {
   if (!chunkWait) { process.stdout.write(frame); return; }
   // Simulate a PTY delivering one frame in pieces without interleaving two draws.
   const bytes = Buffer.from(frame);
-  for (let start = 0; start < bytes.length; start += chunkBytes) {
+  let end = chunkBytes;
+  if (chunkGoalRow) {
+    // Keep a split inside the timer text. Pausing at every boundary can block stdin
+    // for several ticks before the fixture gets to paint a pasted draft.
+    const start = indicator ? bytes.lastIndexOf(indicator + '\x1b[K\r\n') : -1;
+    const boundary = (Math.floor(start / chunkBytes) + 1) * chunkBytes;
+    end = start >= 0 && boundary < start + Buffer.byteLength(indicator) ? boundary : bytes.length;
+  }
+  for (let start = 0; start < bytes.length;) {
     if (start > 0) Atomics.wait(chunkWait, 0, 0, chunkMs);
-    process.stdout.write(bytes.subarray(start, start + chunkBytes));
+    process.stdout.write(bytes.subarray(start, end));
+    start = end;
+    end = chunkGoalRow ? bytes.length : end + chunkBytes;
   }
 }
 const draw = () => {
@@ -163,15 +176,16 @@ const draw = () => {
     lines.push('Permission required', 'Do you want to allow this action?', '❯ 1. Yes', '  2. No', 'Enter to confirm · Esc to cancel');
   } else {
     if (fixtureState === 'error') lines.push('────────────────────────────────────────────────────────────────', 'API Error: 503 Service unavailable');
-    if (input === '/model' || input === '/effort') {
-      lines.push(`❯ ${input}       Set the session ${input.slice(1)}`);
+    const draft = pasteEchoMs > 0 ? echoedInput : input;
+    if (draft === '/model' || draft === '/effort') {
+      lines.push(`❯ ${draft}       Set the session ${draft.slice(1)}`);
     }
     // The goal indicator (or a busy clear's notice) right-aligned on the row on top of the input box.
     goalIndicatorShown = goalIndicator();
     if (goalIndicatorShown) lines.push(goalIndicatorShown.padStart(64));
-    lines.push('────────────────────────────────────────────────────────────────', `❯ ${input}`, '────────────────────────────────────────────────────────────────',
+    lines.push('────────────────────────────────────────────────────────────────', `❯ ${draft}`, '────────────────────────────────────────────────────────────────',
       ['progress', 'compacting'].includes(fixtureState) ? '  ⏸ manual mode on · esc to interrupt' : '  ⏸ manual mode on · ? for shortcuts'
-        + (typeof fixtureAgents === 'number' && !input ? ' · ↓ to manage' : ''));
+        + (typeof fixtureAgents === 'number' && !draft ? ' · ↓ to manage' : ''));
     if (fixtureAgents) lines.push(...agentRows());
   }
   // Ticking task rows (agents:N) and the blinking call above a permission dialog redraw in place,
@@ -179,7 +193,8 @@ const draw = () => {
   // as the cleared one would (erased after each row and around a bare line feed). Clearing first
   // let a read on a slow macOS runner, where the pty hands a frame over in pieces, catch the redraw
   // half done and refuse a key over rows that never changed.
-  if (typeof fixtureAgents === 'number' || permission || goal || goalCleared) writeFrame('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J');
+  if (typeof fixtureAgents === 'number' || permission || goal || goalCleared) writeFrame('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J',
+    goal && !goal.paused ? goalIndicatorShown : undefined);
   else writeFrame('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -463,6 +478,8 @@ process.stdin.setEncoding('utf8');
 process.stdin.resume();
 process.stdout.write('\x1b[?2004h');
 process.stdin.on('data', chunk => {
+  let priorInput = input;
+  const clearDraft = () => { input = echoedInput = priorInput = ''; clearTimeout(echoTimer); };
   // tmux bracketed paste is delivered as a single write in this fixture.
   for (let i = 0; i < chunk.length;) {
     if (chunk.startsWith('\x1b[200~', i)) { pasted = true; i += 6; continue; }
@@ -500,7 +517,7 @@ process.stdin.on('data', chunk => {
     if (char === '\x03') { process.exit(0); }
     if (char === '\x1b') { generation++; busy = false; preview = ''; if (presence) setPresence('idle'); draw(); continue; }
     if ((char === '\r' || char === '\n') && !pasted) {
-      const text = input.trim(); input = '';
+      const text = input.trim(); clearDraft();
       const inline = aliasModels && /^\/(model|effort) (\S+)$/.exec(text);
       const goalArgs = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
       if (goalArgs) goalCommand((goalArgs[1] ?? '').trim());
@@ -522,10 +539,16 @@ process.stdin.on('data', chunk => {
         const [, mode, ms] = /\bpermission-(late|first)(?::(\d+))?/.exec(text);
         askPermission(text, mode, Number(ms ?? 4000));
       } else if (text && !busy) void answer(text);
-    } else if (!pasted && char === '\x15') input = ''; // Ctrl+U clears this fixture's single-line draft.
+    } else if (!pasted && char === '\x15') clearDraft(); // Ctrl+U clears this fixture's single-line draft.
     else if (char === '\x7f') input = input.slice(0, -1);
     // Like Claude Code's paste handler, which saves a pasted tab as four spaces.
     else input += pasted && char === '\t' ? '    ' : char;
+  }
+  // Timer redraws still run while the input echo is pending.
+  if (pasteEchoMs > 0 && input !== priorInput) {
+    clearTimeout(echoTimer);
+    if (input) echoTimer = setTimeout(() => { echoedInput = input; draw(); }, pasteEchoMs);
+    else echoedInput = '';
   }
   if (args.includes('--delayed-setting-redraw') && /^\/(?:model|effort)$/.test(input)) setTimeout(draw, 320);
   else draw();

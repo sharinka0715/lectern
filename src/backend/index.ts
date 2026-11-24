@@ -1,6 +1,6 @@
 import { readActivityFiles, decodeActivityFiles } from './activity-files';
 import { decodeTaskList, taskListFrame } from './native-task-list';
-import { nativeTaskPanel } from '../core/native-task-screen';
+import { nativeTaskPanel, taskRowsStart } from '../core/native-task-screen';
 import type { ConversationTask } from '../shared/types';
 import type { ActivityReadTarget, ActivitySample } from '../core/session-activity';
 import type { JsonRecord } from '../core/jsonl';
@@ -1735,11 +1735,17 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
 trap ${q(this.tmux('delete-buffer', '-b', buffer) + ' 2>/dev/null || true')} 0
 ${this.tmux('paste-buffer', '-p', '-r', '-d', '-b', buffer, '-t', paneId)}
 sleep 0.1`, false, undefined, true);
-        // tmux acknowledges the paste before Claude paints it. Wait only while
-        // we still see the exact old frame, and never repeat the paste or Enter.
+        // tmux acknowledges the paste before Claude paints it. A timer tick can
+        // repaint the old draft, so ignore goal and task rows only while waiting.
         // A changed draft, permission prompt or foreground process ends the wait.
+        const frameForEcho = (viewport: string) => {
+          const rows = viewport.split('\n');
+          const end = taskRowsStart(rows.map(row => stripTerminalEscapes(row).replace(/\u00a0/g, ' ')));
+          return goalRowText(rows.slice(0, end).join('\n'));
+        };
+        const idleFrame = frameForEcho(idleViewport);
         for (const delayMs of [60, 120, 240]) {
-          if (pasted.viewport !== idleViewport) break;
+          if (frameForEcho(pasted.viewport) !== idleFrame) break;
           diagnostic.event('backend.settings.await_redraw', { kind, paneId, delayMs });
           await new Promise(resolve => setTimeout(resolve, delayMs));
           pasted = await read(false);

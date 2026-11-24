@@ -133,6 +133,37 @@ const listAgents = (workspace: Workspace, state: string) => mkdir(workspace.clau
   .then(() => writeFile(join(workspace.claudeDir!, 'screen-state'), state));
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+for (const timer of ['goal', 'background task'] as const) {
+  test(`inline mode waits for the delayed paste echo with a ticking ${timer} timer`, { skip: process.platform === 'win32', timeout: 30_000 }, async t => {
+    const mockEnv = { LECTERN_MOCK_PASTE_ECHO_MS: '150', LECTERN_MOCK_GOAL_TICK_MS: '25', LECTERN_MOCK_GOAL_EVAL_MS: '100', LECTERN_MOCK_STREAM_MS: '60' };
+    const saved = Object.keys(mockEnv).map(key => [key, process.env[key]] as const);
+    Object.assign(process.env, mockEnv);
+    t.after(() => { for (const [key, value] of saved)
+      if (value === undefined) delete process.env[key]; else process.env[key] = value; });
+    await withFixture(t, true, async (backend, workspace, capture) => {
+      if (timer === 'background task') await listAgents(workspace, 'ready agents:5@25');
+      const session = await backend.createSession(workspace), paneId = session.paneId!;
+      const waitFor = async (pattern: RegExp) => {
+        let screen = await capture(paneId);
+        for (let i = 0; i < 120 && !pattern.test(screen); i++) { await pause(25); screen = await capture(paneId); }
+        assert.match(screen, pattern);
+      };
+      if (timer === 'goal') {
+        await waitFor(/shortcuts/u);
+        await backend.sendMessage(workspace, session.id, '/goal Pause after two checks goal-pause');
+        await waitFor(/Goal paused · goal checks kept finding[\s\S]*◎ \/goal active \(\d+s\)/u);
+      } else {
+        await waitFor(/第 5 个子代理 +\d+s/u);
+      }
+      const ticket = backend.bindSettingChoices(workspace, session.id, paneId, await listChoices(backend, workspace, 'model'));
+      const choice = ticket.options.find(option => option.label === 'Haiku')!;
+      const verified = await backend.setSessionSetting(workspace, session.id, ticket.token, choice.id, undefined, 'inline');
+      assert.equal(verified.options.find(option => option.current)?.label, 'Haiku');
+      assert.match(await capture(paneId), /❯ \/model haiku\n\s+⎿ Set model to Haiku 5\.5 and saved as your default/u);
+    });
+  });
+}
+
 test('with subagents listed and ticking below the input box, inline and menu switches type, verify and read their receipt', { skip: process.platform === 'win32', timeout: 60_000 }, async t => {
   await withFixture(t, true, async (backend, workspace, capture) => {
     await listAgents(workspace, 'ready agents:5');
