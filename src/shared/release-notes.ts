@@ -45,6 +45,8 @@ export const releaseNotes: ReleaseNote[] = [
         "Claude Code's /goal works from the chat box, clearing too during a reply; a pill above the input box shows the goal in progress, being checked, met or ended."],
       ['设置「外观」新增「界面行距」（80%–150%）：调整侧栏、菜单、设置、活动卡片和状态栏等处各行的高度和上下留白，不改变字号。',
         'New "Row spacing" setting under Appearance (80%–150%): the height and vertical padding of rows in the sidebar, menus, Settings, cards and the status bar, with the text size unchanged.'],
+      ['设置「会话」新增可选开关（默认关闭）：用 Claude Code hooks 读取问答和权限框的原始数据，对话框高于终端时也能出卡。',
+        'An optional Session setting, off by default, reads questions and permission prompts from Claude Code hooks, so even a dialog taller than the terminal gets a card.'],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',

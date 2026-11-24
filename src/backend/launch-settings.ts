@@ -6,6 +6,9 @@ import { promptCacheTtls, type PromptCacheTtlPreset } from '../shared/prompt-cac
  * only; those files are never written. */
 export function launchSettings(options: {
   statusLine?: object; enableWorkflows: boolean; promptCacheTtlPreset?: PromptCacheTtlPreset;
+  /** Recording hooks for question and permission dialogs (dialog-hooks.ts), only when the user
+   * turned them on, and only for a conversation's own process: none otherwise, not even a key. */
+  hooks?: object;
 }): Record<string, unknown> {
   const env = promptCacheEnv(options.promptCacheTtlPreset);
   return {
@@ -30,6 +33,7 @@ export function launchSettings(options: {
     // (core/auto-mode-screen.ts). A user who wants the local check sets
     // CLAUDE_CODE_AUTO_MODE_SERVER=0 in their shell or settings themselves.
     ...(env && { env }),
+    ...(options.hooks && { hooks: options.hooks }),
   };
 }
 

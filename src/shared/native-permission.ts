@@ -27,6 +27,9 @@ export interface NativePermissionScreen {
   notice?: string[];
   /** 'native-dialog': what Esc does there ("cancel"), when its key hints offer Esc. */
   escape?: string;
+  /** A tool's dialog read with Lectern's recording hook (core/permission-hook.ts): the tool and its
+   * input as Claude Code handed them to the PermissionRequest hook, long text cut for display. */
+  call?: { toolName: string; input: Record<string, unknown> };
 }
 export type PermissionAction = { kind: 'choose'; number: number } | { kind: 'cancel' };
 /** The dialog as offered to the window, bound to the frame it was read from. */

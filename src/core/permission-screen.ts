@@ -37,12 +37,47 @@ export function parsePermissionScreen(viewport: string, options: { generic?: boo
   return known ?? (options.generic ? nativeDialog(lines) : undefined);
 }
 
+/** A tool's permission dialog by its bottom rows alone (question, choices, footer), as a dialog
+ * taller than the pane leaves it; only with the call's input from the PermissionRequest hook
+ * (core/permission-hook.ts), which says what is asked. */
+export function parsePermissionBottom(viewport: string): Pick<NativePermissionScreen, 'question' | 'options' | 'footer'> | undefined {
+  const lines = stripTerminalEscapes(viewport).split('\n').map(line => line.replace(/\s+$/u, ''));
+  let end = lines.length - 1;
+  while (end >= 0 && !lines[end]) end--;
+  const bottom = dialogBottom(lines, end);
+  return bottom ? { question: bottom.question.join(' '), options: bottom.options, footer: bottom.footer } : undefined;
+}
+
 function toolDialog(lines: string[]): NativePermissionScreen | undefined {
   let end = lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
+  const bottom = dialogBottom(lines, end);
+  if (bottom === null) return questionTitled(lines, end);
+  if (!bottom) return;
+  const { options, footer, question, index } = bottom;
+  let top = index;
+  while (top >= 0 && !fullRule.test(lines[top])) top--;
+  if (top < 0 || end - top > 200) return;
+  const body = lines.slice(top + 1, index + 1).map(line => line.replace(/^ /u, ''));
+  const dashes = body.flatMap((line, i) => dashedRule.test(line) ? [i] : []);
+  if (dashes.length && dashes.length !== 2) return;
+  const head = (dashes.length ? body.slice(0, dashes[0]) : body).filter(line => line.trim());
+  const title = head[0]?.trim();
+  if (!title || title.length > 120) return;
+  // Inside the box the lines keep their own indentation (diffs, file previews).
+  const content = dashes.length ? body.slice(dashes[0] + 1, dashes[1]) : [];
+  // Below the box only a note may follow (auto mode asking after blocked actions, or because it can't check).
+  const notice = dashes.length ? quotedNotice(body.slice(dashes[1] + 1)) : undefined;
+  if (notice === null) return;
+  return { title, subtitle: head.slice(1).map(line => line.trim()), content, question: question.join(' '), options, footer, ...(notice && { notice }) };
+}
+
+/** A tool dialog's bottom rows: footer, choices and the row above them (`index`); null when the
+ * last row is not the tool dialog's footer, undefined when the choices do not read. */
+function dialogBottom(lines: string[], end: number) {
   // The dialog occupies the bottom of the screen in place of the input box.
   const footer = lines[end]?.replace(/^ /u, '');
-  if (!footer || !lines[end].startsWith(' ') || !footerRow.test(footer)) return questionTitled(lines, end);
+  if (!footer || !lines[end].startsWith(' ') || !footerRow.test(footer)) return null;
   // Options, bottom-up: a numbered row, or a deeper-indented continuation of the row above;
   // or only unnumbered rows, numbered here in order (the driver moves by arrows, not digits).
   const options: NativePermissionOption[] = [];
@@ -71,21 +106,7 @@ function toolDialog(lines: string[]): NativePermissionScreen | undefined {
   const question: string[] = [];
   for (; index >= 0 && lines[index].startsWith(' ') && lines[index].trim() && !dashedRule.test(lines[index].trim()); index--) question.unshift(lines[index].trim());
   if (!question.length || !question.at(-1)!.endsWith('?')) return;
-  let top = index;
-  while (top >= 0 && !fullRule.test(lines[top])) top--;
-  if (top < 0 || end - top > 200) return;
-  const body = lines.slice(top + 1, index + 1).map(line => line.replace(/^ /u, ''));
-  const dashes = body.flatMap((line, i) => dashedRule.test(line) ? [i] : []);
-  if (dashes.length && dashes.length !== 2) return;
-  const head = (dashes.length ? body.slice(0, dashes[0]) : body).filter(line => line.trim());
-  const title = head[0]?.trim();
-  if (!title || title.length > 120) return;
-  // Inside the box the lines keep their own indentation (diffs, file previews).
-  const content = dashes.length ? body.slice(dashes[0] + 1, dashes[1]) : [];
-  // Below the box only a note may follow (auto mode asking after blocked actions, or because it can't check).
-  const notice = dashes.length ? quotedNotice(body.slice(dashes[1] + 1)) : undefined;
-  if (notice === null) return;
-  return { title, subtitle: head.slice(1).map(line => line.trim()), content, question: question.join(' '), options, footer, ...(notice && { notice }) };
+  return { options, footer, question, index };
 }
 
 /** A note between the box and the question, as paragraphs: lines quoted with "│", or
@@ -227,13 +248,14 @@ export const focusedPermission = (screen: NativePermissionScreen) => screen.opti
  * happened between the read and the key, all three tries on a slow Mac or a slow link.
  * Undefined (the whole frame) when no rule reproduces the reading.
  */
-export function permissionGuardLines(viewport: string, screen: NativePermissionScreen, options: { generic?: boolean } = {}): number | undefined {
+export function permissionGuardLines(viewport: string, screen: NativePermissionScreen, options: { generic?: boolean } = {},
+  read: (viewport: string) => NativePermissionScreen | undefined = rows => parsePermissionScreen(rows, options)): number | undefined {
   if (!viewport.endsWith('\n')) return;
   const rows = viewport.split('\n').slice(0, -1), wanted = JSON.stringify(screen);
   for (let top = rows.length - 1; top >= 0; top--) {
     // The /goal panel's rule is "▔▔▔…" (goal-screen.ts), possibly with a notice at its end.
     const rule = stripTerminalEscapes(rows[top]).replace(/\s+$/u, '');
     if (!fullRule.test(rule) && !/^▔{20,}/u.test(rule)) continue;
-    if (JSON.stringify(parsePermissionScreen(rows.slice(top).join('\n') + '\n', options)) === wanted) return rows.length - top;
+    if (JSON.stringify(read(rows.slice(top).join('\n') + '\n')) === wanted) return rows.length - top;
   }
 }

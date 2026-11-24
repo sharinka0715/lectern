@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Coins, MessageSquareWarning, ShieldAlert, ShieldQuestion, Terminal, X } from 'lucide-react';
 import type { NativePermissionOption, PermissionAction, PermissionSnapshot } from '../shared/native-permission';
 import { LinkedText } from './LinkedText';
+import { ToolInput } from './ToolInput';
 import './question-card.css';
 import { t } from '../shared/i18n';
 
@@ -11,6 +12,8 @@ interface Props {
   unconfirmed?: boolean;
   onAction(action: PermissionAction): Promise<void>;
   onViewTerminal(): void;
+  /** Opens a file named in the call's input (read with the recording hook). */
+  onOpenPath?(path: string): void;
 }
 
 /** Diff rows in Claude Code's edit dialog: "  12 -old" / "  12 +new". */
@@ -31,7 +34,7 @@ function keyedCopy(kind: PermissionSnapshot['kind'], option: NativePermissionOpt
 }
 
 /** A projection of Claude Code's tool permission dialog; every click is checked against the live screen. */
-export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onViewTerminal }: Props) {
+export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onViewTerminal, onOpenPath }: Props) {
   const [result, setResult] = useState<{ token: string; error?: string }>();
   const inFlight = useRef(false);
   const root = useRef<HTMLElement>(null);
@@ -81,8 +84,13 @@ export function PermissionCard({ permission: p, busy, unconfirmed, onAction, onV
       <p lang="en"><strong>{p.title}</strong></p>
       {p.subtitle.map((line, index) => <p key={index} lang="en"><LinkedText text={line} /></p>)}
       {generic && <p lang="en" className="permission-native-footer">{p.footer}</p>}
-    </figure> : p.subtitle.map((line, index) => <p key={index} className="question-guidance permission-subtitle">{line}</p>)}
-    {p.content.length > 0 && <figure className="question-preview permission-content">
+    </figure> : p.subtitle.filter(line => line !== p.call?.input.description) // the call's input below shows it already
+      .map((line, index) => <p key={index} className="question-guidance permission-subtitle">{line}</p>)}
+    {/* Read with the recording hook: the call's whole input in place of what the dialog's box fits. */}
+    {p.call ? <figure className="question-preview permission-call" data-permission-hook-tool={p.call.toolName}>
+      <figcaption>{t('cards.permissionCallInput', { tool: p.call.toolName })}</figcaption>
+      <ToolInput tool={{ id: p.toolUseId ?? '', name: p.call.toolName, input: JSON.stringify(p.call.input) }} onOpen={onOpenPath ?? (() => {})} />
+    </figure> : p.content.length > 0 && <figure className="question-preview permission-content">
       <pre>{p.content.map((line, index) => <span key={index} className={diffKind(line) ? `permission-${diffKind(line)}` : undefined}>{line}{'\n'}</span>)}</pre>
     </figure>}
     {p.notice?.map((line, index) => <p key={index} className="question-guidance permission-notice">{line}</p>)}

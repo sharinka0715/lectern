@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { NativeStatus } from '../backend/native-presence';
 import type { NativeQuestionScreen } from '../shared/native-question';
+import type { AskedQuestion } from '../core/question-hook';
 import type { QuestionSnapshot } from '../shared/question-action';
 import type { ChatMessage, TranscriptPosition } from '../shared/types';
 import type { SessionSettingsHandle } from './session-settings-cache';
@@ -14,6 +15,8 @@ export interface WatchedQuestion {
   position?: TranscriptPosition;
   consumed: boolean;
   unconfirmed?: boolean;
+  /** The call's input when the card was read with the recording hook (core/question-hook.ts). */
+  asked?: AskedQuestion[];
 }
 
 /** 只在当前回合中关联尚未收到结果的调用。旧回合、工具输出和用户粘贴的菜单均不能提供问答身份。 */

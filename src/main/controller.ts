@@ -24,6 +24,9 @@ import { focusedSettingCommandHistory, isIdleEmptyComposer, observeUltracode } f
 import { parseExecutionMode } from '../core/session-telemetry';
 import { CompactSamples, parseTurnProgress, showsCompactCompletion } from '../core/turn-progress';
 import { parseQuestionScreen } from '../core/question-screen';
+import { readHookQuestion } from '../core/question-hook';
+import { readHookPermission } from '../core/permission-hook';
+import { dialogHookStatus, hookPermissionCall, hookQuestionCall } from './session-hooks';
 import { permissionLayout } from '../core/permission-screen';
 import { earlyPermission, observePermission, pendingToolId, permissionDialog, type WatchedPermission } from './session-permission';
 import { PermissionInputUnconfirmed } from '../backend/native-permission-actions';
@@ -75,6 +78,8 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   goalProbe?: { record?: JsonRecord };
   /** Reads in a row with the goal indicator above the input box, and with the input box but no indicator. */
   goalPresent?: number; goalAbsent?: number;
+  /** The recording hooks' state as last logged (controller.hooks.status). */
+  hookState?: string;
   screenHash?: string; screenCaptureId?: string; viewportHash?: string; viewportCaptureId?: string; messagesHash?: string; messagesCaptureId?: string };
 
 interface TurnMemory {
@@ -742,6 +747,14 @@ export class Controller extends EventEmitter {
           this.statusLines.set(handle, statusLine);
         } else statusLine = this.statusLines.get(handle);
       }
+      // The recording hooks of this conversation's process (session-hooks.ts), logged when that changes.
+      const dialogHooks = dialogHookStatus((this.backend.dialogHooksEnabled?.() ?? false), result.dialogHooks, result.active);
+      const hookState = JSON.stringify([dialogHooks.state, 'reason' in dialogHooks ? dialogHooks.reason : undefined, result.dialogHooks?.started?.source]);
+      if (watch.hookState !== hookState) {
+        watch.hookState = hookState;
+        diagnostic.event('controller.hooks.status', { ...dialogHooks, enabled: (this.backend.dialogHooksEnabled?.() ?? false), records: result.dialogHooks?.records.length,
+          rejected: result.dialogHooks?.rejected, started: result.dialogHooks?.started });
+      }
       const executionMode = result.active ? parseExecutionMode(result.viewport ?? result.screen) : undefined;
       if (executionMode && watch.settingsHandle) this.executionModes.set(watch.settingsHandle, executionMode);
       // The composer border shows Ultracode; a named session's title hides it (undefined).
@@ -783,12 +796,18 @@ export class Controller extends EventEmitter {
         watch.question = watch.questionOwned = undefined;
       if (questionReadCurrent) {
         const waiting = result.nativeStatus === 'waiting' && (!result.nativeWaitingFor || result.nativeWaitingFor === 'input needed');
-        const owner = (questionScreen || waiting) && pendingQuestionId(messages) || undefined;
+        let owner = (questionScreen || waiting) && pendingQuestionId(messages) || undefined;
         // Before the transcript has the call, Claude Code's own record of waiting for an answer
         // vouches for a complete question dialog in place of the input box (earlyQuestion).
         const asking = result.nativeStatus === 'waiting' && result.nativeWaitingFor === 'input needed';
-        const screen = questionScreen || ((owner && waiting || asking) && result.active && !result.directoryTrust && !result.hasMore && result.viewport
-          ? parseQuestionScreen(result.viewport, {pendingToolUse:true}) : undefined);
+        // With the recording hooks on: the pending call's own input reads the dialog (its text from the
+        // input, the user's state from the screen, its top possibly out of the pane), and names its call.
+        const hooked = hookQuestionCall(result.dialogHooks, messages);
+        const hookScreen = hooked && (asking || owner === hooked.toolUseId && (!result.nativeStatus || waiting)) && result.active
+          && !result.directoryTrust && !result.hasMore && result.viewport ? readHookQuestion(result.viewport, hooked.asked) : undefined;
+        if (hookScreen) owner = hooked!.toolUseId;
+        const screen = hookScreen ?? (questionScreen || ((owner && waiting || asking) && result.active && !result.directoryTrust && !result.hasMore && result.viewport
+          ? parseQuestionScreen(result.viewport, {pendingToolUse:true}) : undefined));
         // Claude Code writes a deferred call together with its result: a newly answered question
         // means the card shown so far was answered; its frames still on screen are late (ownQuestion).
         const answered = answeredQuestionId(messages), newlyAnswered = answered !== undefined && answered !== watch.questionAnswered;
@@ -800,9 +819,11 @@ export class Controller extends EventEmitter {
         watch.question = screen && (owner && (!result.nativeStatus || waiting) || early) && handle?.panePid && !settingBusy && !trustBusy &&
           result.session.status !== 'error'
           ? observeQuestion(watch.question, screen, handle, owner, result.transcriptPosition) : undefined;
+        // The driver reads every frame the way this card was read.
+        if (watch.question) watch.question.asked = hookScreen ? hooked!.asked : undefined;
         if (watch.question && (watch.question.snapshot.interactionId !== before?.snapshot.interactionId || watch.question.owner !== beforeOwner))
           diagnostic.event('controller.question.card', { cardId: watch.question.snapshot.interactionId, toolUseId: watch.question.owner,
-            adopted: watch.question === before, nativeWaitingFor: result.nativeWaitingFor });
+            adopted: watch.question === before, nativeWaitingFor: result.nativeWaitingFor, hooks: !!hookScreen });
       }
       const question = watch.question?.snapshot;
       if (previousHandle !== handle || result.reset || !result.active || watch.snapshot.terminalControl || result.directoryTrust || question) watch.permission = watch.permissionOwned = undefined;
@@ -811,9 +832,15 @@ export class Controller extends EventEmitter {
         // text in the reply cannot. Before the transcript has the call, Claude Code's own record
         // of waiting for it vouches for it (earlyPermission); while it waits, a native dialog
         // Lectern does not know is read by its common layout (permissionDialog).
-        const screen = (!result.nativeStatus || result.nativeStatus === 'waiting') && result.active && !result.directoryTrust && !result.hasMore && result.viewport
+        const dialog = (!result.nativeStatus || result.nativeStatus === 'waiting') && result.active && !result.directoryTrust && !result.hasMore && result.viewport
           ? permissionDialog(result.viewport, result.nativeStatus) : undefined;
-        const owner = screen && pendingToolId(messages);
+        // With the recording hooks on: a tool's dialog shows the call's whole input from its
+        // PermissionRequest hook, and reads by its bottom rows when its top is out of the pane.
+        const hooked = !dialog?.kind && result.nativeStatus === 'waiting' && result.nativeWaitingFor === 'permission prompt' && result.active
+          && !result.directoryTrust && !result.hasMore && result.viewport ? hookPermissionCall(result.dialogHooks, messages) : undefined;
+        const hookScreen = hooked && readHookPermission(result.viewport!, hooked);
+        const screen = hookScreen || dialog;
+        const owner = screen && (hookScreen && hooked!.toolUseId || pendingToolId(messages));
         const layout = screen && permissionLayout(screen);
         if (owner) watch.permissionOwned = layout;
         else if (layout !== watch.permissionOwned) watch.permissionOwned = undefined;
@@ -821,9 +848,10 @@ export class Controller extends EventEmitter {
         const before = watch.permission, beforeOwner = before?.owner;
         watch.permission = screen && (owner || early) && handle?.panePid && !settingBusy && !trustBusy && result.session.status !== 'error'
           ? observePermission(watch.permission, screen, handle, owner || undefined, result.transcriptPosition) : undefined;
+        if (watch.permission) watch.permission.call = hookScreen ? { toolName: hooked!.toolName, input: hooked!.input } : undefined;
         if (watch.permission && (watch.permission !== before || watch.permission.owner !== beforeOwner))
           diagnostic.event('controller.permission.card', { cardId: watch.permission.snapshot.cardId, toolUseId: watch.permission.owner,
-            adopted: watch.permission === before, nativeWaitingFor: result.nativeWaitingFor, kind: watch.permission.screen.kind });
+            adopted: watch.permission === before, nativeWaitingFor: result.nativeWaitingFor, kind: watch.permission.screen.kind, hooks: !!hookScreen });
       }
       const permission = watch.permission?.snapshot;
       // Progress never falls back to scrollback. Keep at most one live sample
@@ -911,7 +939,7 @@ export class Controller extends EventEmitter {
           (['model', 'effort'] as const).find(kind => focusedSettingCommandHistory(result.viewport!, `/${kind}`) !== undefined) : undefined,
         settingBusy,
         trustBusy, terminalControl: watch.snapshot.terminalControl,
-        statusLineManaged, statusLine, endpointBilling: result.endpointBilling,
+        statusLineManaged, statusLine, endpointBilling: result.endpointBilling, dialogHooks,
         settings: handle ? this.settingsCache.state(handle, this.catalogs.get(watch.workspace), statusLine) : undefined,
         executionMode: watch.settingsHandle ? this.executionModes.get(watch.settingsHandle) : undefined,
         executionModeLastObserved: !!watch.settingsHandle && !executionMode && this.executionModes.has(watch.settingsHandle),
@@ -1015,7 +1043,7 @@ export class Controller extends EventEmitter {
     watch.snapshot = { ...watch.snapshot, questionBusy: true };
     this.publish(watch, 'question-start');
     try {
-      await this.backend.answerQuestion(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent);
+      await this.backend.answerQuestion(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent, current.asked);
     } catch (error) {
       if (error instanceof QuestionInputUnconfirmed) current.unconfirmed = true;
       // Refused before any key: the card stands unless the next read says otherwise (rereadOnRefusal).
@@ -1050,7 +1078,7 @@ export class Controller extends EventEmitter {
     watch.snapshot = { ...watch.snapshot, permissionBusy: true };
     this.publish(watch, 'permission-start');
     try {
-      await this.backend.answerPermission(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent);
+      await this.backend.answerPermission(watch.workspace, sessionId, paneId, panePid, current.screen, action, current.handle, current.position, assertCurrent, current.call);
     } catch (error) {
       if (error instanceof PermissionInputUnconfirmed) current.unconfirmed = true;
       if (error instanceof TranscriptChangedNoKeys) current.consumed = false;

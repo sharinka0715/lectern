@@ -1,6 +1,9 @@
 // npm run build && node scripts/permission-ui-e2e.mjs [packaged-executable]
 // Installed Claude Code with an isolated CLAUDE_CONFIG_DIR, tmux and a loopback
 // mock model that asks for tools needing permission. No real model requests.
+// With LECTERN_E2E_DIALOG_HOOKS=1 (permission-hooks-e2e) Settings → Session's recording hooks are on:
+// the cards then show each call's whole input from its PermissionRequest hook; a dialog Claude Code
+// asks without one ("… so this one needs your approval") is read off the screen as before.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
@@ -9,6 +12,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
+import { DIALOG_HOOKS, hookStatus, setDialogHooks } from './fixtures/dialog-hooks.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-perm-ui-')));
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
@@ -62,7 +66,7 @@ try {
     env: { ANTHROPIC_API_KEY: 'perm-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'perm', name: '权限确认', kind: 'local', cwd, claudeDir: config },
     { id: 'auto', name: '自动检查', kind: 'local', cwd: autoCwd, claudeDir: autoConfig }]));
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0' };
+  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', ...DIALOG_HOOKS && { TMPDIR: root } };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   // Lectern's default: nothing moves auto mode's check off the server (manual mode in the first folder has none).
   delete env.CLAUDE_CODE_AUTO_MODE_SERVER;
@@ -70,6 +74,7 @@ try {
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
   const page = await app.firstWindow();
   page.setDefaultTimeout(30000);
+  if (DIALOG_HOOKS) await setDialogHooks(page, true);
   // A new chat: Claude Code starts with its first message (sent in step 1).
   await page.getByRole('button', { name: '在 权限确认 新建对话' }).click();
   const tmux = (...a) => { try { return execFileSync('tmux', a, { env: { ...process.env, TMUX_TMPDIR: root }, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); } catch { return ''; } };
@@ -113,7 +118,9 @@ try {
   // Auto mode is off for this user, so the session asks in manual mode.
   assert.equal(await page.locator('.session-execution-mode').getAttribute('data-execution-mode'), 'default');
   assert.match(await card.innerText(), /Bash command/);
-  assert.match(await card.locator('.permission-content').innerText(), /echo hello > greeting\.txt/);
+  // With the hooks the card shows the call's whole input (its PermissionRequest) in place of the dialog's box.
+  assert.match(await card.locator(DIALOG_HOOKS ? '.permission-call[data-permission-hook-tool="Bash"]' : '.permission-content').innerText(), /echo hello > greeting\.txt/);
+  if (DIALOG_HOOKS) { await mkdir('test-results', { recursive: true }); await card.screenshot({ path: path.join('test-results', 'permission-hooks-card.png') }); }
   const labels = await card.locator('[data-permission-option] strong').allInnerTexts();
   console.error('BASH OPTIONS', JSON.stringify(labels));
   assert.equal(labels[0], 'Yes');
@@ -126,6 +133,7 @@ try {
   await ask('写个文件');
   assert.match(await card.innerText(), /Create file/);
   assert.match(await card.innerText(), /Do you want to create new\.md\?/);
+  if (DIALOG_HOOKS) assert.match(await card.locator('.permission-call[data-permission-hook-tool="Write"]').innerText(), /# New/);
   const writeLabels = await card.locator('[data-permission-option] strong').allInnerTexts();
   console.error('WRITE OPTIONS', JSON.stringify(writeLabels));
   await card.locator(`[data-permission-option="${writeLabels.length}"]`).click();
@@ -204,6 +212,8 @@ try {
     // Staying: this action now asks like any tool, "No" focused first; approve it.
     await card.waitFor();
     assert.match(await card.innerText(), /Auto mode can't check actions in this session, so this one needs your approval/);
+    // Claude Code asks this one without a PermissionRequest: the screen alone, as without hooks.
+    assert.equal(await card.locator('.permission-call').count(), 0, 'no hook data for a dialog without its hook');
     assert.deepEqual(await card.locator('[data-permission-option] strong').allInnerTexts(), ['No', 'Yes']);
     assert.equal(await card.locator('[data-permission-option="1"]').getAttribute('aria-pressed'), 'true');
     await card.locator('[data-permission-option="2"]').click();
@@ -218,7 +228,9 @@ try {
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '发送给 Claude 的消息', null, { timeout: 30000 });
     assert.equal(existsSync(path.join(autoCwd, 'again.txt')), false);
   }
-  console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true, autoModeUnavailable: asksUnavailable ? { stayed: true, left: true } : 'skipped' }));
+  const hooks = DIALOG_HOOKS ? (await hookStatus(page, 'active', 20_000, path.join('test-results', 'settings-dialog-hooks.png'))).state : undefined;
+  if (DIALOG_HOOKS) assert.equal(hooks, 'active');
+  console.log(JSON.stringify({ ok: true, approved: true, rejected: true, cancelled: true, autoModeUnavailable: asksUnavailable ? { stayed: true, left: true } : 'skipped', hooks }));
 } finally {
   await app?.close().catch(() => {});
   try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}

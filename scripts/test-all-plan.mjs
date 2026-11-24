@@ -23,7 +23,7 @@ export const stepSeconds = {
   'composer-chips-e2e': 22, 'composer-focus-e2e': 30, 'attachment-thumbnail-e2e': 7, 'subagent-column-e2e': 22,
   'task-column-e2e': 17, 'quit-dialog-e2e': 35,
   'foreground-shell-e2e': 11, 'permission-ui-e2e': 24, 'native-dialog-ui-e2e': 12, 'question-early-e2e': 12,
-  'background-work-e2e': 16, 'cache-ttl-e2e': 26,
+  'background-work-e2e': 16, 'cache-ttl-e2e': 26, 'question-early-hooks-e2e': 13, 'permission-hooks-e2e': 26,
 };
 /** A step missing from the table (new or renamed) is assumed to take about the mean e2e time. */
 export const defaultSeconds = 15;
@@ -76,7 +76,7 @@ export const oneAtATime = new Set([
  * drive tmux and mock TUIs that redraw every 40–250 ms (screen guards refused), the real CLI
  * did not take the answer of a permission or billing-notice card, the resume bar's layout
  * measurements moved, and the 120,000-file index missed its time limits. */
-export const runsAlone = new Set(['unit', 'history-resume-bar-e2e', 'permission-ui-e2e', 'native-dialog-ui-e2e', 'file-index-e2e']);
+export const runsAlone = new Set(['unit', 'history-resume-bar-e2e', 'permission-ui-e2e', 'permission-hooks-e2e', 'native-dialog-ui-e2e', 'file-index-e2e']);
 
 /** Steps that do not apply on macOS or Linux, each with its reason. */
 const skipped = { darwin: {}, linux: {} };

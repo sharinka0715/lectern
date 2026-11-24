@@ -39,6 +39,8 @@ import { KeybindingUnconfirmed, NativeKeybindings } from './native-keybindings';
 import { effortFrameGuard, keysNotSent, NativeSettings, NavigationKeyNotSent, SessionSettingError, TranscriptChangedNoKeys, type SettingChoices, type SettingDriver } from './native-settings';
 import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
 import { launchSettings } from './launch-settings';
+import type { DialogHookObservation } from '../shared/dialog-hooks';
+import { DialogHookStore, dialogHookDir, dialogHookOption, dialogHookPrefix, dialogHookSettings, readDialogHooks, removeDialogHookDir } from './dialog-hooks';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
 import { composerFrameGuard, animatedLabelText, goalRowText, guardWindow } from './composer-frame-guard';
 import { notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
@@ -47,6 +49,8 @@ import { performPermissionAction } from './native-permission-actions';
 import type { NativePermissionScreen, PermissionAction } from '../shared/native-permission';
 import type { QuestionAction } from '../shared/question-action';
 import type { NativeQuestionScreen } from '../shared/native-question';
+import type { AskedQuestion } from '../core/question-hook';
+import type { PermissionCall } from '../core/permission-hook';
 import { forkReceipt, hasForkLineage, submitNativeFork } from './native-fork';
 import type { TurnAction } from '../shared/turn-controls';
 import { turnComposer, rewindGuardLines } from '../core/turn-controls';
@@ -70,9 +74,9 @@ const tmuxKey = (key: TerminalKey) => key === 'Backspace' ? 'BSpace' : key === '
 const SEP = '|~lectern~|';
 // Suffix of an input's not-sent receipt when the transcript revision guard (not the screen) refused it.
 const RECORD_CHANGED = '_RECORD';
-const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_config_override}', '#{@lectern_fork_origin}', '#{pane_title}'].join(SEP);
+const PANE_FORMAT = ['#{pane_id}', '#{pane_pid}', '#{pane_current_path}', '#{session_name}', '#{pane_current_command}', '#{pane_dead}', '#{@lectern_session_id}', '#{@lectern_mapping}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_width}', '#{pane_height}', '#{cursor_x}', '#{cursor_y}', '#{pane_dead_status}', '#{pane_dead_signal}', '#{window_id}', '#{pid}:#{start_time}', `#{=255:${statusLineMarker}}`, '#{@lectern_config_override}', '#{@lectern_fork_origin}', `#{=1024:${dialogHookOption}}`, '#{pane_title}'].join(SEP);
 interface ProcessRow { pid: number; ppid: number; pgid: number; tpgid: number; args: string }
-interface InternalPane extends PaneInfo { forkOrigin?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; presenceTorn?: boolean; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
+interface InternalPane extends PaneInfo { forkOrigin?: string; /** The launch's recording-hook folder as the pane option names it (dialog-hooks.ts). */ hooksDir?: string; configOverride?: boolean; pid: number; claudePid?: number; native?: NativePresence; presenceFingerprint?: string; presenceTorn?: boolean; boundSessionId?: string; identityError?: string; nativeTarget: string; serverInstance?: string; statusMarker?: string; dead: boolean; deadStatus?: number; deadSignal?: string; boundCwd?: string; boundClaudeDir?: string; width: number; height: number; cursorX: number; cursorY: number }
 interface Location { tmuxVersion: string; cwd: string; cwdAliases: string[]; claudeDir: string; projectDirs: string[]; /** `uname -s` of the target. */ os?: string }
 interface SettingRuntime { panePid?: number; instanceId?: string }
 function runtimeIdentity(workspace: Workspace, location: Location, pane?: InternalPane): string | undefined {
@@ -87,6 +91,8 @@ export interface BackendOptions { historyIndexStore?: HistoryIndexDiskStore; tmu
   reuseSshConnections?: boolean }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
 export interface ReadResult { /** Asked for with `listSubagents`: every subagent of the session (subagent-files.ts). */ subagents?: SubagentListing;
+  /** What this launch's recording hooks delivered, when it has them (dialog-hooks.ts). */
+  dialogHooks?: DialogHookObservation;
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
   sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean };
   /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
@@ -185,6 +191,7 @@ export class Backend {
   // may finish verification/resume but may never submit a second slash command.
   private readonly forks = new Map<string, { source: InternalPane; known: Set<string>; scope: string; forkId?: string; completed?: boolean }>();
   private readonly settings = new NativeSettings();
+  private readonly dialogHooks = new DialogHookStore();
   private readonly directoryTrust = new NativeDirectoryTrust();
   private readonly autoModeNudges = new Map<string, { attempts: number; running: boolean }>();
   private readonly loggedRuntimes = new Set<string>();
@@ -204,6 +211,8 @@ export class Backend {
   private launchPreferences = launchPreferences(undefined);
   /** Applies to processes Lectern starts from now on; running ones keep theirs. */
   setLaunchPreferences(preferences: Partial<LaunchPreferences>): void { this.launchPreferences = launchPreferences(preferences); }
+  /** Whether processes started from now on get the recording hooks (dialog-hooks.ts). */
+  dialogHooksEnabled(): boolean { return this.launchPreferences.dialogHooks; }
   private key(workspace: Workspace, sessionId: string): string { return `${workspace.id}:${sessionId}`; }
   private revision(workspaceId: string): number { return this.workspaceRevisions.get(workspaceId) ?? 0; }
   private configRevision(workspaceId: string): number { return this.workspaceConfigRevisions.get(workspaceId) ?? 0; }
@@ -271,8 +280,8 @@ ${presenceReadScript(location.claudeDir)}`;
     let registered = this.registeredPanes.get(workspace.id);
     if (!registered) this.registeredPanes.set(workspace.id, registered = new Map());
     const panes: InternalPane[] = rawPanes.split('\n').filter(Boolean).flatMap(line => {
-      const parts = line.split(SEP); if (parts.length < 21 || !/^%\d+$/.test(parts[0])) return [];
-      const [id, pid, cwd, sessionName, command, dead, rawId, mapping, boundCwd, boundClaudeDir, width, height, cursorX, cursorY, deadStatus, deadSignal, windowId, server, statusMarker, override, forkOrigin, ...title] = parts;
+      const parts = line.split(SEP); if (parts.length < 22 || !/^%\d+$/.test(parts[0])) return [];
+      const [id, pid, cwd, sessionName, command, dead, rawId, mapping, boundCwd, boundClaudeDir, width, height, cursorX, cursorY, deadStatus, deadSignal, windowId, server, statusMarker, override, forkOrigin, hooksDir, ...title] = parts;
       const pids = dead === '1' ? [] : foregroundClaudePids(+pid, rows, this.options);
       const claudePid = pids.length === 1 ? pids[0] : undefined;
       const nativeTarget = `${sessionName}:${windowId}.${id}`, registration = `${nativeTarget}:${pid}`;
@@ -284,7 +293,7 @@ ${presenceReadScript(location.claudeDir)}`;
       let identityError: string | undefined;
       if (pids.length > 1) identityError = t('backend.multipleClaude');
       else if (claudePid && !native && (unsafe || frame || UUID.test(forkOrigin) || registered.has(registration))) identityError = t('backend.identityUnverified');
-      return [{ id, pid: +pid, claudePid, cwd, forkOrigin: UUID.test(forkOrigin) ? forkOrigin : undefined, configOverride: override ? override === '1' : undefined, explicitlyBound: mapping === 'manual', sessionName, command, nativeTarget, native, statusMarker, serverInstance: /^[1-9]\d*:[1-9]\d*$/.test(server) ? server : undefined, presenceFingerprint: native && frame?.fingerprint, presenceTorn: !!frame && !native && tornPresence(frame), boundSessionId, identityError,
+      return [{ id, pid: +pid, claudePid, cwd, forkOrigin: UUID.test(forkOrigin) ? forkOrigin : undefined, hooksDir: hooksDir || undefined, configOverride: override ? override === '1' : undefined, explicitlyBound: mapping === 'manual', sessionName, command, nativeTarget, native, statusMarker, serverInstance: /^[1-9]\d*:[1-9]\d*$/.test(server) ? server : undefined, presenceFingerprint: native && frame?.fingerprint, presenceTorn: !!frame && !native && tornPresence(frame), boundSessionId, identityError,
         dead: dead === '1', deadStatus: /^\d+$/.test(deadStatus) ? +deadStatus : undefined, deadSignal: deadSignal || undefined, title: title.join(SEP),
         sessionId: native?.sessionId ?? lastNativeId ?? boundSessionId, managed: mapping === 'exact', boundCwd: boundCwd || undefined, boundClaudeDir: boundClaudeDir || undefined,
         width: +width, height: +height, cursorX: +cursorX, cursorY: +cursorY, active: !!claudePid && !identityError }];
@@ -596,19 +605,23 @@ exit 0`;
     // Programmatic custom commands are demo/test doubles. A custom Claude binary
     // named claude supports the same per-launch settings as the normal CLI.
     const nativeCli = !this.options.claudeCommand || basename(executable) === 'claude';
-    const callback = statusLineFor && nativeCli ? statusLineLaunch(statusLineFor, randomUUID().replace(/-/g, ''), location.tmuxVersion) : undefined;
+    const nonce = randomUUID().replace(/-/g, '');
+    const callback = statusLineFor && nativeCli ? statusLineLaunch(statusLineFor, nonce, location.tmuxVersion) : undefined;
+    // Recording hooks (Settings → Session, off by default) for a conversation's own process only:
+    // their folder is named by the status line's nonce, which the poll verifies for the pane.
+    const hooks = callback && this.launchPreferences.dialogHooks ? dialogHookSettings(nonce) : undefined;
     // Only this process's settings change (auto mode, no prompt suggestions, workflows
     // unless the user opted out, the prompt-cache lifetimes the user chose); the user's
     // own settings files stay as they are. The model-list probe gets the same, though it
     // makes no model request: the cache lifetimes do not change what it reports.
-    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), ...this.launchPreferences })) : undefined;
+    const settings = nativeCli ? JSON.stringify(launchSettings({ statusLine: callback && JSON.parse(callback.settings), ...this.launchPreferences, hooks })) : undefined;
     // Merely setting the default directory can change how native Claude resolves
     // its global config/account state. Preserve the target's normal environment;
     // only an explicitly selected configuration directory is an override.
     const configOverride = workspace.claudeDir ? `export CLAUDE_CONFIG_DIR=${q(location.claudeDir)}; ` : '';
     // Existing tmux servers may have an older PATH than this SSH connection.
     // Keep the resolved launcher and its node/bin directory in the child too.
-    const environment = `export PATH=${q(posix.dirname(resolvedExecutable))}:"$HOME/.local/bin:$HOME/.claude/local:/opt/homebrew/bin:/usr/local/bin:$PATH"; ${configOverride}${callback ? callback.register + '; ' : ''}`;
+    const environment = `export PATH=${q(posix.dirname(resolvedExecutable))}:"$HOME/.local/bin:$HOME/.claude/local:/opt/homebrew/bin:/usr/local/bin:$PATH"; ${configOverride}${callback ? callback.register + '; ' : ''}${hooks ? dialogHookPrefix(nonce) : ''}`;
     return { argv: [resolvedExecutable, ...(this.options.claudeArgs ?? [])], settingsArgs: settings ? ['--settings', settings] : [], environment };
   }
   private async launchCommand(workspace: Workspace, location: Location, sessionId: string, resume: boolean, title?: string, choices: LaunchChoices = {}): Promise<string> {
@@ -948,6 +961,9 @@ esac
 remaining=$(list_target)
 [ -z "$remaining" ] || { echo ${q(t('backend.paneNotClosed'))} >&2; exit 1; }`;
         await this.transport.run(workspace, script, { tag: 'tmux.close_session', timeoutMs: 16000 });
+        // Its recording-hook folder goes with it (dialog-hooks.ts).
+        const hooks = this.dialogHooks.bind(this.key(workspace, sessionId), undefined) ?? dialogHookDir(pane.hooksDir, pane.statusMarker?.split(',').at(-1));
+        if (hooks) await this.transport.run(workspace, removeDialogHookDir(hooks), { tag: 'hooks.remove', maxBytes: 4096 }).catch(() => {});
         this.touchWorkspace(workspace.id);
         // The read cursor stays: the open chat keeps its transcript and its next
         // read only adds what Claude flushed on exit (a fresh watch resets it anyway).
@@ -1131,6 +1147,12 @@ ${script}`;
     const paneData = this.parseProbe(workspace, location, response.stdout.subarray(processEnd + processSeparator.length, boundary));
     const record = { stdout: response.stdout.subarray(boundary + separator.length) };
     const pane = this.currentPane(paneData, session, location, true);
+    // This launch's recording-hook folder (dialog-hooks.ts): named by the pane option, bound to the
+    // launch by the status line's verified nonce. A folder of a process gone or replaced is removed.
+    const hookDir = pane && session.paneId === pane.id
+      ? dialogHookDir(pane.hooksDir, statusLineRegistration(pane, statusFrame.split(',', 1)[0])) : undefined;
+    const staleHooks = hookDir || !pane || !pane.hooksDir ? this.dialogHooks.bind(key, hookDir) : undefined;
+    if (staleHooks) void this.transport.run(workspace, removeDialogHookDir(staleHooks), { tag: 'hooks.remove', maxBytes: 4096 }).catch(() => {});
     const window = decodeFileWindow(record.stdout);
     const { inode, size, offset, reset } = window;
     const nextOffset = window.end;
@@ -1181,9 +1203,12 @@ ${terminalVisible ? `{ ${this.tmux('capture-pane', '-p', '-e', '-t', pane.id, ';
 printf '\\0'
 ${taskListFrame(location.claudeDir, sessionId)}
 printf '\\0'
+${hookDir ? readDialogHooks(hookDir, this.dialogHooks.wantsStarted(key)) : ''}
+printf '\\0'
 ${after}`;
-      const captured = await this.transport.run(workspace, captureScript, { tag: 'tmux.session_capture', maxBytes: (terminalVisible ? 5 : 4) * 1024 * 1024 });
-      const [visibleFrame, checksum, historyFrame, physicalFrame, taskFrame, ...postCapture] = captured.stdout.toString('utf8').split('\0');
+      const captured = await this.transport.run(workspace, captureScript, { tag: 'tmux.session_capture', maxBytes: (terminalVisible ? 5 : 4) * 1024 * 1024 + (hookDir ? 2 * 1024 * 1024 : 0) });
+      const [visibleFrame, checksum, historyFrame, physicalFrame, taskFrame, hookFrame, ...postCapture] = captured.stdout.toString('utf8').split('\0');
+      if (hookDir && hookFrame !== undefined) this.dialogHooks.ingest(key, hookDir, hookFrame, sessionId);
       if (pane.claudePid) {
         const observed = decodePresence(postCapture);
         const frame = observed.frames.get(pane.claudePid);
@@ -1252,7 +1277,8 @@ ${after}`;
     const runtimeInstanceId = runtimeIdentity(workspace, location, pane);
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
-    return { subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    const dialogHooks = hookDir ? this.dialogHooks.observe(key) : undefined;
+    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {
@@ -1465,7 +1491,7 @@ ${after}`;
     });
   }
   async answerQuestion(workspace: Workspace, sessionId: string, paneId: string, panePid: number, screen: NativeQuestionScreen,
-    action: QuestionAction, expected: SettingRuntime, position: TranscriptPosition | undefined, assertCurrent: () => void) {
+    action: QuestionAction, expected: SettingRuntime, position: TranscriptPosition | undefined, assertCurrent: () => void, asked?: AskedQuestion[]) {
     assertPaneId(paneId);
     if (!Number.isSafeInteger(panePid) || panePid < 2) throw new Error(t('backend.invalidPanePid'));
     return this.withInput(workspace, sessionId, async () => {
@@ -1478,11 +1504,11 @@ ${after}`;
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
-      return performQuestionAction(driver, paneId, panePid, screen, action, assertCurrent);
+      return performQuestionAction(driver, paneId, panePid, screen, action, assertCurrent, asked);
     });
   }
   async answerPermission(workspace: Workspace, sessionId: string, paneId: string, panePid: number, screen: NativePermissionScreen,
-    action: PermissionAction, expected: SettingRuntime, position: TranscriptPosition | undefined, assertCurrent: () => void) {
+    action: PermissionAction, expected: SettingRuntime, position: TranscriptPosition | undefined, assertCurrent: () => void, call?: PermissionCall) {
     assertPaneId(paneId);
     if (!Number.isSafeInteger(panePid) || panePid < 2) throw new Error(t('backend.invalidPanePid'));
     return this.withInput(workspace, sessionId, async () => {
@@ -1494,7 +1520,7 @@ ${after}`;
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
       const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
-      return performPermissionAction(driver, paneId, panePid, screen, action, assertCurrent);
+      return performPermissionAction(driver, paneId, panePid, screen, action, assertCurrent, call);
     });
   }
   private settingDriver(workspace: Workspace, sessionId: string, options: { expected?: SettingRuntime; historyGuard?: string; assertCurrent?: () => void; onSwitchDispatch?: () => void } = {}): SettingDriver & TurnDriver & QuestionDriver {

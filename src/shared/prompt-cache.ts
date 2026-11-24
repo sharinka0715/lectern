@@ -38,6 +38,9 @@ export interface LaunchPreferences {
   enableWorkflows: boolean;
   /** The prompt-cache lifetimes; 'default' when absent. */
   promptCacheTtlPreset?: PromptCacheTtlPreset;
+  /** Read question and permission dialogs from Claude Code hooks as well as the screen
+   * (backend/dialog-hooks.ts); off unless turned on. */
+  dialogHooks?: boolean;
 }
 
 /** Received preferences with every unknown value at its default. */
@@ -45,5 +48,6 @@ export function launchPreferences(value: Partial<LaunchPreferences> | undefined)
   return {
     enableWorkflows: value?.enableWorkflows !== false,
     promptCacheTtlPreset: promptCacheTtlPreset(value?.promptCacheTtlPreset),
+    dialogHooks: value?.dialogHooks === true,
   };
 }

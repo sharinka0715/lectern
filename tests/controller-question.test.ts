@@ -314,3 +314,61 @@ test('Claude Code 没在等回答时，没有调用的问答样画面不出卡�
     assert.equal((await poll()).question, undefined);
   } finally { await controller.dispose(); }
 });
+
+test('with the recording hooks: a question taller than the pane is a card of its call, read with its input; without SessionStart, none', async()=>{
+  // The dialog's top is cut off (question-body-2.1.331/cut-off-40-rows): the screen alone has no card.
+  const viewport = readFileSync(new URL('./fixtures/question-body-2.1.331/cut-off-40-rows.txt', import.meta.url),'utf8');
+  const asked = {questions:[{question:'要提交这个 H200 job 吗？', header:'H200 job', options:[{label:'提交，含 736 abs 20k (Recommended)', description:'一'},
+    {label:'提交，只测 736 rel 20k', description:'二'}, {label:'不提交，都在本机跑', description:'三'}]}]};
+  const records = [{event:'SessionStart' as const, seq:1, at:1, source:'startup'},
+    {event:'PreToolUse' as const, seq:2, at:2, toolName:'AskUserQuestion', toolUseId:'toolu_hook', input:asked}];
+  let started = true;
+  const answers: unknown[][] = [];
+  const backend = {
+    resetRead(){}, dispose(){}, readSession: async (): Promise<ReadResult> => ({session:{id:session,title:'Question',mapping:'exact',paneId:'%5'},panePid:42,
+      viewport, screen:viewport, nativeStatus:'waiting', nativeWaitingFor:'input needed', active:true, jsonl:Buffer.alloc(0), reset:false, hasMore:false,
+      dialogHooks:{folder:true, records, rejected:0, ...started && {started:{at:1, source:'startup'}}}}),
+    answerQuestion:async(...args: unknown[])=>{answers.push(args);},
+  } as unknown as Backend;
+  const controller=new Controller({get:()=>workspace} as unknown as WorkspaceStore, backend);
+  try {
+    const s=await controller.watchSession(workspace.id,session);
+    assert.equal(s.question?.toolUseId,'toolu_hook','the card names its call before the transcript has it');
+    assert.equal(s.question?.question,'要提交这个 H200 job 吗？');
+    assert.deepEqual(s.question?.options.slice(0,3).map(o=>o.description),['一','二','三']);
+    assert.equal(s.dialogHooks?.state,'active');
+    await controller.answerQuestion(workspace.id,session,'%5',42,s.question!.token,{kind:'activate',number:2});
+    assert.deepEqual(answers[0].at(-1), [{question:'要提交这个 H200 job 吗？', header:'H200 job', multiSelect:false, options:asked.questions[0].options}],
+      'the driver reads the frames with the same input');
+    started = false;
+    const next=(await once(controller,'snapshot'))[0] as SessionSnapshot;
+    assert.equal(next.question,undefined,'no SessionStart: the screen alone, which cannot read it');
+  } finally {await controller.dispose();}
+});
+
+test('with the recording hooks: a permission dialog shows the call\'s whole input, and reads by its bottom when its top is cut off', async()=>{
+  const bash = readFileSync(new URL('./fixtures/permission-2.1.328/bash.txt', import.meta.url),'utf8');
+  const input = {command:'echo hello > greeting.txt && ls', description:'Write a greeting file'};
+  let viewport = bash;
+  const records = [{event:'SessionStart' as const, seq:1, at:1, source:'startup'}, {event:'PermissionRequest' as const, seq:2, at:2, toolName:'Bash', input}];
+  const calls: unknown[][] = [];
+  const backend = {
+    resetRead(){}, dispose(){}, readSession: async (): Promise<ReadResult> => ({session:{id:session,title:'Permission',mapping:'exact',paneId:'%5'},panePid:42,
+      viewport, screen:viewport, nativeStatus:'waiting', nativeWaitingFor:'permission prompt', active:true, jsonl:Buffer.alloc(0), reset:false, hasMore:false,
+      dialogHooks:{folder:true, records, rejected:0, started:{at:1, source:'startup'}}}),
+    answerPermission:async(...args: unknown[])=>{calls.push(args);},
+  } as unknown as Backend;
+  const controller=new Controller({get:()=>workspace} as unknown as WorkspaceStore, backend);
+  try {
+    const s=await controller.watchSession(workspace.id,session);
+    assert.equal(s.permission?.title,'Bash command');
+    assert.deepEqual(s.permission?.call,{toolName:'Bash', input});
+    assert.equal(s.permission?.toolUseId,undefined,'no call yet: Claude Code writes it later');
+    viewport = bash.split('\n').slice(16).join('\n');
+    const cut=(await once(controller,'snapshot'))[0] as SessionSnapshot;
+    assert.equal(cut.permission?.title,'Bash');
+    assert.deepEqual(cut.permission?.options.map(o=>o.number),[1,2,3]);
+    await controller.answerPermission(workspace.id,session,'%5',42,cut.permission!.token,{kind:'choose',number:1});
+    assert.deepEqual(calls[0].at(-1),{toolName:'Bash', input},'the driver reads the frames with the same call');
+  } finally {await controller.dispose();}
+});

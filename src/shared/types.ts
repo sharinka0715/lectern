@@ -420,6 +420,8 @@ export interface SessionSnapshot {
   settings?: SessionSettingsState;
   /** The live Claude process was launched with the Lectern status line callback. */
   statusLineManaged?: boolean;
+  /** Whether Lectern's recording hooks deliver this conversation's dialogs (Settings → Session). */
+  dialogHooks?: import('./dialog-hooks').DialogHookStatus;
   statusLine?: NativeStatusLineObservation;
   /** Current connection's CLI login category, not the historical conversation's payer. */
   endpointBilling?: EndpointBilling;

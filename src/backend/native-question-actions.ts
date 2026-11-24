@@ -1,6 +1,7 @@
 import { isDeepStrictEqual as equal } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseQuestionScreen } from '../core/question-screen';
+import { readHookQuestion, type AskedQuestion } from '../core/question-hook';
 import { NavigationKeyNotSent, TranscriptChangedNoKeys } from './native-settings';
 import { turnComposer } from '../core/turn-controls';
 import type { NativeQuestionScreen } from '../shared/native-question';
@@ -73,8 +74,10 @@ function inputChanged(before: NativeQuestionScreen, after: NativeQuestionScreen,
     && tabsAfter(before, after, after.options.some(o => o.checked));
 }
 
+/** `asked`: the call's input from Lectern's recording hook, when the card was read with it
+ * (core/question-hook.ts): every frame is then read the same way. */
 export async function performQuestionAction(driver: QuestionDriver, paneId: string, panePid: number,
-  expected: NativeQuestionScreen, action: QuestionAction, assertCurrent: () => void): Promise<void> {
+  expected: NativeQuestionScreen, action: QuestionAction, assertCurrent: () => void, asked?: AskedQuestion[]): Promise<void> {
   const deadline = Date.now() + 30_000;
   const check = () => { assertCurrent(); if (Date.now() >= deadline) throw new Error(t('native.questionTimeout')); };
   const inspect = async () => {
@@ -82,7 +85,8 @@ export async function performQuestionAction(driver: QuestionDriver, paneId: stri
     const frame = await driver.frame();
     check();
     if (frame.paneId !== paneId || frame.panePid !== panePid || frame.nativeStatus === 'shell') throw changed();
-    const screen = parseQuestionScreen(frame.viewport, frame.nativeStatus === 'waiting' ? { pendingToolUse: true } : undefined);
+    const screen = asked ? readHookQuestion(frame.viewport, asked)
+      : parseQuestionScreen(frame.viewport, frame.nativeStatus === 'waiting' ? { pendingToolUse: true } : undefined);
     if (screen && (frame.nativeStatus !== undefined && frame.nativeStatus !== 'waiting'
         || frame.nativeWaitingFor !== undefined && frame.nativeWaitingFor !== 'input needed')) throw changed();
     return { frame, screen };

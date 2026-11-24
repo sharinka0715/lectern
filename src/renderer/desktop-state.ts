@@ -121,6 +121,9 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   enableWorkflows: boolean;
   /** Prompt-cache lifetimes for the Claude processes Lectern starts; "default" sets nothing. */
   promptCacheTtlPreset: PromptCacheTtlPreset;
+  /** Recording-only Claude Code hooks for question and permission dialogs in the processes Lectern
+   * starts (backend/dialog-hooks.ts); off by default. */
+  dialogHooks: boolean;
   historyPageMiB: number;
   showCacheTtl: boolean;
   showSubscriptionQuota: boolean;
@@ -152,7 +155,7 @@ export const defaultAppearance = {
   showSubscriptionQuota: true,
   quotaTimeZone: "",
 } as const;
-export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtlPreset: "default" } as const;
+export const defaultSessionOptions = { settingSwitch: "inline", enableWorkflows: true, promptCacheTtlPreset: "default", dialogHooks: false } as const;
 const defaults: DesktopState = {
   ...defaultAppearance,
   ...defaultSessionOptions,
@@ -234,6 +237,7 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       // Development builds of 0.2.2 stored two separate choices; a pair that is a preset carries over.
       promptCacheTtlPreset: "promptCacheTtlPreset" in p ? promptCacheTtlPreset(p.promptCacheTtlPreset)
         : promptCacheTtlPresetOf(p.promptCacheTtl, p.subagentPromptCacheTtl),
+      dialogHooks: p.dialogHooks === true,
       historyPageMiB: historyPageSizeMiB(p.historyPageMiB),
       showCacheTtl: p.showCacheTtl !== false,
       showSubscriptionQuota: p.showSubscriptionQuota !== false,

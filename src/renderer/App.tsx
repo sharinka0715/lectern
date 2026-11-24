@@ -193,9 +193,9 @@ function ChatPane({ view, resumes, setResume }: {
   }, [primary, prefs.theme]);
   useEffect(() => {
     if (primary) void window.desktop?.setLaunchPreferences?.({ enableWorkflows: prefs.enableWorkflows,
-      promptCacheTtlPreset: prefs.promptCacheTtlPreset })
+      promptCacheTtlPreset: prefs.promptCacheTtlPreset, dialogHooks: prefs.dialogHooks })
       .catch(error => reportActionError(error, "同步会话启动选项失败"));
-  }, [primary, prefs.enableWorkflows, prefs.promptCacheTtlPreset]);
+  }, [primary, prefs.enableWorkflows, prefs.promptCacheTtlPreset, prefs.dialogHooks]);
   const [info, setInfo] = useState<AppInfo>({
     platform: "",
     version: "",
@@ -1705,7 +1705,7 @@ function ChatPane({ view, resumes, setResume }: {
             <div className="resume-bar"><span>{t('app.permissionInTerminal')}</span><button onClick={() => setTerminalOpen(true)}>{t('app.viewTerminal')}</button></div> :
             <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.cardId, permission.kind])}
               permission={permission} unconfirmed={snapshot?.permissionUnconfirmed} busy={permissionBusy || busy || sending || settingUIBusy || !!snapshot?.settingBusy || !!snapshot?.trustBusy}
-              onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} />)}
+              onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} onOpenPath={path => openArtifact({ path })} />)}
           {directoryTrust && (
             <DirectoryTrustCard
               key={`${workspaceId}:${sessionId}:${directoryTrust.paneId}:${directoryTrust.cwd}`}
@@ -1932,7 +1932,8 @@ function ChatPane({ view, resumes, setResume }: {
           }}
         />
       )}
-      {preferencesOpen && <PreferencesDialog workspaces={workspaces} platform={info.platform} newMachine={preferencesOpen === "new-machine"} onClose={()=>setPreferencesOpen(false)}/>}
+      {preferencesOpen && <PreferencesDialog workspaces={workspaces} platform={info.platform} newMachine={preferencesOpen === "new-machine"} onClose={()=>setPreferencesOpen(false)}
+        hookStatus={snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId ? snapshot.dialogHooks : undefined}/>}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {releaseNotesOpen && <ReleaseNotesDialog current={info.version} onClose={() => setReleaseNotesOpen(false)} />}
       <UpdatePrompt />

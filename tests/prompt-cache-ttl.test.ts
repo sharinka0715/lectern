@@ -19,9 +19,20 @@ test('the prompt-cache setting is one of four presets; anything else is the defa
   assert.deepEqual(promptCacheTtls('both-1h'), { main: '1h', other: '1h' });
   assert.deepEqual(promptCacheTtls('main-1h-other-5m'), { main: '1h', other: '5m' });
   assert.equal(promptCacheTtls('main-5m-other-1h'), undefined);
-  assert.deepEqual(launchPreferences(undefined), { enableWorkflows: true, promptCacheTtlPreset: 'default' });
-  assert.deepEqual(launchPreferences({ enableWorkflows: false, promptCacheTtlPreset: 'both-1h' }), { enableWorkflows: false, promptCacheTtlPreset: 'both-1h' });
-  assert.deepEqual(launchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'x' as never }), { enableWorkflows: true, promptCacheTtlPreset: 'default' });
+  assert.deepEqual(launchPreferences(undefined), { enableWorkflows: true, promptCacheTtlPreset: 'default', dialogHooks: false });
+  assert.deepEqual(launchPreferences({ enableWorkflows: false, promptCacheTtlPreset: 'both-1h' }), { enableWorkflows: false, promptCacheTtlPreset: 'both-1h', dialogHooks: false });
+  assert.deepEqual(launchPreferences({ enableWorkflows: true, promptCacheTtlPreset: 'x' as never }), { enableWorkflows: true, promptCacheTtlPreset: 'default', dialogHooks: false });
+  // The recording hooks are off unless turned on with exactly true.
+  for (const value of [undefined, 'true', 1, null, {}]) assert.equal(launchPreferences({ enableWorkflows: true, dialogHooks: value as never }).dialogHooks, false);
+  assert.equal(launchPreferences({ enableWorkflows: true, dialogHooks: true }).dialogHooks, true);
+});
+
+test('the recording hooks are stored with the session options, off by default and after a reset', () => {
+  const read = (value: unknown) => loadDesktopState({ getItem: () => JSON.stringify(value) }).dialogHooks;
+  assert.equal(read({}), false);
+  assert.equal(read({ dialogHooks: true }), true);
+  for (const value of ['true', 1, null]) assert.equal(read({ dialogHooks: value }), false);
+  assert.equal(defaultSessionOptions.dialogHooks, false);
 });
 
 test('the preset is stored with the other session options; the two old choices carry over only as a preset', () => {

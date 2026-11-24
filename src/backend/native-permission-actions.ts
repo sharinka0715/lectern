@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { focusedPermission, parsePermissionScreen, permissionGuardLines, samePermission, type NativePermissionScreen } from '../core/permission-screen';
 import { turnComposer } from '../core/turn-controls';
+import { readHookPermission, type PermissionCall } from '../core/permission-hook';
 import type { PermissionAction } from '../shared/native-permission';
 import { NavigationKeyNotSent, TranscriptChangedNoKeys } from './native-settings';
 import type { QuestionDriver } from './native-question-actions';
@@ -25,7 +26,7 @@ const equalScreen = (a: NativePermissionScreen, b: NativePermissionScreen) => sa
  * may ignore keys right after it opens: its first key waits until it has been up a second.
  */
 export async function performPermissionAction(driver: Pick<QuestionDriver, 'frame' | 'questionKey'>, paneId: string, panePid: number,
-  expected: NativePermissionScreen, action: PermissionAction, assertCurrent: () => void): Promise<void> {
+  expected: NativePermissionScreen, action: PermissionAction, assertCurrent: () => void, call?: PermissionCall): Promise<void> {
   const deadline = Date.now() + 20_000, generic = expected.kind === 'native-dialog';
   const check = () => { assertCurrent(); if (Date.now() >= deadline) throw new Error(t('native.permissionTimeout')); };
   // Keys are guarded on the dialog's own rows in the last frame read (permissionGuardLines):
@@ -36,8 +37,10 @@ export async function performPermissionAction(driver: Pick<QuestionDriver, 'fram
     const frame = await driver.frame();
     check();
     if (frame.paneId !== paneId || frame.panePid !== panePid || frame.nativeStatus === 'shell') throw changed();
-    const screen = parsePermissionScreen(frame.viewport, { generic });
-    guardLines = screen && permissionGuardLines(frame.viewport, screen, { generic });
+    // A card read with its PermissionRequest hook (core/permission-hook.ts) reads every frame so.
+    const read = call ? (viewport: string) => readHookPermission(viewport, call) : (viewport: string) => parsePermissionScreen(viewport, { generic });
+    const screen = read(frame.viewport);
+    guardLines = screen && permissionGuardLines(frame.viewport, screen, { generic }, read);
     return { frame, screen };
   };
   const initial = (await inspect()).screen;

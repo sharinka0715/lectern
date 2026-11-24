@@ -6,6 +6,8 @@
 // once the question is answered (scripts/cc-matrix/probe-question-order.mjs); a user behind a gateway
 // got only a "Claude is waiting" banner for it. One question answered with a choice, then two
 // questions (a choice, two checked boxes, the review and submit); each answer must reach its call.
+// With LECTERN_E2E_DIALOG_HOOKS=1 (question-early-hooks-e2e) Settings → Session's recording hooks are
+// on: each card then names its call from the PreToolUse hook at once, its text from the call's input.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
@@ -14,6 +16,7 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
+import { DIALOG_HOOKS, hookStatus, setDialogHooks } from './fixtures/dialog-hooks.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-question-early-')));
 const profile = path.join(root, 'profile'), config = path.join(root, 'claude'), cwd = path.join(root, 'work');
@@ -60,7 +63,9 @@ try {
   await writeFile(path.join(config, 'settings.json'), JSON.stringify({
     env: { ANTHROPIC_API_KEY: 'question-e2e', ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.address().port}`, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', DISABLE_AUTOUPDATER: '1' } }));
   await writeFile(path.join(profile, 'workspaces.json'), JSON.stringify([{ id: 'gateway', name: '网关', kind: 'local', cwd, claudeDir: config }]));
-  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics') };
+  const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, TMUX_TMPDIR: root, LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_LOG_DIR: path.join(root, 'diagnostics'),
+    // The hooks' folders go under TMPDIR: this run's own.
+    ...DIALOG_HOOKS && { TMPDIR: root } };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE; delete env.TMUX;
   const exe = process.argv[2];
   app = await _electron.launch({ args: exe ? [] : ['.'], ...(exe && { executablePath: path.resolve(exe) }), env });
@@ -117,10 +122,14 @@ try {
     // The call this question belongs to is not in the transcript yet: the card must not need it.
     const early = !callIn(await records(), id);
     deferred.push(early);
-    if (early) assert.equal(await card.getAttribute('data-question-call'), null, 'a card read off the screen alone names no call');
+    // With the hooks the card names its call from the PreToolUse hook, transcript or not.
+    if (DIALOG_HOOKS) await page.waitForFunction(want => document.querySelector('section.question-card:not([data-leaving])')?.getAttribute('data-question-call') === want, id, { timeout: 5000 })
+      .catch(async error => { await dump(); throw error; });
+    else if (early) assert.equal(await card.getAttribute('data-question-call'), null, 'a card read off the screen alone names no call');
     else console.log(`NOTE: the call ${id} was in the transcript before its question was answered; the deferred case is not exercised`);
   };
 
+  if (DIALOG_HOOKS) await setDialogHooks(page, true);
   await page.getByRole('button', { name: '在 网关 新建对话' }).click();
   await ask('先问一个问题', 'toolu_question_one');
   assert.equal(await card.locator('h3').innerText(), drink.question);
@@ -152,7 +161,10 @@ try {
   await page.locator('[data-tool-id="toolu_question_two"]').waitFor();
   assert.equal(await card.count(), 0, 'no card for an answered question');
   const ran = /"version":"(\d+\.\d+\.\d+)"/.exec(JSON.stringify(await records()))?.[1];
-  console.log(JSON.stringify({ ok: true, claude: ran, deferred }));
+  // Settings → Session says so for this chat.
+  const hooks = DIALOG_HOOKS ? (await hookStatus(page, 'active')).state : undefined;
+  if (DIALOG_HOOKS) assert.equal(hooks, 'active');
+  console.log(JSON.stringify({ ok: true, claude: ran, deferred, hooks }));
 } finally {
   await app?.close().catch(() => {});
   try { execFileSync('tmux', ['kill-server'], { env: { ...process.env, TMUX_TMPDIR: root } }); } catch {}

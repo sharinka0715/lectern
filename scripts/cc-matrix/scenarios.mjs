@@ -11,6 +11,7 @@ import { sel } from './app.mjs';
 import { API_KEY, descendants, readJsonl, reap } from './sandbox.mjs';
 import { textOf } from './fake-api.mjs';
 import { compareVersions } from './versions.mjs';
+import { hookStatus, launchedHooks, setDialogHooks } from '../fixtures/dialog-hooks.mjs';
 
 export const FEATURES = [
   { id: 'model-catalog', title: 'Model/effort lists from the stream-json control-request probe' },
@@ -41,6 +42,10 @@ export const FEATURES = [
   { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
   { id: 'question-early', title: 'AskUserQuestion before the transcript has the call (the stream ends late): a card read off the screen, answered into its call' },
   { id: 'question-body', title: "AskUserQuestion whose question has blank lines, a list and wrapped rows, before the transcript has the call, in a named session: the card shows it as asked; a long answer of one's own typed from the card" },
+  { id: 'hooks-launch', title: 'Recording hooks turned on in Settings → Session: a new chat\'s --settings has PreToolUse (AskUserQuestion only), PermissionRequest and SessionStart; Settings shows them active once SessionStart ran' },
+  { id: 'hooks-question-tall', title: 'Recording hooks on: a question taller than the pane (its top cut off), before the transcript has the call: a card naming its call, text from the call\'s input, answered into it' },
+  { id: 'hooks-permission', title: 'Recording hooks on: a permission card shows the call\'s whole input from its PermissionRequest hook, claims its call and approves it' },
+  { id: 'hooks-off', title: 'Recording hooks turned off again: a new chat\'s --settings has no hooks, Settings says the screen is read' },
   { id: 'thinking', title: 'Thinking folded into a thought row' },
   { id: 'tasks', title: 'Task list tool (TodoWrite / TaskCreate)' },
   { id: 'queue', title: 'Queue a message during a reply' },
@@ -1613,6 +1618,78 @@ export const SCENARIOS = [
       });
       if (failures.length) throw new Error(`goal rows failed: ${failures.join('; ')}`);
       // end of goal rows
+    },
+  },
+  {
+    // Settings → Session's recording hooks (src/backend/dialog-hooks.ts). Last: every other scenario
+    // runs with the setting at its default (off), and this one turns it off again whatever happens.
+    id: 'dialog-hooks',
+    features: ['hooks-launch', 'hooks-question-tall', 'hooks-permission', 'hooks-off'],
+    timeoutMs: 300_000,
+    async run(ctx) {
+      const { ui, page, api, folders, check } = ctx;
+      const card = page.locator(sel.question), perm = page.locator(sel.permission), answers = {};
+      // 30 rows of question, three options with descriptions: taller than the 40-row pane.
+      const items = Array.from({ length: 30 }, (_, i) => `- Step ${i + 1}: one more row that makes this dialog taller than the pane.`);
+      const tall = { header: 'Plan', multiSelect: false, question: ['Which plan should run tonight?', '', ...items].join('\n'), options: [
+        { label: 'Plan A', description: 'Run the full suite on every target, then publish the report.' },
+        { label: 'Plan B', description: 'Run only the quick checks this time.' },
+        { label: 'Plan C', description: 'Do nothing tonight and ask again tomorrow.' }] };
+      api.script('hooks-tall', ({ step, toolResults }) => {
+        if (step === 0) return { blocks: [{ type: 'text', text: 'One question first.' }, { type: 'tool_use', name: 'AskUserQuestion', input: { questions: [tall] } }], tailMs: 1500 };
+        answers.tall = toolResults.map(result => result.text).join('\n');
+        return { text: 'Thanks (ccm-hooks-tall-done).' };
+      });
+      const command = `printf '%s\\n' ${Array.from({ length: 14 }, (_, i) => `hook-line-${i + 1}`).join(' ')} > hooks-perm.txt`;
+      api.script('hooks-perm', ({ step }) => step === 0 ? { blocks: [{ type: 'tool_use', name: 'Bash', input: { command, description: 'Write the hooks marker' } }] }
+        : { text: 'Written (ccm-hooks-perm-done).' });
+      api.script('hooks-off', () => ({ text: 'Plain reply (ccm-hooks-off-done).' }));
+      try {
+        await check('hooks-launch', async () => {
+          await setDialogHooks(page, true);
+          await startChat(ctx, folders.main, 'Ask me the tall one ccm:hooks-tall');
+          const hooks = launchedHooks(await ui.claudeArgv());
+          ctx.note('hooks-settings', hooks && Object.fromEntries(Object.entries(hooks).map(([event, [group]]) => [event, group.matcher ?? '*'])));
+          assert.deepEqual(Object.keys(hooks ?? {}), ['PreToolUse', 'PermissionRequest', 'SessionStart']);
+          assert.equal(hooks.PreToolUse[0].matcher, 'AskUserQuestion');
+          assert.equal((await hookStatus(page, 'active', 60_000)).state, 'active');
+        });
+        await check('hooks-question-tall', async () => {
+          await card.waitFor({ timeout: 60_000 });
+          const screen = await ui.screen();
+          await writeFile(path.join(ctx.dir, 'hooks-question-tall.txt'), screen);
+          // The dialog's top (rule, tab strip, the question's start) is out of the pane.
+          ctx.note('hooks-tall-top-cut', !screen.includes('Which plan should run tonight?'));
+          await page.waitForFunction(selector => document.querySelector(selector)?.dataset.questionCall, sel.question, { timeout: 10_000 });
+          assert.equal(await card.locator('h3').textContent(), tall.question);
+          assert.deepEqual((await card.locator('button.question-option strong').allInnerTexts()).slice(0, 3), ['Plan A', 'Plan B', 'Plan C']);
+          await card.locator('button.question-option[data-question-number="2"]').click();
+          await ui.waitReply('ccm-hooks-tall-done');
+          assert.match(answers.tall, /Plan B/);
+        });
+        await check('hooks-permission', async () => {
+          await startChat(ctx, folders.perm, 'Write the hooks marker ccm:hooks-perm');
+          await perm.waitFor({ timeout: 60_000 });
+          const shown = perm.locator('.permission-call[data-permission-hook-tool="Bash"]');
+          await shown.waitFor({ timeout: 10_000 });
+          assert.match(await shown.innerText(), /hook-line-14 > hooks-perm\.txt/);
+          await page.waitForFunction(selector => document.querySelector(selector)?.dataset.permissionCall, sel.permission, { timeout: 30_000 });
+          const id = await perm.getAttribute('data-permission-call');
+          assert.equal((await ui.tools()).find(tool => tool.id === id)?.name, 'Bash');
+          await perm.locator('[data-permission-option="1"]').click();
+          await perm.waitFor({ state: 'detached', timeout: 30_000 });
+          await ui.waitReply('ccm-hooks-perm-done');
+          assert.match(await readFile(path.join(folders.perm.cwd, 'hooks-perm.txt'), 'utf8'), /^hook-line-14$/m);
+        });
+      } finally {
+        await setDialogHooks(page, false);
+      }
+      await check('hooks-off', async () => {
+        await startChat(ctx, folders.main, 'Just reply ccm:hooks-off');
+        await ui.waitReply('ccm-hooks-off-done');
+        assert.equal(launchedHooks(await ui.claudeArgv()), undefined);
+        assert.equal((await hookStatus(page, 'off')).state, 'off');
+      });
     },
   },
   // end of SCENARIOS

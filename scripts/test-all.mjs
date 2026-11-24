@@ -38,8 +38,11 @@ export const e2eScripts = [
   'attachment-thumbnail-e2e', 'subagent-column-e2e', 'task-column-e2e', 'quit-dialog-e2e',
   // These start the installed Claude Code against a loopback fake model (no real request).
   'foreground-shell-e2e', 'permission-ui-e2e', 'native-dialog-ui-e2e', 'question-early-e2e', 'background-work-e2e', 'cache-ttl-e2e',
+  // The same two with Settings → Session's recording hooks on.
+  'question-early-hooks-e2e', 'permission-hooks-e2e',
 ];
-const needsClaude = new Set(['foreground-shell-e2e', 'permission-ui-e2e', 'native-dialog-ui-e2e', 'question-early-e2e', 'background-work-e2e', 'cache-ttl-e2e']);
+const needsClaude = new Set(['foreground-shell-e2e', 'permission-ui-e2e', 'native-dialog-ui-e2e', 'question-early-e2e', 'background-work-e2e', 'cache-ttl-e2e',
+  'question-early-hooks-e2e', 'permission-hooks-e2e']);
 
 const args = process.argv.slice(2);
 const flag = name => args.includes(name);

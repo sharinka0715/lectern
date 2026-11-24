@@ -3,7 +3,7 @@ import { inTranscriptExample } from './dialog-boundary';
 import { stripTerminalEscapes, terminalCells } from './screen';
 import { namedEditorBorder } from './editor-border';
 
-const ruler = /^─{8,}$/u;
+export const ruler = /^─{8,}$/u;
 // Claude Code wraps by terminal cells. A break between two wide (CJK) characters
 // had no space in the original, nor one beside fullwidth punctuation (a long run
 // like "对比（ImageGrid" is cut at the edge); a break elsewhere was at a space.
@@ -45,18 +45,18 @@ function questionText(rows: string[], width: number) {
 }
 // A named session (2.1.329) closes the dialog with its name in a rule below the footer,
 // the input box's upper border: any width of name (editor-border.ts).
-const namedRule = namedEditorBorder;
+export const namedRule = namedEditorBorder;
 const numberRow = /^(❯ |  )([1-9]\d*)\. (.+)$/u;
 // The footer names its keys between "Enter to select" and "Esc to cancel": the navigation
 // (arrows, Tab with several questions), notes, the editor; any other hint added there is kept.
-const footerPattern = /^Enter to select(?: · [^·]+)+ · Esc to cancel$/u;
-const trimBlank = (lines: string[]) => {
+export const footerPattern = /^Enter to select(?: · [^·]+)+ · Esc to cancel$/u;
+export const trimBlank = (lines: string[]) => {
   let i = 0, j = lines.length;
   while (i < j && !lines[i].trim()) i++;
   while (j > i && !lines[j-1].trim()) j--;
   return lines.slice(i,j);
 };
-function tabStrip(line: string) {
+export function tabStrip(line: string) {
   const nav = /^←\s+(.+?)\s+✔ Submit\s+→$/u.exec(line.trim());
   const parts = (nav?.[1] ?? line.trim()).split(/\s{2,}(?=[☐☒] )/u);
   const tabs = parts.map(part=>/^([☐☒]) ([^☐☒✔←→]+)$/u.exec(part));
@@ -98,7 +98,7 @@ function review(lines: string[], tabs: NativeQuestionScreen['tabs'], width: numb
   if (answers.length!==tabs.filter(t=>t.answered).length || incomplete!==tabs.some(t=>!t.answered)) return;
   return {kind:'review',tabs,activeTab:tabs.length,options,review:answers,footer:''};
 }
-function standardRows(lines:string[], chat:string, hasAnswer:boolean, width:number): Pick<NativeQuestionScreen,'multiSelect'|'options'|'input'> | undefined {
+export function standardRows(lines:string[], chat:string, hasAnswer:boolean, width:number): Pick<NativeQuestionScreen,'multiSelect'|'options'|'input'> | undefined {
   const options: NativeQuestionOption[] = [], described = new Map<NativeQuestionOption, string[]>();
   let multiSelect: boolean | undefined, action: NativeQuestionOption | undefined;
   const chatRow = /^(❯ |  )([1-9]\d*)\. Chat about this$/u.exec(chat); if (!chatRow) return;
@@ -142,7 +142,7 @@ function standardRows(lines:string[], chat:string, hasAnswer:boolean, width:numb
   options.push({number:Number(chatRow[2]),kind:'chat',label:'Chat about this',focused:chatRow[1]==='❯ '});
   return {multiSelect,options,input};
 }
-function previewRows(lines:string[],chat:string,footer:string): Pick<NativeQuestionScreen,'options'|'multiSelect'|'canAmend'|'input'|'preview'> | undefined {
+export function previewRows(lines:string[],chat:string,footer:string): Pick<NativeQuestionScreen,'options'|'multiSelect'|'canAmend'|'input'|'preview'> | undefined {
   const chatRow = /^(❯ |  )Chat about this$/u.exec(chat); if (!chatRow) return;
   const options: NativeQuestionOption[] = [], body:string[] = [];
   let notes: string | undefined, opened = false, closed = false;

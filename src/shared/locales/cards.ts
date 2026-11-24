@@ -48,6 +48,7 @@ export const cards = {
   endNotes: ['结束备注编辑', 'Finish editing notes'],
   confirmingScreen: ['正在确认原屏…', 'Confirming on screen…'],
   permission: ['权限确认', 'Permission request'],
+  permissionCallInput: ['{tool} 的完整参数（来自 hook）', 'Full input of {tool} (from the hook)'],
   needsConfirmation: ['需要你的确认 · {title}', 'Needs your confirmation · {title}'],
   viewPermissionScreen: ['查看原生确认画面', 'View the native confirmation screen'],
   options: ['选项', 'Options'],

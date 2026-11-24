@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { parsePermissionScreen, permissionLayout, samePermission } from '../core/permission-screen';
 import type { NativePermissionScreen, PermissionSnapshot } from '../shared/native-permission';
+import type { PermissionCall } from '../core/permission-hook';
 import type { NativeStatus } from '../backend/native-presence';
 import type { ChatMessage, TranscriptPosition } from '../shared/types';
 import { parseQuestionScreen } from '../core/question-screen';
@@ -17,6 +18,8 @@ export interface WatchedPermission {
   position?: TranscriptPosition;
   consumed: boolean;
   unconfirmed?: boolean;
+  /** The call from the PermissionRequest hook when the card was read with it (core/permission-hook.ts). */
+  call?: PermissionCall;
 }
 
 /** The tool call awaiting permission: the current turn's last call without a result.

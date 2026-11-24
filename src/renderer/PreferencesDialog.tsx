@@ -54,6 +54,7 @@ import {
 } from "./desktop-state";
 import { dateTimeText, t, type LocalePreference, type MessageKey } from '../shared/i18n';
 import { promptCacheTtlPreset, promptCacheTtlPresets, type PromptCacheTtlPreset } from '../shared/prompt-cache';
+import type { DialogHookStatus } from '../shared/dialog-hooks';
 import type { LocaleState } from '../shared/types';
 
 const cacheTtlLabels: Record<PromptCacheTtlPreset, MessageKey> = {
@@ -67,16 +68,27 @@ def summarize(path: str, limit: int = 20) -> dict:
     return {"path": path, "count": len(rows), "preview": rows[:limit], "note": "${t('prefs.sampleCodeNote')}"}
 `;
 
+/** The open chat's recording hooks in words. */
+function hookStatusText(status: DialogHookStatus) {
+  if (status.state === 'active') return 'prefs.dialogHooksActive' as const;
+  if (status.state === 'waiting') return 'prefs.dialogHooksWaiting' as const;
+  if (status.state === 'unavailable') return status.reason === 'no-folder' ? 'prefs.dialogHooksNoFolder' as const : 'prefs.dialogHooksNotLaunched' as const;
+  return 'prefs.dialogHooksOff' as const;
+}
+
 export function PreferencesDialog({
   workspaces,
   platform,
   newMachine = false,
   onClose,
+  hookStatus,
 }: {
   workspaces: Workspace[];
   platform: string;
   newMachine?: boolean;
   onClose(): void;
+  /** The open chat's recording hooks (Settings → Session). */
+  hookStatus?: DialogHookStatus;
 }) {
   const settings = useDesktopState();
   // About 400 zones with their offsets, listed once per opening of the dialog.
@@ -414,6 +426,11 @@ export function PreferencesDialog({
               </label>
               <p>{t('prefs.cacheTtlDefaultHelp')}</p>
               <p>{t('prefs.cacheTtlHelp')}</p>
+              <label>{t('prefs.dialogHooks')}
+                <input type="checkbox" checked={settings.dialogHooks} onChange={e => setDesktop({ dialogHooks: e.currentTarget.checked })} />
+              </label>
+              <p>{t('prefs.dialogHooksHelp')}</p>
+              {hookStatus && <p className="pref-hook-status" data-hook-state={hookStatus.state} role="status">{t(hookStatusText(hookStatus))}</p>}
               <QuitPreferenceSetting resetKey={quitReset} />
               <button className="pref-action" onClick={() => {
                 setDesktop(defaultSessionOptions);
