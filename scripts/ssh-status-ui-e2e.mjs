@@ -55,6 +55,13 @@ try {
     replace('resolveArtifactReferences', async () => []);
     replace('prefetchSession', async () => {});
     replace('modelCatalog', async () => ({ status: 'failed', error: 'synthetic: no model list' }));
+    // Before launching, the app reads the settings files on the target: on a machine that is
+    // not logged in that read fails the same way the launch would.
+    replace('inspectConversationSettings', async (event, id) => {
+      const workspace = await folder(event, id);
+      if (!fixture.loggedIn.has(workspace.host)) throw denied(workspace.host);
+      return { settingsFile: null, overrides: [] };
+    });
     replace('createSession', async (event, id) => {
       const workspace = await folder(event, id);
       fixture.created.push(id);

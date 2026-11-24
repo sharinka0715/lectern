@@ -1043,22 +1043,36 @@ function ChatPane({ view, resumes, setResume }: {
     if (policy.kind === 'route') { setError(t('app.draftNoRewind'), target); return; }
     const id = `outgoing:${Date.now()}`, choices = draftChoices, request = sessionRequest.current;
     const newLaunch = { id: crypto.randomUUID(), nonce: launchNonce() };
+    // The message leaves the box at Enter, before the settings check on the target (a round
+    // trip, longer over SSH): what is typed meanwhile stays in the box. Cancelling the override
+    // prompt or a failed check puts the message back, like a launch that does not start.
+    const pending = showsOutgoing(text) ? startOutgoing(`${target.id}:`, text, [], id) : undefined;
+    if (pending) setOutgoing(pending);
+    setDraft('');
     setBusy(true);
+    const giveBack = () => {
+      setOutgoing(current => current?.id === id ? undefined : current);
+      if (mounted.current && selected.current.workspaceId === target.id && !selected.current.sessionId) {
+        setDraft(current => mergeDraft(current, text));
+      } else {
+        const key = draftKey(target.id, '');
+        unsentDrafts.set(key, mergeDraft(unsentDrafts.get(key) ?? '', text));
+      }
+    };
     try {
       if (!await approveSettingsOverrides(target, draftFile, newLaunch.id, newLaunch.nonce) || request !== sessionRequest.current) {
         setBusy(false);
+        giveBack();
         return;
       }
     } catch (error) {
       setBusy(false);
+      giveBack();
       if (request === sessionRequest.current) setError(errorText(error), target);
       return;
     }
     // Used by this launch only; they come back if it does not start.
     launchChoicesByFolder.delete(target.id);
-    const pending = showsOutgoing(text) ? startOutgoing(`${target.id}:`, text, [], id) : undefined;
-    if (pending) setOutgoing(pending);
-    setDraft('');
     setError('');
     setBusy(true);
     setLaunch({ id, workspaceId: target.id, text, choices, phase: 'creating', startedAt: Date.now() });
