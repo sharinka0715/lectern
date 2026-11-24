@@ -4,6 +4,7 @@ import { classifySessionScreen, extractPreview, withoutEditorNotices } from '../
 import { canInterruptTurn, turnComposer } from '../src/core/turn-controls';
 import { parseTurnProgress } from '../src/core/turn-progress';
 import { performTurnAction, type TurnDriver } from '../src/backend/native-turn-controls';
+import { REPLY } from './helpers/claude-screen';
 
 // Layouts sampled from Claude Code 2.1.316 (and 2.1.328) in a 120-column tmux pane:
 // no "esc to interrupt" in the footer, a tip under the spinner, and transient
@@ -38,7 +39,7 @@ const compacting = [
 const finished = [
   '❯ hi',
   '',
-  '● Hi! What would you like to work on today?',
+  `${REPLY} Hi! What would you like to work on today?`,
   '',
   '✻ Crunched for 2s · done 6:43 AM',
   '', '', '',

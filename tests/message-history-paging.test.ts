@@ -4,6 +4,7 @@ import { MessageDisplay } from '../src/core/message-display';
 import { isTranscriptTurnStart } from '../src/core/transcript-store';
 import { pendingQuestionId } from '../src/main/session-question';
 import type { JsonRecord } from '../src/core/jsonl';
+import { REPLY } from './helpers/claude-screen';
 
 const sessionId = 'paged-native';
 const encode = (...rows: JsonRecord[]) => Buffer.from(rows.map(row => JSON.stringify({ sessionId, ...row })).join('\n') + '\n');
@@ -88,7 +89,7 @@ test('prepending an old checkpoint or identical prompt cannot acknowledge pendin
   const old = [user('1',null,'same'), assistant('first','1'), user('cut','first'), assistant('abandoned','cut'),
     { type: 'last-prompt', explicit: true, rewound: true, leafUuid:'first', cutUuid:'cut' }];
   display.ingestJsonl(encode(user('now','first'),assistant('disk','now', [{type:'text',text:'reply'}],'tool_use')),true,true);
-  display.ingestScreen('❯ now\n⏺ reply and preview\n✻ Thinking… (esc to interrupt)\n─────────────────\n❯ \n─────────────────\n');
+  display.ingestScreen(`❯ now\n${REPLY} reply and preview\n✻ Thinking… (esc to interrupt)\n─────────────────\n❯ \n─────────────────\n`);
   display.optimisticUser('same');
   const before = display.getMessages();
   display.prependJsonl(encode(...old), false);

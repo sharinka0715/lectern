@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { extractPreview, matchText, classifySessionScreen } from '../src/core/screen';
 import { MessageDisplay } from '../src/core/message-display';
+import { CALL, CALL_BLINK, REPLY, said } from './helpers/claude-screen';
 
 interface NativeFixture {
   name: string;
@@ -23,27 +24,30 @@ test('real native grouped tool headings and edit diffs stay out of assistant pre
   for (const fixture of fixtures) {
     assert.equal(hash(fixture.screen), fixture.source.screenSha256);
     assert.equal(hash(fixture.viewport), fixture.source.viewportSha256);
+    // Captured without colours: nothing on them is confirmed as the reply (reply-rows.ts), so the
+    // preview stays empty rather than guessing; the coloured samples are tests/fixtures/preview-*.
     const preview = extractPreview(fixture.screen, fixture.userText, fixture.knownAnswer, fixture.viewport);
-    assert.equal(matchText(preview.text), matchText(fixture.expectedText), fixture.name);
+    assert.equal(preview.text, '', fixture.name);
     assert.doesNotMatch(preview.text, /(?:^|\n)\s*(?:Running \d+ shell commands?|Ran \d+ shell commands?|Reading test_stats\.py|Update\((?:test_)?stats\.py\))/);
     assert.doesNotMatch(preview.text, /\d+\s*\+\s*(?:self\.assertEqual|summarize|def test_)/);
   }
 });
 
-test('tool-like assistant prose remains unless adjacent native tool evidence identifies a heading', () => {
-  for (const prose of ['Running 1 shell command…', 'Ran 1 shell command · 1 failed', 'Reading test_stats.py', 'Update(stats.py)']) {
-    const screen = `❯ Explain\n\n● ${prose}\n\n  This is an explanation, followed by ordinary prose.\n✻ Thinking…\n${footer}`;
+test('the look of a row, not its words, tells reply prose from a tool row', () => {
+  for (const prose of ['Running 1 shell command…', 'Ran 1 shell command · 1 failed', 'Reading test_stats.py', 'Update(stats.py)', 'Bash(ls)']) {
+    const screen = `❯ Explain\n\n${REPLY} ${prose}\n\n  This is an explanation, followed by ordinary prose.\n✻ Thinking…\n${footer}`;
     assert.equal(extractPreview(screen, 'Explain').text, `${prose}\n\nThis is an explanation, followed by ordinary prose.`);
+    // The same words as a running call (both frames of its blinking bullet) are no reply.
+    for (const bullet of [CALL, CALL_BLINK])
+      assert.equal(extractPreview(`❯ Explain\n${said('Before.')}\n\n${bullet} ${prose}\n  \x1b[2m⎿  $ ls\x1b[0m\n✻ Thinking…\n${footer}`, 'Explain').text, 'Before.');
   }
-  // A spinner alone must not turn an actual assistant bullet into tool output.
-  assert.equal(extractPreview(`❯ Explain\n● Running 1 shell command…\n✻ Thinking…\n${footer}`, 'Explain').text, 'Running 1 shell command…');
-  // Reading requires the exact same target, not merely another native result.
-  assert.equal(extractPreview(`❯ Explain\n● Reading test_stats.py\n  ⎿ another_file.py\n${footer}`, 'Explain').text, 'Reading test_stats.py');
+  // A dim ⎿ row under the reply is Claude Code's own and ends it.
+  assert.equal(extractPreview(`❯ Explain\n${REPLY} Reading test_stats.py\n  \x1b[2m⎿ another_file.py\x1b[0m\n  not the reply\n${footer}`, 'Explain').text, 'Reading test_stats.py');
 });
 
 test('literal grouped tool examples inside a code fence remain intact', () => {
   const example = '```text\nRunning 1 shell command…\n⎿ $ python3 example.py\nReading stats.py\n⎿ stats.py\nUpdate(stats.py)\n⎿ Added 2 lines, removed 1 line\n```';
-  const screen = `❯ Explain\n● Here is a literal terminal example:\n\n${example}\n${footer}`;
+  const screen = `❯ Explain\n${said(`Here is a literal terminal example:\n\n${example}`)}\n${footer}`;
   assert.equal(extractPreview(screen, 'Explain').text, `Here is a literal terminal example:\n\n${example}`);
 });
 
@@ -88,7 +92,7 @@ test('inline calls keep their native positions across preview, out-of-order resu
   const start = line({ type: 'user', uuid: 'question', message: { content: '检查' } }) +
     line({ type: 'assistant', uuid: 'first', message: { content: [call('a'), text(intro), call('b'), call('c')] } });
   display.ingestJsonl(start);
-  display.ingestScreen(`❯ 检查\n● ${intro}\n● 已找到文件\n✻ Thinking…\n${footer}`);
+  display.ingestScreen(`❯ 检查\n${said(intro)}\n${said('已找到文件')}\n✻ Thinking…\n${footer}`);
   const preview = display.getMessages()[1];
   assert.equal(preview.source, 'preview');
   assert.match(preview.text.slice(intro.length), /已找到文件/);

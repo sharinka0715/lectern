@@ -4,12 +4,15 @@ import { readFileSync } from 'node:fs';
 import { MessageDisplay } from '../src/core/message-display';
 import { nativePromptText, samePrompt } from '../src/shared/native-prompt';
 import { outgoingDelivered, startOutgoing } from '../src/renderer/outgoing-message';
+import { paintBullets } from './helpers/claude-screen';
 
 // A user report (Claude Code 2.1.330 over SSH): the prompt sent from the chat had a
 // tab, which Claude Code's paste handler saves as four spaces. The "sending" bubble
 // never matched its own record, so it stayed below every later turn, took each live
 // screen as its preview and, after a stop, kept the "interrupted" banner up for good.
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/tab-prompt-2.1.330/${name}`, import.meta.url), 'utf8');
+// Taken without colours; every bullet on them is a reply, painted as Claude Code paints one (reply-rows.ts).
+const painted = (name: string) => paintBullets(fixture(name), () => true);
 const sessionId = '5e55107a-0000-4000-8000-000000000330';
 const sent = "Add a row range from x to y, first 5 rows by default, and show name\tsize + date by default; I'll pick the other columns myself";
 
@@ -26,7 +29,7 @@ test('a prompt sent with a tab is the turn Claude Code saved, and the next send 
   display.ingestJsonl(fixture('history.jsonl'));
   display.optimisticUser(sent);
   const sentId = display.getMessages().filter(m => m.role === 'user').at(-1)!.id;
-  display.ingestScreen(fixture('working.txt'), fixture('working.txt'));
+  display.ingestScreen(painted('working.txt'), fixture('working.txt'));
   assert.equal(display.getMessages().at(-1)!.source, 'preview');
 
   display.ingestJsonl(fixture('turn-start.jsonl'));
@@ -37,7 +40,7 @@ test('a prompt sent with a tab is the turn Claude Code saved, and the next send 
   assert.equal(users()[1].text, sent.replace('\t', '    '));
 
   display.ingestJsonl(fixture('turn-end.jsonl'));
-  display.ingestScreen(fixture('idle.txt'), fixture('idle.txt'));
+  display.ingestScreen(painted('idle.txt'), fixture('idle.txt'));
   assert.equal(display.status, 'idle');
   assert.ok(display.getMessages().every(m => m.source === 'jsonl'));
   // The user pressed stop while it looked busy: nothing is left to mark interrupted.
@@ -45,7 +48,7 @@ test('a prompt sent with a tab is the turn Claude Code saved, and the next send 
   assert.equal(display.notice, undefined);
 
   display.optimisticUser('Open the preview');
-  display.ingestScreen(fixture('next-working.txt'), fixture('next-working.txt'));
+  display.ingestScreen(painted('next-working.txt'), fixture('next-working.txt'));
   assert.equal(display.getMessages().at(-1)!.text, 'It is already open at http://127.0.0.1:8080/.');
   display.ingestJsonl(fixture('next.jsonl'));
   const messages = display.getMessages();
@@ -61,15 +64,15 @@ test('a send saved under an unknown text is dropped once a later send is saved',
   const display = new MessageDisplay(sessionId);
   display.ingestJsonl(fixture('history.jsonl'));
   display.optimisticUser(sent.replace('\t', '   '));
-  display.ingestScreen(fixture('working.txt'), fixture('working.txt'));
+  display.ingestScreen(painted('working.txt'), fixture('working.txt'));
   display.ingestJsonl(fixture('turn-start.jsonl') + fixture('turn-end.jsonl'));
-  display.ingestScreen(fixture('idle.txt'), fixture('idle.txt'));
+  display.ingestScreen(painted('idle.txt'), fixture('idle.txt'));
   display.markInterrupted();
   assert.equal(display.getMessages().at(-2)!.source, 'pending', 'unmatched, as before');
   assert.match(display.notice!, /中断/);
 
   display.optimisticUser('Open the preview');
-  display.ingestScreen(fixture('next-working.txt'), fixture('next-working.txt'));
+  display.ingestScreen(painted('next-working.txt'), fixture('next-working.txt'));
   display.ingestJsonl(fixture('next.jsonl'));
   const messages = display.getMessages();
   assert.deepEqual(messages.filter(m => m.role === 'user').map(m => m.source), ['jsonl', 'jsonl', 'jsonl']);

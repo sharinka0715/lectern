@@ -58,6 +58,7 @@ export const FEATURES = [
   { id: 'statusline', title: 'Status line: model, context usage, billing route' },
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
   { id: 'background-settings', title: 'Model and effort switched from the pickers after the reply while a background subagent still runs' },
+  { id: 'preview-rows', title: "Live preview while background work runs: the reply's prose only, never the rows around it (waiting for agents, a subagent's message, folded and running commands, notifications)" },
   { id: 'subagent-column', title: "Subagent column: the subagent's own JSONL found, its turns shown live" },
   { id: 'subagent-resume', title: 'Subagent column: a SendMessage resume runs again with its new messages' },
   { id: 'subagent-listed', title: 'Subagents listed from their meta files on opening, their launches on a page not loaded (2.1.310+)' },
@@ -1071,6 +1072,60 @@ export const SCENARIOS = [
       await check('background', async () => {
         const id = await ui.activeSessionId();
         await page.waitForFunction(selector => !document.querySelector(selector), `${sel.row(id)}[data-background]`, { timeout: 90_000 });
+      });
+    },
+  },
+  {
+    id: 'preview-rows',
+    features: ['preview-rows'],
+    timeoutMs: 180_000,
+    async run(ctx) {
+      const { ui, page, api, folders, check, note } = ctx;
+      // The reply streams slowly while background work comes and goes, as probe-preview-rows.mjs
+      // samples it: a background shell, a subagent that hands back once the turn is over (its message,
+      // its notification, the turn that follows), folded and running commands. The preview (screen
+      // text before the transcript has it) shows the reply's prose and never one of those rows.
+      const prose = n => `Streamed paragraph ${n} of the preview check, written slowly so the app reads it off the screen first (ccm-pv-${n}).`;
+      const bash = (command, run_in_background) => ({ type: 'tool_use', name: 'Bash', input: { command, description: `Run ${command.split(';')[0]}`, ...(run_in_background && { run_in_background }) } });
+      const slow = { chunk: 8, delayMs: 90 }, answers = new Map();
+      api.script('pv', ({ step, toolResults }) => {
+        if (!answers.has(step)) answers.set(step, step === 0 ? { ...slow, blocks: [{ type: 'text', text: prose(0) }, bash('sleep 1; echo pv-shell', true),
+          { type: 'tool_use', name: 'Agent', input: { description: 'Preview helper', prompt: 'Hand back later ccm:pv-agent', subagent_type: 'general-purpose', run_in_background: true } }] }
+          : step === 1 ? { blocks: [{ type: 'text', text: 'Two quick checks.' }, bash('echo one'), bash('echo two')] }
+          : step === 2 || toolResults.some(result => /pv-slept/.test(result.text)) ? { ...slow, text: prose(step) }
+          : { ...slow, blocks: [{ type: 'text', text: prose(step) }, bash('sleep 2; echo pv-slept')] });
+        return answers.get(step);
+      });
+      const report = 'Helper report for the preview check.';
+      api.script('pv-agent', ({ body }) => (body.tools ?? []).some(tool => tool.name === 'SubagentHandback')
+        ? { gate: 'pv-agent', blocks: [{ type: 'tool_use', name: 'SubagentHandback', input: { message: report } }] } : { gate: 'pv-agent', text: report });
+      await check('preview-rows', async () => {
+        // Sample the reply's prose (not its tool and notification rows) of the newest reply, all along.
+        await page.evaluate(() => {
+          const seen = window.__ccmPreview = { texts: [], previews: 0 };
+          window.__ccmPreviewTimer = setInterval(() => {
+            const last = [...document.querySelectorAll('article.message-assistant:not([data-leaving])')].at(-1);
+            if (!last) return;
+            if (last.dataset.source === 'preview') seen.previews++;
+            const text = [...last.querySelectorAll('.message-content > .markdown:not([data-fade-placeholder])')].map(el => el.textContent).join('\n');
+            if (text && seen.texts.at(-1) !== text && seen.texts.length < 4000) seen.texts.push(text);
+          }, 40);
+        });
+        try {
+          await startChat(ctx, folders.main, 'Stream while background work runs ccm:pv');
+          for (const end = Date.now() + 60_000; Date.now() < end && !/Waiting for \d+ background agents? to finish/.test(await ui.screen());) await new Promise(resolve => setTimeout(resolve, 200));
+          api.release('pv-agent');
+          const id = await ui.activeSessionId();
+          await page.waitForFunction(selector => !document.querySelector(selector), `${sel.row(id)}[data-background]`, { timeout: 90_000 });
+          await ui.waitStatus('idle', 60_000);
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        } finally { api.release('pv-agent'); }
+        const seen = await page.evaluate(() => { clearInterval(window.__ccmPreviewTimer); return window.__ccmPreview; });
+        const rows = /Waiting for \d+ background|Message from @|\bRan \d+ shell command|Running \d+ shell command|" finished|Background command|exit code|Thought for \d|agents? launched|Auto mode lets|Monitor event|Run (?:sleep|echo)/;
+        note('samples', { texts: seen.texts.length, previews: seen.previews, last: seen.texts.at(-1)?.slice(-200) });
+        assert.ok(seen.previews > 0, 'the reply was shown from the screen before the transcript had it');
+        const leaked = seen.texts.find(text => rows.test(text));
+        assert.ok(!leaked, `a row around the reply showed as its text: ${leaked?.match(rows)?.[0]} in ${JSON.stringify(leaked?.slice(-300))}`);
       });
     },
   },

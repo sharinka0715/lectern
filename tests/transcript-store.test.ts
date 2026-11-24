@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { MessageDisplay } from '../src/core/message-display';
 import type { JsonRecord } from '../src/core/jsonl';
+import { said } from './helpers/claude-screen';
 import { pendingToolId } from '../src/main/session-permission';
 
 const encode = (...rows: JsonRecord[]) => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
@@ -18,7 +19,7 @@ const result = (uuid: string, parentUuid: string, id: string) => ({ type: 'user'
   content: [{ type: 'tool_result', tool_use_id: id, content: uuid }] } });
 const texts = (display: MessageDisplay) => display.getMessages().map(message => message.text);
 const screen = (prompt: string, response: string) =>
-  `❯ ${prompt}\n⏺ ${response}\n✻ Thinking… (esc to interrupt)\n─────────────────\n❯ \n─────────────────\n`;
+  `❯ ${prompt}\n${said(response)}\n✻ Thinking… (esc to interrupt)\n─────────────────\n❯ \n─────────────────\n`;
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/native-contracts/transcript-projections.json', import.meta.url), 'utf8')) as {
   cases: { name: string; sessionId: string; records: JsonRecord[]; expected: { role: string; text: string }[] }[];

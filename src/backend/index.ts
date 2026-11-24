@@ -67,6 +67,8 @@ export { HostToolsError } from './host-probe';
 
 const UUID = SESSION_UUID;
 const DIRECTORY_PAGE_SIZE = 250;
+// The scrollback with colours (capture-pane -e): about an eighth larger than without.
+const STYLED_LIMIT = 3 * 1024 * 1024;
 const KEYS = new Set<string>(TERMINAL_KEYS);
 // Unrecognized tmux key names are silently typed as literal words.
 const tmuxKey = (key: TerminalKey) => key === 'Backspace' ? 'BSpace' : key === 'Delete' ? 'DC' : key;
@@ -96,7 +98,7 @@ export interface ReadResult { /** Asked for with `listSubagents`: every subagent
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
   sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean };
   /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
-  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
+  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; styledScreen?: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
@@ -180,7 +182,7 @@ export class Backend {
   /** What the session polls have read of each session's subagent folder (at most 64 sessions). */
   private readonly subagentPolls = new Map<string, SubagentPollState>();
   private readonly readGenerations = new Map<string, number>();
-  private screenCache?: { identity: string; checksum: string; screen: string; viewport: string; nativeTasks?: ConversationTask[]; capturedAt: number; scrollbackAt: number };
+  private screenCache?: { identity: string; checksum: string; screen: string; styledScreen?: string; viewport: string; nativeTasks?: ConversationTask[]; capturedAt: number; scrollbackAt: number };
   // Once a pane publishes native identity, a torn/missing record cannot
   // silently restore the static tag's write authority, even following /clear.
   private readonly registeredPanes = new Map<string, Map<string, string | undefined>>();
@@ -629,7 +631,11 @@ exit 0`;
     // A new chat's model and effort apply to that session only; nothing is saved as a default.
     const flags = resume || title !== undefined ? [] : launchChoiceArgs(choices);
     const command = [...invocation.argv, ...invocation.settingsArgs, ...flags, resume ? '--resume' : '--session-id', sessionId, ...(title === undefined ? [] : ['--name', title])].map(q).join(' ');
-    return `${invocation.environment}exec ${command}`;
+    // Under tmux's default terminal ("screen") Claude Code paints 16 colours, where the light
+    // theme's reply bullet and a finished call's are both black; with COLORTERM it paints 256 and
+    // they differ, which the live preview reads (core/reply-rows.ts). A COLORTERM of the user's stays.
+    const colours = 'export COLORTERM="${COLORTERM:-truecolor}"; ';
+    return `${invocation.environment}${colours}exec ${command}`;
   }
   /** The machine-level location for one Claude configuration: its home directory. */
   private machineWorkspace(workspace: Workspace): Workspace {
@@ -1173,7 +1179,9 @@ ${script}`;
       skipPartial = lf < 0;
       jsonl = lf < 0 ? Buffer.alloc(0) : jsonl.subarray(lf + 1);
     }
-    let screen = '', viewport = '', viewportError: string | undefined, capturedAt: number | undefined;
+    // styledScreen: the same scrollback with colours and attributes (capture-pane -e), which tell
+    // Claude's reply apart from the rows around it (core/reply-rows.ts); screen is it without escapes.
+    let screen = '', styledScreen: string | undefined, viewport = '', viewportError: string | undefined, capturedAt: number | undefined;
     let terminalFrame: TerminalFrame | undefined;
     let nativeTasks: ConversationTask[] | undefined;
     const identity = pane && JSON.stringify([key, pane.nativeTarget, pane.cwd, pane.pid, pane.claudePid, pane.native?.procStart, pane.native?.registrationId, pane.serverInstance,
@@ -1181,7 +1189,7 @@ ${script}`;
     const cached = identity && this.screenCache?.identity === identity ? this.screenCache : undefined;
     const stable = pane?.native?.status && ['idle', 'shell', 'waiting'].includes(pane.native.status);
     if (cached && stable && !this.sending.size && !forceViewport && !terminalVisible && !reset && !jsonl.length && Date.now() - cached.capturedAt < 2500) {
-      screen = cached.screen; viewport = cached.viewport; capturedAt = cached.capturedAt; nativeTasks = cached.nativeTasks;
+      screen = cached.screen; styledScreen = cached.styledScreen; viewport = cached.viewport; capturedAt = cached.capturedAt; nativeTasks = cached.nativeTasks;
     } else if (pane && identity && !pane.identityError) {
       const marker = `\n__LECTERN_CAPTURE_${randomUUID()}__:`;
       const previous = cached && Date.now() - cached.scrollbackAt < 5000 ? cached : undefined;
@@ -1195,8 +1203,8 @@ printf '%s' "$lectern_visible" | base64
 printf '\\0'
 lectern_checksum=$(printf '%s' "\${lectern_visible%${q(marker + '0')}}" | cksum)
 printf '%s\\0' "$lectern_checksum"
-${onlyVisible ? '' : `if [ "$lectern_checksum" != ${q(previous?.checksum ?? '')} ]; then
- { ${capture('-S', '-2000')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c ${2 * 1024 * 1024 + 128} | base64
+${onlyVisible ? `{ ${capture('-e')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c ${STYLED_LIMIT + 128} | base64` : `if [ "$lectern_checksum" != ${q(previous?.checksum ?? '')} ]; then
+ { ${capture('-e', '-S', '-2000')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c ${STYLED_LIMIT + 128} | base64
 fi`}
 printf '\\0'
 ${terminalVisible ? `{ ${this.tmux('capture-pane', '-p', '-e', '-t', pane.id, ';', 'display-message', '-p', '-t', pane.id, '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 262272 | base64` : ''}
@@ -1206,7 +1214,7 @@ printf '\\0'
 ${hookDir ? readDialogHooks(hookDir, this.dialogHooks.wantsStarted(key)) : ''}
 printf '\\0'
 ${after}`;
-      const captured = await this.transport.run(workspace, captureScript, { tag: 'tmux.session_capture', maxBytes: (terminalVisible ? 5 : 4) * 1024 * 1024 + (hookDir ? 2 * 1024 * 1024 : 0) });
+      const captured = await this.transport.run(workspace, captureScript, { tag: 'tmux.session_capture', maxBytes: (terminalVisible ? 6 : 5) * 1024 * 1024 + (hookDir ? 2 * 1024 * 1024 : 0) });
       const [visibleFrame, checksum, historyFrame, physicalFrame, taskFrame, hookFrame, ...postCapture] = captured.stdout.toString('utf8').split('\0');
       if (hookDir && hookFrame !== undefined) this.dialogHooks.ingest(key, hookDir, hookFrame, sessionId);
       if (pane.claudePid) {
@@ -1239,19 +1247,21 @@ ${after}`;
       }
       const visible = decode(visibleFrame, 16384);
       viewport = visible.screen ?? ''; viewportError = visible.error;
-      if (onlyVisible) screen = viewport;
-      else if (!historyFrame && previous && previous.checksum === checksum) screen = previous.screen;
+      if (onlyVisible) { screen = viewport; styledScreen = decode(historyFrame, STYLED_LIMIT).screen; }
+      else if (!historyFrame && previous && previous.checksum === checksum) { screen = previous.screen; styledScreen = previous.styledScreen; }
       else {
-        const historyScreen = decode(historyFrame, 2 * 1024 * 1024);
+        const historyScreen = decode(historyFrame, STYLED_LIMIT);
         if (historyScreen.error) throw new Error(historyScreen.error);
-        screen = historyScreen.screen!;
+        styledScreen = historyScreen.screen!;
+        // Without escapes it is the plain capture, character for character (probe-preview-rows.mjs).
+        screen = stripTerminalEscapes(styledScreen);
       }
       capturedAt = Date.now();
       const scrollbackAt = !onlyVisible && !historyFrame && previous ? previous.scrollbackAt : capturedAt;
       if (!viewportError) {
         const panel = nativeTaskPanel(stripTerminalEscapes(viewport).split('\n'));
         if (panel) nativeTasks = panel.tasks ?? decodeTaskList(taskFrame);
-        this.screenCache = { identity, checksum, screen, viewport, capturedAt, scrollbackAt, nativeTasks };
+        this.screenCache = { identity, checksum, screen, styledScreen, viewport, capturedAt, scrollbackAt, nativeTasks };
       }
       diagnostic.event('backend.pane.viewport', { workspaceId: workspace.id, sessionId, paneId: pane.id, ...summarize(viewport), error: viewportError }, viewportError ? 'warn' : 'debug');
     }
@@ -1278,7 +1288,7 @@ ${after}`;
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
     const dialogHooks = hookDir ? this.dialogHooks.observe(key) : undefined;
-    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {

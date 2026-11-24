@@ -7,6 +7,8 @@ import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 import { namedEditorBorder } from './editor-border';
 import { goalTranscriptRow, withoutGoalIndicator } from './goal-screen';
 import { t } from '../shared/i18n';
+import { styledRows } from './screen-styles';
+import { dimmedRow, replyStart, rowPlace } from './reply-rows';
 
 export interface ScreenPreview {
   text: string;
@@ -103,7 +105,6 @@ const activity = /^\s*[✶✻✽✢✳✺·*]\s+.+(?:…|\.\.\.|\(.*(?:token|esc
 // name) directly above the ❯ prompt row. Only this pair ends an open code block.
 const composerRule = /^\s*[─━]{8,}(?: \S(?:.*\S)? [─━]+)?\s*$/u;
 const composerAt = (lines: string[], index: number) => (composerRule.test(lines[index]) || namedEditorBorder.test(lines[index])) && /^\s*❯/u.test(lines[index + 1] ?? '');
-const footer = /^\s*(?:\? for shortcuts|(?:shift\+tab|ctrl\+[a-z]|esc) (?:to|for)|(?:bypass permissions|accept edits|plan mode) (?:on|off)|[↓↑]\s*\d|Context left until auto-compact|\d+% of context)/iu;
 
 /** Native grouped tool headings differ from their JSONL tool names. Require
  * adjacent tool structure; the same words in assistant prose are not enough. */
@@ -132,20 +133,6 @@ function groupedToolHeading(lines: string[], index: number): boolean {
     return !!following && tool.test(following[1]);
   }
   return false;
-}
-
-/** Claude Code's status line right above the input box, never part of a reply:
- * a finished turn ("✻ Cooked for 9s · done 17:55", "* Baked for 1m 41s · done
- * 3:37 PM · 1 shell still running") or a wait for background work ("✻ Waiting
- * for 1 dynamic workflow to finish"). */
-const statusAboveEditor = /^\s*[✶✻✽✢✳✺·*]\s+(?:[A-Za-z][A-Za-z -]* for \d+(?:\.\d+)?(?:ms|s|m|h)(?: \d+(?:\.\d+)?(?:ms|s|m))*(?: · done \d{1,2}:\d{2}(?:\s?[AaPp][Mm])?)?(?: · [^·]+)*|Waiting for \d+ [a-z][a-z -]* to finish)\s*$/u;
-function completedActivityFooter(lines: string[], index: number): boolean {
-  if (!statusAboveEditor.test(lines[index])) return false;
-  // Only blank rows may separate them: 2.1.329 keeps the input box at the bottom of the pane.
-  const next = lines.slice(index + 1).findIndex(value => !!value.trim());
-  const ruleIndex = index + 1 + next;
-  // The input box below may hold a draft.
-  return next >= 0 && isEditorRule(lines[ruleIndex]) && /^\s*[❯>](?:\s|$)/u.test(lines[ruleIndex + 1] ?? '');
 }
 
 function terminalLines(screen: string): string[] {
@@ -261,7 +248,9 @@ function screenStatus(lines: string[]): SessionStatus {
 /**
  * Claude's TUI is not a structured protocol. Require a current prompt anchor, or
  * a text overlap with an already known answer, before accepting its screen text.
- * capture-pane -J should be used upstream to join physical terminal wrapping.
+ * capture-pane -J should be used upstream to join physical terminal wrapping, and -e
+ * to keep the colours: of the screen text only rows whose look confirms Claude's
+ * reply are taken (reply-rows.ts); a capture without them yields no text.
  */
 export function extractPreview(screen: string, userText: string, knownAnswer = '', statusScreen?: string): ScreenPreview {
   const lines = terminalLines(screen);
@@ -290,58 +279,38 @@ export function extractPreview(screen: string, userText: string, knownAnswer = '
 
   const output: string[] = [];
   const taskPanelStart = nativeTaskPanel(lines)?.start;
-  let inText = false;
-  let suppress = false;
-  let inFence = false;
+  // Fail closed: only rows confirmed as Claude's reply text count (reply-rows.ts), read from the
+  // look the capture's escapes give them. A row whose text differs from the plain line (blanked
+  // or rewritten above) has no known look; a capture without escapes confirms nothing.
+  const styled = styledRows(screen);
+  const rowAt = (index: number) => styled[index]?.text === lines[index] ? styled[index] : undefined;
+  let inReply = false;
   for (let index = anchor >= 0 ? anchorEnd + 1 : 0; index < lines.length; index++) {
     if (index === taskPanelStart) break;
     const line = lines[index];
-    if (inFence && composerAt(lines, index)) {
-      // A code block is still streaming: its closing fence has not been drawn
-      // yet, and the spinner and input box below it are not part of the reply.
-      while (output.length && (!output.at(-1)!.trim() || activity.test(output.at(-1)!))) output.pop();
-      break;
-    }
-    if (inText && /^\s*```/.test(line)) {
-      inFence = !inFence;
-      output.push(line.replace(/^ {2}/, ''));
+    const row = rowAt(index);
+    const place = !line.trim() ? 'blank' : row ? rowPlace(row) : 'start';
+    if (place === 'blank') { if (inReply) output.push(''); continue; }
+    if (place === 'inside') {
+      // A reply's rows (prose, lists, tables, code); Claude Code's dim rows under it end it.
+      if (inReply && dimmedRow(row!)) inReply = false;
+      if (inReply) output.push(line.replace(/^ {2}/, ''));
       continue;
     }
-    if (inFence) { output.push(line.replace(/^ {2}/, '')); continue; }
-    if (groupedToolHeading(lines, index)) {
-      suppress = true;
-      inText = false;
-      continue;
-    }
-    if (completedActivityFooter(lines, index)) { inText = false; continue; }
-    // Claude Code's own /goal rows and their indented continuation (goal-screen.ts) are no reply text.
-    if (goalTranscriptRow.test(line)) { suppress = true; inText = false; continue; }
     if (prompt.test(line) || isEditorRule(line)) {
       // A later submitted prompt (including a local slash command) belongs to
       // another terminal interaction even when this turn has no answer yet.
       if (output.length || (anchor >= 0 && prompt.exec(line)?.[1]?.trim())) break;
+      inReply = false;
       continue;
     }
-    if (activity.test(line) || footer.test(line)) {
-      inText = false;
-      continue;
-    }
-    if (/^\s*⎿/u.test(line)) {
-      suppress = true;
-      inText = false;
-      continue;
-    }
-    const start = bullet.exec(line);
-    if (start) {
-      suppress = tool.test(start[1]);
-      inText = !suppress;
-      if (inText) {
-        if (output.length && output.at(-1)?.trim()) output.push('');
-        output.push(start[1]);
-      }
-      continue;
-    }
-    if (inText && !suppress) output.push(line.replace(/^ {2}/, ''));
+    // Every other block start ends the reply; only a reply's own marker starts one. Claude Code's
+    // /goal rows (goal-screen.ts) are no reply text either.
+    inReply = !!row && replyStart(row) && !goalTranscriptRow.test(line);
+    if (!inReply) continue;
+    while (output.length && !output.at(-1)!.trim()) output.pop();
+    if (output.length) output.push('');
+    output.push(bullet.exec(line)?.[1] ?? '');
   }
   const text = output.join('\n').trim();
   const anchored = anchor >= 0;

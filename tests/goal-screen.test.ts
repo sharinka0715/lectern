@@ -9,6 +9,7 @@ import { parseExecutionMode } from '../src/core/session-telemetry';
 import { isIdleEmptyComposer, observeEffortFooter, priorComposerHistory } from '../src/core/settings-screen';
 import { parsePermissionScreen, permissionGuardLines } from '../src/core/permission-screen';
 import { performTurnAction, type TurnDriver } from '../src/backend/native-turn-controls';
+import { paintBullets } from './helpers/claude-screen';
 
 // Real screens of Claude Code's native /goal in a 120-column tmux pane, nine versions
 // (tests/fixtures/goal-<version>/, placeholder conditions "… ccm:g", sandbox paths).
@@ -72,7 +73,9 @@ test("Claude Code's goal rows never become reply text: not met, achieved, could 
     assert.match(failed, older(version) ? /✘ Goal could not be achieved/u : /✘ Goal couldn't be achieved/u, version);
     for (const [name, prompt] of [['failed', '/goal Impossible case ccm:g'], ['notice', '/goal Evaluator error case ccm:g'], ['active', '/goal Finish the two-step task ccm:g']] as const) {
       // 2.1.300 may draw a command's echo late: without that anchor the known answer aligns the preview.
-      const preview = extractPreview(screen(version, name), prompt, 'Acknowledged the goal; step one done.').text;
+      // Taken without colours: the reply's bullet is painted as Claude Code paints it (reply-rows.ts).
+      const painted = paintBullets(screen(version, name), text => text.startsWith('Acknowledged the goal'));
+      const preview = extractPreview(painted, prompt, 'Acknowledged the goal; step one done.').text;
       assert.ok(!/Goal (?:not yet met|achieved|could|still active|paused)|◎|Ran 1 stop hook|contradicts itself|Brewed|Baked|Sautéed|tmux/u.test(preview), `${version} ${name}: ${preview}`);
       // Without the command's echo (2.1.300 draws it late) the screen's last turn cannot be told apart.
       if (screen(version, name).includes('❯ ' + prompt)) assert.match(preview, /Acknowledged the goal; step one done\./u, `${version} ${name}`);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageDisplay, JsonlDecoder } from '../src/core/message-display';
 import { alignPreview, classifySessionScreen, extractPreview, stripTerminalEscapes } from '../src/core/screen';
+import { DONE, REPLY, said } from './helpers/claude-screen';
 
 const sessionId = 'session-fixture';
 function user(uuid: string, text: string) {
@@ -12,7 +13,7 @@ function assistant(uuid: string, text: string, stop: string | null = 'end_turn')
 }
 function jsonl(...records: unknown[]) { return records.map(record => JSON.stringify(record)).join('\n') + '\n'; }
 function screen(prompt: string, text: string, busy = true) {
-  return `Claude Code\n\n❯ ${prompt}\n\n⏺ ${text}\n\n${busy ? '✻ Thinking… (esc to interrupt)\n' : ''}────────────────────────\n❯ \n────────────────────────\n  ? for shortcuts\n`;
+  return `Claude Code\n\n❯ ${prompt}\n\n${said(text)}\n\n${busy ? '✻ Thinking… (esc to interrupt)\n' : ''}────────────────────────\n❯ \n────────────────────────\n  ? for shortcuts\n`;
 }
 
 test('JSONL decoder preserves Chinese and emoji when every byte arrives separately', () => {
@@ -139,14 +140,14 @@ test('a delayed previous answer cannot populate the next optimistic reply', () =
 });
 
 test('screen extractor removes ANSI and TUI chrome while retaining paragraphs and code indentation', () => {
-  const raw = '\x1b[32m❯ Explain\x1b[0m\n\n⏺ One paragraph.\n\n  Another paragraph.\n\n  ```js\n    nested();\n  ```\n\n✻ Thinking… (esc to interrupt)\n─────────\n❯ \n  ? for shortcuts';
+  const raw = '\x1b[32m❯ Explain\x1b[0m\n\n' + REPLY + ' One paragraph.\n\n  Another paragraph.\n\n  ```js\n    nested();\n  ```\n\n✻ Thinking… (esc to interrupt)\n─────────\n❯ \n  ? for shortcuts';
   assert.equal(extractPreview(raw, 'Explain').text, 'One paragraph.\n\nAnother paragraph.\n\n```js\n  nested();\n```');
   assert.equal(stripTerminalEscapes('\x1b]0;title\x07hello\x1b[1m world\x1b[0m'), 'hello world');
 });
 
 test('screens without the current prompt need known text overlap; stale previous turns are rejected', () => {
   assert.equal(extractPreview(screen('Old prompt', 'Old answer'), 'New prompt').text, '');
-  const partial = '⏺ A sufficiently long existing paragraph.\n\n  New paragraph.\n─────────\n❯ ';
+  const partial = REPLY + ' A sufficiently long existing paragraph.\n\n  New paragraph.\n─────────\n❯ ';
   const preview = extractPreview(partial, 'Scrolled away', 'A sufficiently long existing paragraph.');
   assert.equal(preview.anchored, false);
   assert.equal(preview.text, 'A sufficiently long existing paragraph.\n\nNew paragraph.');
@@ -163,11 +164,11 @@ test('an unanswered user turn cannot absorb a later local-command response or un
   assert.equal(display.getMessages().at(-1)!.text, '');
   assert.equal(display.status, 'idle');
   assert.equal(extractPreview(`❯ Unanswered prompt\n❯ Later question\n⏺ Later answer\n${idle}`, 'Unanswered prompt').text, '');
-  assert.equal(extractPreview(`❯ Unanswered prompt\n${idle}\n⏺ Actual answer`, 'Unanswered prompt').text, 'Actual answer');
+  assert.equal(extractPreview(`❯ Unanswered prompt\n${idle}\n${REPLY} Actual answer`, 'Unanswered prompt').text, 'Actual answer');
 });
 
 test('screen tool output and permission menu do not become assistant prose', () => {
-  const raw = '❯ Inspect\n⏺ I will inspect the file.\n\n⏺ Bash(cat file)\n  ⎿ this is command output\n    more command output\n⏺ Here is the result.\n─────────\nDo you want to proceed?\n❯ 1. Yes';
+  const raw = `❯ Inspect\n${REPLY} I will inspect the file.\n\n${DONE} Bash(cat file)\n  ⎿ this is command output\n    more command output\n${REPLY} Here is the result.\n─────────\nDo you want to proceed?\n❯ 1. Yes`;
   const preview = extractPreview(raw, 'Inspect');
   assert.equal(preview.status, 'waiting');
   assert.equal(preview.text, 'I will inspect the file.\n\nHere is the result.');

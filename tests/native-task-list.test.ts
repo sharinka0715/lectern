@@ -8,6 +8,7 @@ import os from 'node:os';
 import { extractPreview } from '../src/core/screen';
 import { nativeTaskPanel } from '../src/core/native-task-screen';
 import { taskListFrame, decodeTaskList } from '../src/backend/native-task-list';
+import { REPLY } from './helpers/claude-screen';
 
 // 2.1.326 中启用与收起 ctrl+t 的原屏结构，任务与会话内容为隔离夹具。
 const chrome = ['  1/3 tasks done · 1 in progress', '  ✔ Inspect fixture', '  ◼ Test fixture', '  ◻ Release fixture',
@@ -16,7 +17,7 @@ test('only a current native task panel is extracted and its rows stay out of the
   const lines = ['❯ 继续','⏺ 正在验证发布。', '', ...chrome];
   const panel = nativeTaskPanel(lines);
   assert.deepEqual(panel?.tasks?.map(t=>t.status),['completed','in_progress','pending']);
-  assert.equal(extractPreview(lines.join('\n'),'继续').text, '正在验证发布。');
+  assert.equal(extractPreview(lines.join('\n').replace('⏺ 正在', `${REPLY} 正在`),'继续').text, '正在验证发布。');
   assert.equal(nativeTaskPanel(lines.slice(0,-1)), undefined);
   assert.equal(nativeTaskPanel([...lines,'❯ another question','──────────────','❯','──────────────','? for shortcuts']),undefined);
   assert.equal(nativeTaskPanel(lines.map(l=>l.replace('1/3 tasks','1/5 tasks')))?.tasks, undefined);

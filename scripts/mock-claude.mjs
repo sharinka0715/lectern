@@ -117,13 +117,19 @@ const agentRows = () => {
     ...(fixtureAgents > 5 ? [`  ↓ ${fixtureAgents - 5} more`] : [])];
 };
 const stateFile = path.join(config, 'screen-state');
+// Claude Code's look, which tells its reply from the rows around it (src/core/reply-rows.ts): the
+// reply's bullet in the theme's text colour and its further rows two columns in; a notice's bullet
+// grey; a waiting call's dim, and blank but still dim in the blinking frame.
+const replyRow = text => `\x1b[97m⏺\x1b[39m ${text.replace(/\n/g, '\n  ')}`;
+const noted = text => text.replace(/^⏺ /u, '\x1b[37m⏺\x1b[39m ');
+const callBullet = blink => `\x1b[2m${blink ? ' ' : '⏺'}\x1b[0m`;
 const draw = () => {
   const lines = ['╭─ Claude Code · offline fixture ─╮', '  Local simulation · no model requests', ''];
   // The last four messages, with the goal's own rows among them (notes).
   let from = history.length;
   for (let shown = 0; from > 0 && shown < 4;) if (history[--from].role !== 'note') shown++;
-  for (const message of history.slice(from)) lines.push(message.role === 'note' ? message.text : `${message.role === 'user' ? '❯' : '⏺'} ${message.text}`, '');
-  if (preview) lines.push(`⏺ ${preview}`, '');
+  for (const message of history.slice(from)) lines.push(message.role === 'note' ? noted(message.text) : message.role === 'user' ? `❯ ${message.text}` : replyRow(message.text), '');
+  if (preview) lines.push(replyRow(preview), '');
   if (busy && !permission) lines.push(evaluating ? '✻ Thinking… (running Stop hook · 1s · esc to interrupt)' : '✻ Thinking… (esc to interrupt)', '');
   if (fixtureState === 'compacting') lines.push('✻ Compacting conversation… (20m 27s · ↓ 842 tokens)', '');
   else if (fixtureState === 'progress') lines.push('✻ Whirring… (8s · ↓ 15 tokens)', '');
@@ -139,7 +145,7 @@ const draw = () => {
       labels, '←/→ to adjust · Enter to confirm · s for this session only · Esc to cancel');
   } else if (permission) {
     const rule = '╌'.repeat(64), options = ['Yes', "Yes, and don't ask again for echo commands in this project", 'No'];
-    lines.push(`${permission.blink ? ' ' : '⏺'} Write a marker file`, `  ⎿  $ ${command}`, '', '─'.repeat(64), ' Bash command', ' Write a marker file', rule, ` ${command}`, rule,
+    lines.push(`${callBullet(permission.blink)} Write a marker file`, `  ⎿  $ ${command}`, '', '─'.repeat(64), ' Bash command', ' Write a marker file', rule, ` ${command}`, rule,
       ' Do you want to proceed?', ...options.map((label, i) => ` ${i === permission.focus ? '❯' : ' '} ${i + 1}. ${label}`), '', ' Esc to cancel · Tab to amend');
   } else if (fixtureState === 'waiting') {
     lines.push('Permission required', 'Do you want to allow this action?', '❯ 1. Yes', '  2. No', 'Enter to confirm · Esc to cancel');

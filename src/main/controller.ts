@@ -689,9 +689,11 @@ export class Controller extends EventEmitter {
       const questionScreen = result.active && result.viewport && !result.directoryTrust && !result.hasMore
         ? parseQuestionScreen(result.viewport) : undefined;
       const applyScreen = !questionScreen && !rewind && !result.hasMore && !settingsOverlap && result.nativeStatus !== 'waiting';
-      const screenDigest = summarize(result.screen);
+      // The preview reads the coloured capture (reply-rows.ts); diagnostics keep it for replay.
+      const previewScreen = result.styledScreen ?? result.screen;
+      const screenDigest = summarize(previewScreen);
       if (watch.screenHash !== screenDigest.sha256 || !watch.screenCaptureId) {
-        watch.screenCaptureId = diagnostic.capture('screen', result.screen, { applied: applied && applyScreen, hasMore: result.hasMore });
+        watch.screenCaptureId = diagnostic.capture('screen', previewScreen, { applied: applied && applyScreen, hasMore: result.hasMore });
         watch.screenHash = screenDigest.sha256;
       }
       if (result.viewport !== undefined) {
@@ -775,7 +777,7 @@ export class Controller extends EventEmitter {
       if (!applyScreen) diagnostic.event('controller.screen.skipped', { reason: settingsOverlap ? 'native-input-transaction' : 'history-draining', screenCaptureId: watch.screenCaptureId });
       watch.display.activity.samples(result.activitySamples ?? []);
       // A viewport belongs to the latest turn. Do not attach it to an older history page.
-      if (applyScreen) watch.display.ingestScreen(result.screen, result.viewport);
+      if (applyScreen) watch.display.ingestScreen(previewScreen, result.viewport);
       if (!result.active && watch.snapshot.paneId && (watch.snapshot.status === 'working' || watch.snapshot.status === 'waiting')) {
         // The pane may be closed from a normal terminal rather than our key bar.
         // Keep unsaved screen text visibly provisional, but stop its animation.

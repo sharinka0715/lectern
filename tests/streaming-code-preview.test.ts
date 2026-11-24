@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractPreview } from '../src/core/screen';
 import { MessageDisplay } from '../src/core/message-display';
+import { REPLY } from './helpers/claude-screen';
 
 // A reply streaming a fenced code block: until the closing fence is drawn, the
 // spinner, input box and footer below it must not become part of the preview.
 const rule = '─'.repeat(80);
 const frame = (code: string[], busy: boolean, titled = false) => [
   '❯ 写个脚本', '',
-  '⏺ 好的：', '',
+  `${REPLY} 好的：`, '',
   '  ```bash', '  for f in *.log; do', '    gzip "$f"', ...code, '',
   ...(busy ? ['✻ Thinking… (12s · ↓ 230 tokens · esc to interrupt)', ''] : []),
   titled ? `${'─'.repeat(60)} 训练 ──` : rule, '❯ ', rule, '  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt'].join('\n');

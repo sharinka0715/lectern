@@ -12,6 +12,7 @@ import { setupDemo } from '../src/main/demo';
 import { WorkspaceStore } from '../src/main/store';
 import type { Backend, ReadResult } from '../src/backend';
 import type { SessionSettingKind, SessionSettingSnapshot, SessionSnapshot } from '../src/shared/types';
+import { REPLY } from './helpers/claude-screen';
 
 const hasTmux = process.platform !== 'win32' && spawnSync('tmux', ['-V']).status === 0;
 
@@ -384,7 +385,7 @@ test('external pane exit ends a live preview without inventing a saved assistant
     reads++;
     if (reads === 1) return {
       ...readResult(id, [userRecord]),
-      screen: '❯ Hello\n\n⏺ An unfinished reply 🧭\n\n✻ Thinking… (esc to interrupt)\n──────────\n❯ \n──────────',
+      screen: `❯ Hello\n\n${REPLY} An unfinished reply 🧭\n\n✻ Thinking… (esc to interrupt)\n──────────\n❯ \n──────────`,
     };
     return { ...readResult(id), active: false, session: { id, title: id, mapping: 'unbound' }, screen: '' };
   });
@@ -611,7 +612,7 @@ test('manual control accepts unknown native dialogs, locks automation, and keeps
     assert.equal(snapshots.at(-1)!.messages.at(-1)!.text, '先去公园走走。');
     assert.equal(snapshots.at(-1)!.terminalControl, undefined);
     await controller.sendMessage('test', 'chat', '午饭吃什么？');
-    screen = '❯ 午饭吃什么？\n⏺ 可以做番茄面。\n✶ Thinking…\nesc to interrupt';
+    screen = `❯ 午饭吃什么？\n${REPLY} 可以做番茄面。\n✶ Thinking…\nesc to interrupt`;
     await pollNow(controller);
     assert.equal(snapshots.at(-1)!.messages.at(-1)!.text, '可以做番茄面。', 'A new normal chat restores preview in its own bubble');
   } finally { await cleanup(); }
