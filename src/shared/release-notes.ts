@@ -35,6 +35,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.3',
+    features: [],
+    fixes: [
+      ['续接会话等操作使项目扫描结果过期时，会话列表会自动重试，避免误报连接错误。',
+        'The conversation list retries automatically when an action such as resuming a chat supersedes a folder scan, avoiding a misleading connection error.'],
+    ],
+  },
+  {
     version: '0.2.2',
     features: [
       ['输入框里加入的文件、图片和从 @ 补全选中的文件都留在原位，显示为写着文件名的整体卡片，可整体选中、剪切粘贴和撤销。',
