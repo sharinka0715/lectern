@@ -97,9 +97,8 @@ const activityKeys = { working: 'quit.working', waiting: 'quit.waiting', idle: '
 
 /** "正在回复", "等待你的确认", "空闲" … with the background work it would stop. */
 export function quitActivityText(session: Pick<QuitSession, 'activity' | 'background' | 'backgroundUnknown'>): string {
-  const state = t(activityKeys[session.activity]);
   const parts = backgroundParts(session.background);
-  if (parts.length) return t('quit.withBackground', { state, what: joinList(parts) });
-  if (session.backgroundUnknown) return t('quit.withBackground', { state, what: t('quit.backgroundSome') });
-  return state;
+  const what = parts.length ? joinList(parts) : session.backgroundUnknown ? t('quit.backgroundSome') : undefined;
+  const state = t(session.activity === 'idle' && what ? 'app.replyComplete' : activityKeys[session.activity]);
+  return what ? t('quit.withBackground', { state, what }) : state;
 }

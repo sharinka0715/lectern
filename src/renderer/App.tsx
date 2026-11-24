@@ -114,7 +114,7 @@ const statusLabels = {
   error: 'app.statusError',
 } as const;
 /** Every state the title bar's status shows for a chat, to reserve the widest. */
-const sessionStateKeys = [...Object.values(statusLabels), 'app.history', 'app.statusUnconfirmed', 'app.sessionError', 'app.backgroundRunning'] as const;
+const sessionStateKeys = [...Object.values(statusLabels), 'app.history', 'app.statusUnconfirmed', 'app.sessionError', 'app.replyComplete'] as const;
 function errorText(e: unknown) {
   reportActionError(e);
   return e instanceof Error
@@ -912,7 +912,7 @@ function ChatPane({ view, resumes, setResume }: {
     const selectionRequest = sessionRequest.current, panePid = snapshot.panePid;
     // Closing ends this pane's Claude Code: always confirm, naming the work it stops.
     const replying = activeStatus === "working" || !!snapshot.turnControls?.running;
-    if (!await confirmAction(closeConfirmation(replying, snapshot.backgroundWork))) return;
+    if (!await confirmAction(closeConfirmation(replying, snapshot.backgroundWork, !!navigationState?.background))) return;
     // Another chat or pane by now: this confirmation was not about it.
     if (sessionRequest.current !== selectionRequest || selected.current.sessionId !== sessionId) return;
     setBusy(true);
@@ -1499,7 +1499,7 @@ function ChatPane({ view, resumes, setResume }: {
                       ? t('app.statusUnconfirmed')
                       : navigationState?.kind === "error"
                         ? t('app.sessionError')
-                        : navigationState?.background ? t('app.backgroundRunning') : t(statusLabels[activeStatus])
+                        : navigationState?.background ? navigationState.label : t(statusLabels[activeStatus])
                   : !workspace ? t('app.statusOffline')
                     : workspace.kind === "ssh" ? t('app.sshConnection') : t('app.localConnection')}</span>
                 {sessionId && sessionStateKeys.map(key => <i key={key} aria-hidden="true" data-text={t(key)} />)}

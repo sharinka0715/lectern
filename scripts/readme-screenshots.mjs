@@ -435,6 +435,8 @@ async function sortingShot({ app, page, workspace }, s, locale) {
   await app.evaluate(({ ipcMain }, { discovery, localHost, remote, remoteHost, reply }) => {
     ipcMain.removeHandler('lectern:checkHost');
     ipcMain.handle('lectern:checkHost', (_event, target) => target.kind === 'ssh' ? remoteHost : localHost);
+    ipcMain.removeHandler('lectern:checkSshConnection');
+    ipcMain.handle('lectern:checkSshConnection', () => ({ ok: true }));
     ipcMain.removeHandler('lectern:listWorkspaces');
     ipcMain.handle('lectern:listWorkspaces', () => [discovery.workspace, remote]);
     ipcMain.removeHandler('lectern:discover');
@@ -448,6 +450,7 @@ async function sortingShot({ app, page, workspace }, s, locale) {
   const list = page.locator('.sidebar-global');
   await list.getByRole('heading', { name: tr(locale, '进行中', 'In progress'), exact: true }).waitFor();
   await list.locator('.session-row[data-session-state=working]').filter({ hasText: reply.title }).waitFor();
+  await list.locator('.session-row.active .session-background-label').waitFor();
   await list.locator('.session-row.active').filter({ hasText: s.title }).waitFor();
   // Give the example enough room to show full project and status labels.
   const separator = page.locator('.sidebar-separator');
@@ -512,6 +515,7 @@ async function previewShot(demo, s, locale) {
 async function tasksShot(demo, s, locale) {
   const { page } = demo;
   await primary(page).locator('.message-assistant').filter({ hasText: s.reviewStarted }).waitFor();
+  await primary(page).locator('.connection-status').getByText(tr(locale, '回复完成', 'Reply complete'), { exact: true }).waitFor();
   await toggleSidebar(page, locale, false);
   const card = page.locator('.activity-float');
   if (!await card.isVisible()) await page.locator('.activity-float-pill').click();

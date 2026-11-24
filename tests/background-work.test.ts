@@ -62,6 +62,6 @@ test('closing a conversation always asks, and names what it stops with counts', 
   assert.equal(idle.danger, true);
   assert.equal(closeConfirmation(true, { shells: 1, agents: 2, monitors: 1, workflows: 1 }).detail,
     '以下仍在运行，将被停止：正在进行的回复、1 个终端、2 个子代理、1 个监控、1 个工作流。');
-  assert.equal(closeConfirmation(false, { shells: 0, agents: 0, monitors: 0, workflows: 0, unknownShells: true }).detail, '以下仍在运行，将被停止：终端。');
+  assert.equal(closeConfirmation(false, { shells: 0, agents: 0, monitors: 0, workflows: 0, unknownShells: true }).detail, '回复完成。以下仍在运行，将被停止：终端。');
   assert.equal(closeConfirmation(true).detail, '以下仍在运行，将被停止：正在进行的回复。');
 });

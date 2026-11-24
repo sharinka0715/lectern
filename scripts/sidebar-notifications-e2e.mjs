@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { _electron as electron } from './fixtures/electron.mjs';
 import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 
@@ -16,9 +17,22 @@ try {
   page = await app.firstWindow(); page.setDefaultTimeout(25000);
   const nativeWindow = await app.browserWindow(page);
   const focusWindow = async () => {
-    await app.evaluate(({app}) => app.focus({steal:true}));
-    await nativeWindow.evaluate(w => { w.show(); w.focus(); });
-    assert.ok(await nativeWindow.evaluate(w => w.isVisible() && !w.isMinimized() && w.isFocused()), 'fixture owns native focus');
+    // Visibility and focus can settle after the first request following a hide.
+    const deadline = performance.now() + 5000;
+    for (let retries = 0; ; retries++) {
+      await app.evaluate(({app}) => app.focus({steal:true}));
+      await nativeWindow.evaluate(w => { w.show(); w.focus(); });
+      const state = await nativeWindow.evaluate(w => ({
+        isVisible: w.isVisible(), isMinimized: w.isMinimized(), isFocused: w.isFocused(),
+      }));
+      const ownsFocus = state.isVisible && !state.isMinimized && state.isFocused;
+      const remaining = deadline - performance.now();
+      if (ownsFocus || remaining <= 0) {
+        assert.ok(ownsFocus, `fixture owns native focus after ${retries} retries (${JSON.stringify(state)})`);
+        return;
+      }
+      await delay(Math.min(250, remaining));
+    }
   };
   await focusWindow();
   // The chevron collapses the list; the folder name itself opens a new chat.
@@ -62,6 +76,37 @@ try {
   await page.reload(); await archived.locator('.state-unread').waitFor();
   await focusWindow(); await archived.click(); await page.getByText('新的完整回复', { exact:true }).last().waitFor();
   await archived.locator('.session-status-dot').waitFor({state:'detached'}); await folderDot.waitFor({state:'detached'});
+  // Keep an explicit reminder even when the selected conversation is already at its latest reply.
+  const mark = async label => {
+    await archived.click({button:'right'});
+    await page.getByRole('menuitem', {name:label, exact:true}).click();
+  };
+  const unread = archived.locator('.state-unread');
+  await mark('标记为未读');
+  await unread.waitFor();
+  // The manual mark survives putting the window away and reopening it.
+  assert.equal(await nativeWindow.evaluate(w => { w.hide(); return w.isVisible(); }), false);
+  await focusWindow();
+  await page.reload();
+  await unread.waitFor();
+  await folder.locator('.state-unread').waitFor();
+
+  const sortBy = async label => {
+    await page.getByRole('button', {name:'对话排序', exact:true}).click();
+    await page.getByRole('menuitem', {name:label, exact:true}).click();
+  };
+  await sortBy('最近更新');
+  await page.locator('.sidebar-global').locator(unread).waitFor();
+  await mark('标记为已读');
+  await unread.waitFor({state:'detached'});
+  await mark('标记为未读');
+  await unread.waitFor();
+  await sortBy('按项目');
+  await folder.locator('.state-unread').waitFor();
+  await archived.click();
+  await unread.waitFor({state:'detached'});
+  await folderDot.waitFor({state:'detached'});
+
   // The active conversation must not acknowledge a reply delivered to a
   // hidden window. Focusing it again reads the already-rendered snapshot.
   assert.equal(await nativeWindow.evaluate(w => { w.hide(); return w.isVisible(); }), false);
@@ -90,7 +135,7 @@ try {
   await page.getByText('翻阅期间完成的回复', {exact:true}).last().waitFor({state:'attached'});
   assert.ok(await scroll.evaluate(v => v.scrollHeight - v.scrollTop - v.clientHeight > 300), 'new reply did not take over the viewport');
   await focusWindow(); await latest.click(); await archived.locator('.session-status-dot').waitFor({state:'detached'}); await folderDot.waitFor({state:'detached'});
-  console.log('Sidebar dots: baseline, colors, placement, collapsed unread, reload, background window, reading earlier and read acknowledgement passed.');
+  console.log('Sidebar dots: baseline, colors, placement, collapsed unread, manual read and unread, reload, background window, reading earlier and read acknowledgement passed.');
 } catch (error) {
   if (page) console.error('Sidebar fixture at failure:', await page.evaluate(() => ({ selected:document.querySelector('.session-row.active')?.textContent,
     lastReply:document.querySelector('.message-assistant:last-of-type')?.textContent?.slice(-160), readingEarlier:!!document.querySelector('.scroll-latest'),

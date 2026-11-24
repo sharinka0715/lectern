@@ -14,7 +14,7 @@
 // Screenshots: test-results/quit-dialog-{zh,en,closing,failed,many}.png
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { appendFile, copyFile, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -57,6 +57,11 @@ async function launch(name, { locale = 'zh-CN', userData, ssh = false, prompt = 
   userData ??= await mkdtemp(path.join(tmpdir(), `lectern-quit-${name}-profile-`));
   const env = { ...process.env, LECTERN_LOCALE: locale, LECTERN_USER_DATA: userData, LECTERN_NODE_BINARY: process.execPath, LECTERN_LOG_DIR: logs,
     LECTERN_DIAGNOSTIC_CONTENT: '0', LECTERN_DEMO_KEEP_TMUX: '1', ...(prompt && { LECTERN_QUIT_PROMPT: '1' }), ...(ssh && { LECTERN_DEMO_SSH_HOST: sshHost }) };
+  if (ssh) {
+    // Exercise the unreachable-host path without dialing the documentation address.
+    await writeFile(path.join(logs, 'ssh'), '#!/bin/sh\nprintf "ssh: connection refused\\n" >&2\nexit 255\n', { mode: 0o700 });
+    env.PATH = [logs, env.PATH].join(path.delimiter);
+  }
   for (const key of ['ELECTRON_RUN_AS_NODE', 'LECTERN_DEV_URL', 'TMUX', 'TMUX_PANE', ...(prompt ? [] : ['LECTERN_QUIT_PROMPT'])]) delete env[key];
   const app = await _electron.launch({ args: exe ? ['--demo'] : ['.', '--demo'], ...(exe && { executablePath: path.resolve(exe) }), env, timeout: 60_000 });
   const child = app.process(), socket = `lectern-demo-${child.pid}`;
@@ -195,7 +200,7 @@ try {
     assert.match(by(fix.id).text, /修复登录页样式[\s\S]*正在回复/);
     assert.match(by(notes.id).text, /整理发布说明[\s\S]*空闲/);
     assert.equal(by(run.demoSession).background, true);
-    assert.match(by(run.demoSession).text, /后台：2 个终端、1 个监控/);
+    assert.match(by(run.demoSession).text, /回复完成 · 后台：2 个终端、1 个监控/);
     assert.ok(listed.every(row => !row.unconfirmed));
     assert.deepEqual(await dialog(run.page).locator('.quit-machine-name').allInnerTexts(), ['本地'], 'grouped under the machine, named as in the sidebar');
     assert.deepEqual(await dialog(run.page).locator('.quit-machine-count').allInnerTexts(), ['3 个对话']);

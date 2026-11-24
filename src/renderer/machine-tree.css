@@ -54,7 +54,8 @@
 
 /* The line. Each row draws its own segment so the line ends at the last knot. */
 .workspace-children { position: relative; margin: calc(1 * var(--ui-px)) 0 calc(4 * var(--ui-px)) 24px; padding-left: 14px; }
-.session-row-wrap { position: relative; }
+.session-row-wrap { --session-knot-center: calc(15 * var(--ui-px)); position: relative; }
+.session-row-wrap:has(> .session-row > .session-lines) { --session-knot-center: 50%; }
 .session-row-wrap::before {
   content: "";
   position: absolute;
@@ -66,12 +67,12 @@
   background: var(--rail-line);
 }
 .session-row-wrap:first-child::before { top: -3px; }
-.session-row-wrap:not(:has(~ .session-row-wrap))::before { bottom: 50%; }
+.session-row-wrap:not(:has(~ .session-row-wrap))::before { bottom: calc(100% - var(--session-knot-center)); }
 .sidebar-tree .session-row::before {
   content: "";
   position: absolute;
   left: -12.5px;
-  top: calc(50% - 4px);
+  top: calc(var(--session-knot-center) - 4px);
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -89,7 +90,7 @@
 /* Being read: the knot turns into a small spinning ring; the state text stays. */
 .sidebar-tree .session-row[data-loading]::before {
   left: -14px;
-  top: calc(50% - 5.5px);
+  top: calc(var(--session-knot-center) - 5.5px);
   width: 11px;
   height: 11px;
   border: 1.5px solid color-mix(in srgb, var(--rail-ice) 25%, transparent);
@@ -138,19 +139,18 @@
 .sidebar-tree .session-row.split-open::before { border-color: var(--rail-ice); }
 .sidebar-tree .session-row[data-status="idle"] { --row-accent: var(--live); }
 .sidebar-tree .session-row[data-status="working"] { --row-accent: var(--rail-ice); }
-.sidebar-tree .session-row:has(.state-unread) { --row-accent: var(--rail-ice); color: var(--rail-text); font-weight: 600; }
+.sidebar-tree .session-row[data-unread] { --row-accent: var(--rail-ice); color: var(--rail-text); font-weight: 600; }
 .sidebar-tree .session-row[data-status="waiting"] { --row-accent: var(--signal); color: var(--rail-text); }
 .sidebar-tree .session-row[data-status="error"] { --row-accent: var(--danger-dot); }
 .sidebar-tree .session-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sidebar-tree .session-row > small, .sidebar-tree .session-line > small { flex: none; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 400; }
 .sidebar-tree .session-state-label { flex: 0 0 auto; color: var(--rail-muted); font-size: var(--text-caption); font-weight: 500; }
 /* Quiet states speak through the knot and dot alone. */
-.sidebar-tree .session-row[data-status="history"] .session-state-label,
-.sidebar-tree .session-row[data-status="idle"]:not(:has(.state-unread, .state-background)) .session-state-label { display: none; }
+.sidebar-tree .session-row:is([data-status="history"], [data-status="idle"]):not([data-unread], [data-background]) .session-state-label { display: none; }
 .sidebar-tree .session-row[data-background] { --row-accent: var(--live); }
 .sidebar-tree .session-row[data-background] .session-state-label { color: var(--live); }
 .sidebar-tree .session-row[data-status="working"] .session-state-label { color: var(--rail-ice); }
-.sidebar-tree .session-row:has(.state-unread) .session-state-label { color: var(--rail-ice); }
+.sidebar-tree .session-row[data-unread]:not([data-background]) .session-state-label { color: var(--rail-ice); }
 .sidebar-tree .session-row[data-status="waiting"] .session-state-label { color: var(--signal); }
 .sidebar-tree .session-row[data-status="error"] .session-state-label { color: var(--danger-dot); }
 .session-row-wrap .session-rename {
@@ -168,7 +168,7 @@
 
 /* The lists across projects (最近更新, 进行中优先) are the same tree: each group is a
    folder-like row (.workspace-row) over the same line, knots and session rows, lined up
-   with the folders of the project tree. Their session rows take two lines (see below). */
+   with the folders of the project tree. */
 .sidebar-global { margin-inline-start: 4px; }
 .sidebar-tree .sort-group-heading { display: flex; flex: 1; min-width: 0; height: 100%; margin: 0; font: inherit; }
 .sidebar-tree .sort-group-toggle {
@@ -184,19 +184,19 @@
 /* No folder actions on a group: its dot stays in the dot column of the rows below
    (the session row's end padding). */
 .sidebar-tree .sort-group-toggle > .workspace-select { padding-inline-end: 47px; }
-/* Two lines: the title line as in the tree (title, state, dot), then the machine and folder
-   in quieter caption text. The knot, the end of the line and the rename button sit on the
-   title line, whose middle is 15 units down (5 above it, 20 for it, 16 for the second). */
-.sidebar-global .session-row {
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
+/* Caption lines share the width left by the centered status column. */
+.sidebar-tree .session-row:has(> .session-lines) {
   gap: 0;
   height: calc(46 * var(--ui-px));
   min-height: calc(46 * var(--ui-px));
 }
-.sidebar-tree .session-line { display: flex; align-items: center; gap: 7px; min-width: 0; height: calc(20 * var(--ui-px)); line-height: calc(20 * var(--ui-px)); }
-.sidebar-tree .session-row > .session-origin {
+.sidebar-tree .sidebar-global .session-row[data-background] {
+  height: calc(62 * var(--ui-px));
+  min-height: calc(62 * var(--ui-px));
+}
+.sidebar-tree .session-lines { flex: 1; min-width: 0; }
+.sidebar-tree .session-line { display: flex; align-items: center; gap: 7px; overflow: hidden; height: calc(20 * var(--ui-px)); line-height: calc(20 * var(--ui-px)); }
+.sidebar-tree .session-lines > :is(.session-origin, .session-background-label) {
   display: block;
   overflow: hidden;
   font-size: var(--text-caption);
@@ -204,9 +204,13 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.sidebar-global .session-row::before { top: calc(15 * var(--ui-px) - 4px); }
-.sidebar-global .session-row[data-loading]::before { top: calc(15 * var(--ui-px) - 5.5px); }
-.sidebar-global .session-row-wrap:not(:has(~ .session-row-wrap))::before { bottom: calc(100% - 15 * var(--ui-px)); }
+.sidebar-tree .session-origin { color: var(--rail-muted); font-weight: 400; }
+.sidebar-tree .session-background-label { color: var(--live); font-weight: 500; }
+.sidebar-tree .session-row-status { display: flex; align-items: center; min-width: 0; line-height: calc(20 * var(--ui-px)); }
+/* Each visible item keeps its original gap, even when the label is hidden. */
+.sidebar-tree .session-row-status > * { margin-inline-start: 7px; }
+.sidebar-tree .session-row-status .session-state-label { flex-shrink: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-row-wrap:has(> .session-row > .session-lines) > .session-rename { inset-block-start: calc(50% - 12 * var(--ui-px)); }
 
 /* Activity dots: one trailing column for folders and sessions. */
 .sidebar-tree .session-status-dot { flex-shrink: 0; width: 7px; min-width: 7px; height: 7px; border-radius: 50%; }
@@ -216,7 +220,9 @@
 /* Reply done, background work still running: a hollow ring that keeps breathing. */
 .sidebar-tree .state-background { background: transparent; box-shadow: inset 0 0 0 1.5px var(--live); animation: sidebar-reply-pulse 2.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .sidebar-tree .state-working, .sidebar-tree .state-background { animation: none; } }
-.sidebar-tree .state-unread { background: light-dark(#3d6fd8, #7aa5f5); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.sidebar-tree .state-unread { --unread-dot: light-dark(#3d6fd8, #7aa5f5); background: var(--unread-dot); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Keep the hollow, breathing background indicator in the same column when unread. */
+.sidebar-tree .state-background.state-unread { background: transparent; box-shadow: inset 0 0 0 1.5px var(--unread-dot), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .sidebar-tree .state-waiting { background: var(--signal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 22%, transparent); }
 .sidebar-tree .state-error { background: var(--danger-dot); }
 
