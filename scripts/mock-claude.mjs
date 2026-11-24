@@ -234,7 +234,7 @@ function decide(choice) {
 // Claude Code's native /goal (2.1.331's records and screen, research in CLAUDE.md "目标"): `/goal <condition>`
 // sets it and starts a turn; `/goal clear` (and stop|off|reset|none|cancel) clears it, at once even while
 // busy (then only the cleared record, and "Goal cleared: …" on the notice row for 3 s). The condition picks
-// what happens: goal-hold (not met, then a reply that goes on until cleared or Esc), goal-impossible,
+// what happens: goal-hold (not met, then a reply held until released or Esc, see `held`), goal-impossible,
 // goal-retry (the check fails, retrying), goal-pause (unmet twice, then paused), goal-pausetool (Claude
 // pauses it: "◎ /goal paused"), goal-checkin (deferred for background work, then a check-in after
 // LECTERN_MOCK_GOAL_CHECKIN_MS); otherwise not met once, then met. Each check shows "running Stop hook"
@@ -258,6 +258,16 @@ function goalIndicator() {
 }
 let goalIndicatorShown;
 setInterval(() => { if (goalIndicator() !== goalIndicatorShown) draw(); }, Math.min(50, Math.max(5, goalTickMs / 3)));
+// A reply held for a test (goal-hold, or a prompt with `mock-hold`) goes on until the test writes
+// <config>/mock-release (consumed here) or Esc stops it: never on a timer, so a slow machine cannot end
+// it before the test has looked.
+const releaseFile = path.join(config, 'mock-release');
+async function held(token) {
+  while (token === generation && !existsSync(releaseFile)) await pause(50);
+  if (token !== generation) return false;
+  rmSync(releaseFile, { force: true });
+  return true;
+}
 /** Streams `text` as the reply's preview, then writes it: false once Esc or a new turn took over. */
 async function speak(text, token) {
   const chars = [...text], pace = Number(process.env.LECTERN_MOCK_STREAM_MS) || 100;
@@ -359,8 +369,7 @@ async function goalTurn(condition) {
   if (!await evaluate('not-met', token)) return;
   if (has('goal-hold')) {
     preview = 'Still working on step two.'; draw();
-    while (token === generation && goal?.condition === condition) await pause(100);
-    if (token === generation && await speak('Still working on step two.', token)) endTurn();
+    if (await held(token) && await speak('Still working on step two.', token)) endTurn();
     return;
   }
   if (!await speak('Step two done: both steps are now complete.', token)) return;
@@ -404,6 +413,7 @@ async function answer(text) {
     preview = chars.slice(0, i + 12).join('');
     draw();
     await pause(pace);
+    if (!i && text.includes('mock-hold') && !await held(token)) return;
   }
   busy = false;
   draw();

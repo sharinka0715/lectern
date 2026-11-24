@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Backend, quoteShell, runCommand } from '../src/backend';
@@ -36,6 +36,8 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
     await until(paneId, screen => /Still working on step two/u.test(screen) && /◎ \/goal active \(\d+s\)/u.test(screen), 'held reply');
     await backend.turnAction(workspace, session.id, paneId, pid, { kind: 'command', text: '/goal clear' });
     await until(paneId, screen => /Goal cleared: Hold the reply goal-hold/u.test(screen), 'cleared notice');
+    assert.match(await capture(paneId), /esc to interrupt/u, 'the reply goes on until released');
+    await writeFile(join(workspace.claudeDir!, 'mock-release'), '');
     await until(paneId, screen => !/esc to interrupt/u.test(screen) && /shortcuts/u.test(screen), 'the reply ended');
     // A goal left paused and active: its timer ticks over the idle box; an inline switch's paste and Enter pass.
     await backend.sendMessage(workspace, session.id, '/goal Pause after two checks goal-pause');

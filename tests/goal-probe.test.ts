@@ -65,12 +65,15 @@ test("matrix F1: the first page of a /goal turn begins at the command, past its 
     const text = JSON.stringify(record);
     return typeof _bytes === 'number' && _bytes > text.length + 20 ? JSON.stringify({ ...record, filler: 'x'.repeat(_bytes - text.length - 12) }) : text;
   });
-  // Paths and dropped usage made the text shorter: grow the biggest snapshot until the first page
-  // (the last 128 KiB) starts inside the set record, as it did in the matrix.
+  // The temporary folder's path (in every record's cwd) and the dropped usage change the length: size the
+  // biggest snapshot's filler so that the first page (the last 128 KiB) starts inside the set record, as
+  // it did in the matrix, whatever the platform's temporary paths (macOS: /var/folders/…).
   const bytes = (list: string[]) => list.reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0);
   const set = lines.findIndex(line => line.includes('"sentinel":true')), biggest = lines.reduce((a, line, i) => line.length > lines[a].length ? i : a, 0);
-  const grow = bytes(lines.slice(0, set)) + 128 * 1024 + 40 - bytes(lines);
-  lines[biggest] = lines[biggest].replace('"filler":"', '"filler":"' + 'x'.repeat(grow));
+  const filler = /"filler":"(x*)"/u.exec(lines[biggest])![1].length;
+  const size = filler + bytes(lines.slice(0, set)) + 128 * 1024 + 40 - bytes(lines);
+  assert.ok(size > 0, `the snapshot's filler (${filler} bytes) absorbs the paths' length`);
+  lines[biggest] = lines[biggest].replace(/"filler":"x*"/u, `"filler":"${'x'.repeat(size)}"`);
   await writeFile(file, lines.join('\n') + '\n');
   const backend = new Backend({ tmuxSocket: 'page-' + sessionId, claudeCommand: 'false' });
   t.after(async () => { await backend.dispose(); await rm(cwd, { recursive: true, force: true }); });

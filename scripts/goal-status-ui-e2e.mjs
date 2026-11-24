@@ -4,7 +4,7 @@
 // indicator's timer ticks (stop, a permission card, a model switch). Screenshots in Chinese and English
 // go to test-results/goal-status/. No installed Claude Code, no model request.
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -16,7 +16,7 @@ await mkdir(results, { recursive: true });
 const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath,
   LECTERN_LOG_DIR: path.join(profile, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '0',
   // Each check shows "running Stop hook" long enough to be read; the check-in comes soon.
-  LECTERN_MOCK_GOAL_EVAL_MS: '1500', LECTERN_MOCK_GOAL_CHECKIN_MS: '1500', LECTERN_MOCK_STREAM_MS: '60' };
+  LECTERN_MOCK_GOAL_EVAL_MS: '2500', LECTERN_MOCK_GOAL_CHECKIN_MS: '1500', LECTERN_MOCK_STREAM_MS: '60' };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 const executablePath = process.env.LECTERN_E2E_EXECUTABLE;
@@ -49,6 +49,8 @@ try {
   const shot = async name => { await page.mouse.move(640, 300); await page.waitForTimeout(250); await page.screenshot({ path: path.join(results, `${name}.png`) }); };
   const idle = () => page.waitForFunction(() => !document.querySelector('.interrupt-button') && !!document.querySelector('.send-button'));
   const records = async () => (await readFile(session.path, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  // The mock holds a goal-hold or mock-hold reply until this file appears (or Esc): no timing involved.
+  const release = () => writeFile(path.join(workspace.claudeDir, 'mock-release'), '');
 
   part = 'send';
   // The slash list offers /goal with what it does.
@@ -105,11 +107,13 @@ try {
   await dialog.locator('.danger-button').click();
   await page.locator('details.goal-status[data-goal-status="cleared"]').waitFor();
   await goalEvent('cleared').last().waitFor();
-  assert.ok(await page.locator('.interrupt-button').isVisible(), 'the reply goes on');
+  assert.ok(await page.locator('.interrupt-button').isVisible(), 'the reply goes on (held until released)');
   assert.equal(await page.locator('.message', { hasText: '/goal clear' }).count(), 0, 'no bubble for /goal clear');
   const cleared = (await records()).filter(record => record.attachment?.type === 'goal_status').at(-1);
   assert.deepEqual(cleared.attachment, { type: 'goal_status', met: true, sentinel: true, condition: 'Keep the reply going goal-hold' });
   assert.ok(!(await records()).some(record => record.type === 'system' && /<command-args>clear</.test(record.content ?? '')), 'cleared while busy');
+  await release();
+  await page.locator('.message-assistant', { hasText: 'Still working on step two.' }).last().waitFor();
   await idle();
   // The bare command opens the pill's details (the ended goal until the next prompt).
   await togglePill(false);
@@ -167,7 +171,8 @@ try {
   await page.locator('.setting-option[role=option]', { hasText: 'Fixture Beta' }).click();
   await page.waitForFunction(() => /Fixture Beta/.test(document.querySelector('button[data-setting-kind="model"]')?.textContent ?? ''));
   // The stop key during a reply.
-  await send('一个要停下的回复 hold');
+  // Held until the stop key (Esc), however slow the machine.
+  await send('一个要停下的回复 mock-hold');
   await page.locator('.interrupt-button:not(:disabled)').waitFor();
   await page.locator('.interrupt-button').click();
   await idle();
