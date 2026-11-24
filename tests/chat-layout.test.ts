@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultChatLayout, loadDesktopState } from '../src/renderer/desktop-state';
+import { defaultAppearance, defaultChatLayout, loadDesktopState, rowSpacingRange } from '../src/renderer/desktop-state';
 
 const read = (json: string | null) => loadDesktopState({ getItem: () => json });
 const layout = ({ chatLineHeight, composerLineHeight, toolSummaryFontSize, conversationWidth }: typeof defaultChatLayout) =>
@@ -66,4 +66,22 @@ test('the chat line height defaults to 130%; a saved height stays', () => {
   assert.equal(defaultChatLayout.chatLineHeight, 130);
   assert.equal(read('{"chatLineHeight":145}').chatLineHeight, 145);
   assert.equal(read('{"chatLineHeight":160}').chatLineHeight, 160);
+});
+
+test('row spacing defaults to 100%; storage from before the setting keeps the old rows', () => {
+  assert.equal(defaultAppearance.rowSpacing, 100);
+  assert.deepEqual(rowSpacingRange, { min: 80, max: 150, step: 5 });
+  for (const raw of [null, '{}', 'not json']) assert.equal(read(raw).rowSpacing, 100);
+  const before = read(JSON.stringify({ theme: 'dark', fontSize: 16, chatLineHeight: 145 }));
+  assert.equal(before.rowSpacing, 100, 'a profile without the key');
+  assert.equal(before.fontSize, 16);
+  assert.equal(before.chatLineHeight, 145);
+});
+
+test('a saved row spacing stays, bounded to the slider and on its steps', () => {
+  for (const [saved, expected] of [[80, 80], [115, 115], [150, 150], [40, 80], [400, 150], [123, 125], [101, 100],
+    ['120', 100], [null, 100], [1e999, 100], [-1e999, 100]] as const)
+    assert.equal(read(JSON.stringify({ rowSpacing: saved })).rowSpacing, expected, String(saved));
+  const both = read(JSON.stringify({ rowSpacing: 135, fontSize: 15 }));
+  assert.deepEqual([both.rowSpacing, both.fontSize], [135, 15], 'independent of the font size');
 });

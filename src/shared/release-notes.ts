@@ -43,6 +43,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Folders, machines and groups opened or folded in the sidebar, and their "Show more", stay so across sort modes and restarts; opening a chat from another sort no longer opens its folder.'],
       ['可以从聊天框使用 Claude Code 的 /goal，回复进行中也能清除目标；输入框上方显示目标的进行、检查、达成等状态，回复中记录每次检查。',
         "Claude Code's /goal works from the chat box, clearing too during a reply; a pill above the input box shows the goal in progress, being checked, met or ended."],
+      ['设置「外观」新增「界面行距」（80%–150%）：调整侧栏、菜单、设置、活动卡片和状态栏等处各行的高度和上下留白，不改变字号。',
+        'New "Row spacing" setting under Appearance (80%–150%): the height and vertical padding of rows in the sidebar, menus, Settings, cards and the status bar, with the text size unchanged.'],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',

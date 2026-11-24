@@ -129,6 +129,46 @@ function expectScaledRows(rows, base) {
       `${key} row at ${rows.font}px: ${rows[key]}px, expected ${expected.toFixed(2)}px (${base[key]}px at ${base.font}px)`);
   }
 }
+async function savePrefs(patch) {
+  await page.evaluate(patch => {
+    const key = "lectern.desktop.preferences.v1";
+    localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key)), ...patch }));
+  }, patch);
+  await page.reload();
+  await expectText("primary", 0);
+}
+// Row spacing: a sidebar conversation, a setting and a right-click menu item, with their font
+// sizes, and one line of reply text (its height belongs to the chat line height).
+async function measureSpacing() {
+  const measured = await page.evaluate(() => {
+    const session = document.querySelector(".sidebar-tree .session-row");
+    return { root: parseFloat(getComputedStyle(document.documentElement).fontSize),
+      session: session.getBoundingClientRect().height, sessionFont: parseFloat(getComputedStyle(session).fontSize) };
+  });
+  measured.line = (await pane("primary").getByText("独立历史回复 0", { exact: true }).boundingBox()).height;
+  await row(0).click({ button: "right" });
+  const menu = page.locator(".context-menu:popover-open");
+  Object.assign(measured, await menu.getByRole("menuitem").first().evaluate(el => {
+    const style = getComputedStyle(el);
+    return { menu: el.getBoundingClientRect().height, menuFont: parseFloat(style.fontSize),
+      menuPad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) };
+  }));
+  await page.keyboard.press("Escape");
+  await menu.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "界面与连接设置" }).click();
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  await dialog.getByRole("button", { name: "外观", exact: true }).click();
+  Object.assign(measured, await dialog.getByRole("slider", { name: "界面行距" }).evaluate(el => {
+    const label = el.closest("label");
+    return { setting: label.getBoundingClientRect().height, settingFont: parseFloat(getComputedStyle(label).fontSize),
+      slider: el.valueAsNumber };
+  }));
+  await dialog.getByRole("button", { name: "关闭设置" }).click();
+  return measured;
+}
+function near(actual, expected, what) {
+  assert.ok(Math.abs(actual - expected) <= 1, `${what}: ${actual}px, expected ${expected.toFixed(2)}px`);
+}
 const defaultLayout = { chat: 130, composer: 135, tool: 13, width: 1000 };
 const customLayout = { chat: 120, composer: 190, tool: 18, width: 800 };
 async function checkChatLayout(view, expected) {
@@ -395,6 +435,44 @@ try {
   await expectText("primary", 0);
   await checkChatLayout("primary", defaultLayout);
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
+  // Row spacing multiplies with the font size's scale: rows with a set height and a menu item's
+  // vertical padding grow or shrink with it, its text line and every font size stay.
+  await savePrefs({ fontSize: 18, rowSpacing: 100 });
+  const spacing = await measureSpacing();
+  assert.deepEqual([spacing.root, spacing.slider, spacing.session, spacing.setting, spacing.menuPad], [18, 100, 30, 48, 12],
+    "100% keeps the rows' pixels");
+  assert.equal(spacing.session, defaultRows.session);
+  for (const [percent, font] of [[80, 20], [80, 18], [150, 18], [150, 15]]) {
+    await savePrefs({ fontSize: font, rowSpacing: percent });
+    const at = await measureSpacing(), scale = font / 18, both = scale * percent / 100, what = `${percent}% at ${font}px`;
+    assert.equal(at.slider, percent);
+    assert.equal(at.root, font, what);
+    for (const key of ["sessionFont", "menuFont", "settingFont"])
+      assert.ok(Math.abs(at[key] - spacing[key] * scale) < 0.01, `${key} ${what}: ${at[key]}px`);
+    near(at.session, spacing.session * both, `conversation row ${what}`);
+    near(at.setting, spacing.setting * both, `setting row ${what}`);
+    near(at.menuPad, spacing.menuPad * both, `menu item padding ${what}`);
+    near(at.menu - at.menuPad, (spacing.menu - spacing.menuPad) * scale, `menu item text line ${what}`);
+    near(at.line, defaultRows.line * scale, `reply text line ${what}`);
+  }
+  // The slider applies at once; Restore default appearance returns it to 100%.
+  await page.getByRole("button", { name: "界面与连接设置" }).click();
+  const appearance = page.getByRole("dialog", { name: "设置", exact: true });
+  await appearance.getByRole("button", { name: "外观", exact: true }).click();
+  const slider = appearance.getByRole("slider", { name: "界面行距" });
+  await slider.press("Home");
+  assert.equal(await slider.getAttribute("aria-valuetext"), "80%");
+  assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue("--ui-spacing")), "0.8");
+  near(await row(0).evaluate(el => el.getBoundingClientRect().height), spacing.session * 15 / 18 * 0.8, "row at 80% after the slider");
+  await page.screenshot({ path: path.join(output, "row-spacing-80.png") });
+  await appearance.getByRole("button", { name: "恢复默认外观" }).click();
+  assert.equal(await slider.evaluate(el => el.valueAsNumber), 100);
+  await appearance.getByRole("button", { name: "关闭设置" }).click();
+  await page.reload();
+  await expectText("primary", 0);
+  assert.equal(await row(0).evaluate(el => el.getBoundingClientRect().height), spacing.session);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("lectern.desktop.preferences.v1")).rowSpacing), 100);
+  results.rowSpacing = true;
   results.chatLayout = true;
   results.fontPreferences = true;
   results.rowsFollowFontSize = true;

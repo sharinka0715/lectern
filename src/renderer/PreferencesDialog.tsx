@@ -46,6 +46,7 @@ import {
   orderProjects,
   previewRanges,
   previewToggles,
+  rowSpacingRange,
   setDesktop,
   useDesktopState,
   validHost,
@@ -218,6 +219,16 @@ export function PreferencesDialog({
                   <output>{settings.fontSize} px</output>
                 </span>
               </label>
+              <label>
+                {t('prefs.rowSpacing')}
+                <span>
+                  <input aria-label={t('prefs.rowSpacing')} type="range" min={rowSpacingRange.min} max={rowSpacingRange.max}
+                    step={rowSpacingRange.step} value={settings.rowSpacing} aria-valuetext={`${settings.rowSpacing}%`}
+                    onChange={e => setDesktop({ rowSpacing: e.currentTarget.valueAsNumber })} />
+                  <output>{settings.rowSpacing}%</output>
+                </span>
+              </label>
+              <p>{t('prefs.rowSpacingHelp')}</p>
               <label>
                 {t('prefs.composerMax')}
                 <span>

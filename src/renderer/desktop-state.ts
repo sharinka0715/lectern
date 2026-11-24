@@ -109,6 +109,8 @@ type PreviewSettings = typeof defaultPreview;
 interface DesktopState extends ChatLayout, PreviewSettings {
   theme: "system" | "light" | "dark";
   fontSize: number;
+  /** Percent of the usual height and vertical padding of interface rows (--ui-spacing). */
+  rowSpacing: number;
   /** The message box grows with its text up to this many lines, then scrolls. */
   composerMaxLines: number;
   replyDetail: ReplyDetail;
@@ -139,9 +141,11 @@ interface DesktopState extends ChatLayout, PreviewSettings {
 }
 export const defaultFontSize = 18;
 export const composerLineRange = { min: 3, max: 30 } as const;
+export const rowSpacingRange = { min: 80, max: 150, step: 5 } as const;
 export const defaultAppearance = {
   theme: "system",
   fontSize: defaultFontSize,
+  rowSpacing: 100,
   composerMaxLines: 10,
   replyDetail: "compact",
   showCacheTtl: true,
@@ -173,6 +177,9 @@ const bounded = (value: unknown, min: number, max: number, fallback: number) =>
   typeof value === "number" && Number.isFinite(value)
     ? Math.min(max, Math.max(min, value))
     : fallback;
+/** A slider's value: bounded, then on one of its steps. */
+const stepped = (value: unknown, { min, max, step }: { min: number; max: number; step: number }, fallback: number) =>
+  min + Math.round((bounded(value, min, max, fallback) - min) / step) * step;
 
 function target(value: unknown): ChatTarget | null {
   if (!value || typeof value !== "object") return null;
@@ -219,6 +226,7 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       ...preview,
       theme: p.theme === "dark" || p.theme === "light" ? p.theme : "system",
       fontSize: bounded(p.fontSize, 14, 20, defaultFontSize),
+      rowSpacing: stepped(p.rowSpacing, rowSpacingRange, defaultAppearance.rowSpacing),
       composerMaxLines: Math.round(bounded(p.composerMaxLines, composerLineRange.min, composerLineRange.max, defaultAppearance.composerMaxLines)),
       replyDetail: p.replyDetail === "individual" ? "individual" : defaultAppearance.replyDetail,
       settingSwitch: p.settingSwitch === "menu" ? "menu" : defaultSessionOptions.settingSwitch,

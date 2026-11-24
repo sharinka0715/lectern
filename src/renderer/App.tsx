@@ -174,6 +174,7 @@ function ChatPane({ view, resumes, setResume }: {
     const root = document.documentElement;
     root.dataset.theme = prefs.theme;
     root.style.setProperty("--ui-font-size", prefs.fontSize + "px");
+    root.style.setProperty("--ui-spacing", String(prefs.rowSpacing / 100));
     root.style.setProperty("--composer-max-lines", String(prefs.composerMaxLines));
     root.style.setProperty("--chat-line-height", String(prefs.chatLineHeight / 100));
     root.style.setProperty("--composer-line-height", String(prefs.composerLineHeight / 100));
@@ -183,7 +184,7 @@ function ChatPane({ view, resumes, setResume }: {
     root.style.setProperty("--preview-code-line-height", String(prefs.previewCodeLineHeight / 100));
     root.style.setProperty("--preview-text-font-size", prefs.previewTextFontSize + "px");
     root.style.setProperty("--preview-text-line-height", String(prefs.previewTextLineHeight / 100));
-  }, [primary, prefs.theme, prefs.fontSize, prefs.composerMaxLines, prefs.chatLineHeight,
+  }, [primary, prefs.theme, prefs.fontSize, prefs.rowSpacing, prefs.composerMaxLines, prefs.chatLineHeight,
     prefs.composerLineHeight, prefs.toolSummaryFontSize, prefs.conversationWidth, prefs.previewCodeFontSize,
     prefs.previewCodeLineHeight, prefs.previewTextFontSize, prefs.previewTextLineHeight]);
   useEffect(() => {

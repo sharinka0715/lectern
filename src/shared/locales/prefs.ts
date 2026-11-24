@@ -27,6 +27,8 @@ export const prefs = {
   themeLight: ['浅色', 'Light'],
   themeDark: ['深色', 'Dark'],
   fontSize: ['界面字号', 'Interface font size'],
+  rowSpacing: ['界面行距', 'Row spacing'],
+  rowSpacingHelp: ['界面行距调整侧栏、菜单和补全列表、设置、活动卡片与后台任务栏、问答和权限卡、状态栏等处每一行的高度和上下留白，不改变字号。对话正文、输入框和文件预览的文字行高在「聊天排版」「文件预览」里调整。', 'Row spacing sets the height and vertical padding of rows in the sidebar, menus and completion lists, Settings, activity cards and the task column, question and permission cards, the status bar and elsewhere, without changing the text size. Line heights of chat text, the input box and file previews are under Chat layout and File preview.'],
   composerMax: ['输入框最大高度', 'Input box maximum height'],
   lines: ['{count} 行', '{count, plural, one {# line} other {# lines}}'],
   replyDetail: ['回复详细程度', 'Reply detail'],

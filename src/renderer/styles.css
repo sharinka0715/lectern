@@ -12,8 +12,12 @@
   font-size: var(--ui-font-size, 18px);
   /* One pixel at the default 18px font size. Text rows size their height, line
      height, vertical padding and the gaps between them in multiples of it, so a
-     smaller or larger font size keeps the same proportions (exactly 1px at 18px). */
-  --ui-px: calc(var(--ui-font-size, 18px) / 18);
+     smaller or larger font size keeps the same proportions (exactly 1px at 18px).
+     --ui-px also follows the row spacing (Settings → Appearance, --ui-spacing,
+     1 by default); --ui-font-px follows the font size alone, for what keeps its
+     size when rows spread out (see "Row spacing" below). */
+  --ui-font-px: calc(var(--ui-font-size, 18px) / 18);
+  --ui-px: calc(var(--ui-font-px) * var(--ui-spacing, 1));
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -175,6 +179,16 @@ code, pre, kbd { font-family: var(--font-mono); }
   transition: background-color .12s ease, color .12s ease;
 }
 .icon-button:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+/* Row spacing (--ui-spacing) spreads the rows of the sidebar, lists, menus, cards, dialogs,
+   bars and the input box. These keep the font size's scale alone: square buttons, badges and
+   icons stay square; the title bar keeps its height beside the system window buttons; a
+   message and a previewed Markdown file are read text, spaced by their own settings. */
+:where(.message, .artifact-markdown, .code-copy, .window-project-trigger,
+  .sidebar-heading-actions .icon-button, .machine-add, .machine-login, .tree-note .icon-button,
+  .topbar-actions > .icon-button, .task-detail-label .icon-button,
+  .activity-float > header .icon-button, .activity-float-refresh, .activity-type-icon,
+  .activity-float-pill b, .activity-toolbar-count, .composer-attach, .composer-turn-action,
+  .send-button, .interrupt-button, .welcome-workspace > span) { --ui-px: var(--ui-font-px); }
 
 /* ───────── Rail (sidebar) ───────── */
 .sidebar {
