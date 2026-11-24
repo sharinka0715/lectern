@@ -124,13 +124,25 @@ test('discovery reconciles history and current explicit tmux bindings without gh
   await writeFile(mock, `import fs from 'node:fs'; import path from 'node:path';
 process.stdin.setRawMode(true); process.stdin.resume(); process.stdout.write('Ready\\n');
 process.stdin.on('data', data => { if(data.includes(3)) process.exit(0); });
-setInterval(() => { const trigger=path.join(process.env.CLAUDE_CONFIG_DIR,'move-cwd'); if(fs.existsSync(trigger)) { process.chdir(fs.readFileSync(trigger,'utf8')); } }, 30);
+setInterval(() => { let to; try { to=fs.readFileSync(path.join(process.env.CLAUDE_CONFIG_DIR,'move-cwd'),'utf8'); } catch(error) { if(error.code!=='ENOENT') throw error; } if(to) process.chdir(to); }, 30);
 `);
   const socket = `lectern-discovery-${randomUUID().slice(0, 8)}`;
   const target: Workspace = { ...workspace, id: randomUUID(), cwd: alias, claudeDir };
   const options = { tmuxSocket: socket, claudeCommand: process.execPath, claudeArgs: [mock] };
   const backend = new Backend(options);
   const tmux = async (...args: string[]) => (await runCommand(target, ['tmux', '-L', socket, ...args].map(quoteShell).join(' '))).stdout.toString().trim();
+  // Waits for the fixture's own state as tmux reports it (not discovery, which is under
+  // test) instead of a fixed sleep: a loaded 3-core macOS runner can take longer.
+  // `undefined` is a closed pane; pane IDs are never reused, so that is final.
+  const waitPane = async (paneId: string, wanted: (pane?: { dead: boolean; cwd: string }) => boolean, what: string) => {
+    let pane: { dead: boolean; cwd: string } | undefined;
+    for (const deadline = Date.now() + 5000; ; await new Promise(r => setTimeout(r, 30))) {
+      const row = (await tmux('list-panes', '-a', '-F', '#{pane_id}|#{pane_dead}|#{pane_current_path}').catch(() => '')).split('\n').find(line => line.startsWith(`${paneId}|`));
+      pane = row ? { dead: row.split('|')[1] === '1', cwd: row.split('|').slice(2).join('|') } : undefined;
+      if (wanted(pane) || !pane || Date.now() > deadline) break;
+    }
+    assert.ok(wanted(pane), `${what}: tmux shows pane ${paneId} as ${pane ? JSON.stringify(pane) : 'closed'}`);
+  };
   const waitReady = async (id: string) => {
     for (let i = 0; i < 30; i++) { const read = await backend.readSession(target, id); if (read.active && read.screen.includes('Ready')) return; await new Promise(r => setTimeout(r, 30)); }
     assert.fail('Fixture pane did not become ready');
@@ -185,7 +197,7 @@ setInterval(() => { const trigger=path.join(process.env.CLAUDE_CONFIG_DIR,'move-
     await staleLocator.dispose();
     await tmux('set-option', '-p', '-t', pending.paneId!, 'remain-on-exit', 'on');
     await backend.sendKey(target, pending.id, 'C-c');
-    await new Promise(r => setTimeout(r, 80));
+    await waitPane(pending.paneId!, pane => !!pane?.dead, 'Ctrl-C ends the fixture; remain-on-exit keeps its pane');
     assert.equal((await backend.discover(target)).sessions.some(s => s.id === pending.id), false, 'dead no-file panes do not create ghost conversations');
     await assert.rejects(() => backend.readSession(target, pending.id), /does not belong/);
 
@@ -198,8 +210,12 @@ setInterval(() => { const trigger=path.join(process.env.CLAUDE_CONFIG_DIR,'move-
     assert.equal((await reloaded.discover(target)).sessions.find(s => s.id === historyId)?.paneId, live.paneId, 'mapping survives a client restart');
     await reloaded.dispose();
 
-    await writeFile(join(claudeDir, 'move-cwd'), childCwd);
-    await new Promise(r => setTimeout(r, 80));
+    // Written whole (rename): writeFile creates the file empty before writing it, and the
+    // fixture polling in between once read '', threw in chdir('') and exited, closing its
+    // pane; discovery then "lost" the pane (macOS CI under full-suite load).
+    await writeFile(join(claudeDir, 'move-cwd.tmp'), childCwd);
+    await rename(join(claudeDir, 'move-cwd.tmp'), join(claudeDir, 'move-cwd'));
+    await waitPane(live.paneId!, pane => pane?.dead === false && pane.cwd === childCwd, 'the fixture changes directory');
     const moved = await backend.discover(target);
     const seen = () => JSON.stringify(moved.panes.map(({ id, cwd, sessionId, active, command }) => ({ id, cwd, sessionId, active, command })));
     assert.equal(moved.panes.find(p => p.id === live.paneId)?.cwd, childCwd, `pane ${live.paneId} after its process changed directory; panes seen: ${seen()}`);
@@ -208,7 +224,7 @@ setInterval(() => { const trigger=path.join(process.env.CLAUDE_CONFIG_DIR,'move-
 
     // Simulate another client resuming/rebinding the same UUID after this pane exits.
     await backend.sendKey(target, historyId, 'C-c');
-    await new Promise(r => setTimeout(r, 80));
+    await waitPane(live.paneId!, pane => !pane, 'Ctrl-C ends the fixture and closes its pane');
     const otherClient = new Backend(options);
     const rebound = await otherClient.resumeSession(target, historyId);
     await waitReady(historyId);
@@ -230,7 +246,7 @@ setInterval(() => { const trigger=path.join(process.env.CLAUDE_CONFIG_DIR,'move-
     await tmux('kill-pane', '-t', duplicate.paneId!);
 
     await backend.sendKey(target, historyId, 'C-c');
-    await new Promise(r => setTimeout(r, 80));
+    await waitPane(rebound.paneId!, pane => !pane, 'Ctrl-C ends the rebound fixture and closes its pane');
     const exited = await backend.discover(target);
     assert.equal(exited.sessions.find(s => s.id === historyId)?.paneId, undefined);
     assert.equal(exited.sessions.find(s => s.id === historyId)?.path, historyPath, 'exiting removes the live link but retains JSONL history');
