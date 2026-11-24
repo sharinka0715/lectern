@@ -40,6 +40,7 @@ export const FEATURES = [
   { id: 'question-single-long', title: 'AskUserQuestion: one long wrapped CJK question after a long preamble, wrapped option descriptions, named session' },
   { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
   { id: 'question-early', title: 'AskUserQuestion before the transcript has the call (the stream ends late): a card read off the screen, answered into its call' },
+  { id: 'question-body', title: "AskUserQuestion whose question has blank lines, a list and wrapped rows, before the transcript has the call, in a named session: the card shows it as asked; a long answer of one's own typed from the card" },
   { id: 'thinking', title: 'Thinking folded into a thought row' },
   { id: 'tasks', title: 'Task list tool (TodoWrite / TaskCreate)' },
   { id: 'queue', title: 'Queue a message during a reply' },
@@ -624,7 +625,7 @@ export const SCENARIOS = [
   },
   {
     id: 'question',
-    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long', 'question-early'],
+    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long', 'question-early', 'question-body'],
     timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
@@ -779,6 +780,32 @@ export const SCENARIOS = [
         await option(2).click();
         await ui.waitReply('ccm-ask-early-done');
         assert.match(answers['ask-early'], /With milk/);
+      });
+      // The reported shape (2.1.33x through a gateway): paragraphs, a list and rows wrapped at the
+      // pane's width, and no call in the transcript while the dialog is up.
+      const job = { header: 'H200 job', multiSelect: false, question: ['要提交这个 H200 job 来测 736 rel 20k 吗？我建议同一个 job 顺带测 736 abs 20k：736 rel 只有 20k，没有同步数的 abs 对照就分不清是动作表示还是训练步数的影响。',
+        '', '384 abs 30k 已经在本机 2 张 L40 上开始跑（约 25 分钟），不占这个 job。', '',
+        '- Job 名：demo-grad-eval-736rel-20k-736abs-20k（yaml：work/jobs/demo-grad-eval-736rel-20k-736abs-20k.yaml，复制自上次的 demo-grad-eval-736abs-60k-init）',
+        '- 预计：每个 ckpt 约 18 分钟（含 3 到 4 分钟加载权重），两个一共约 40 分钟。'].join('\n'),
+        options: [{ label: '提交 (Recommended)', description: '一个 H200 job 依次跑 736 rel 20k 和 736 abs 20k，约 40 分钟' }, { label: '不提交', description: '在本机跑，再多约 45 分钟' }] };
+      const typed = '先跑 736 rel 20k，跑完看一下 gram.pt 的大小和 eval/grad_align/step20000/summary.json 再决定要不要接着跑 736 abs 20k，如果两个都正常就把结果汇总到同一张表里';
+      ask('ask-body', [job], '先看一下队列。', { tailMs: 1500 });
+      await check('question-body', async () => {
+        await ui.waitStatus('idle', 30_000);
+        await ui.send('Ask me the long one ccm:ask-body');
+        await card.waitFor({ timeout: 60_000 });
+        // Blank lines and list items come through as asked, not run together.
+        await page.waitForFunction(([selector, wanted]) => document.querySelector(selector)?.textContent === wanted, [`${sel.question} h3`, job.question], { timeout: 20_000 });
+        await writeFile(path.join(ctx.dir, 'question-body.txt'), await ui.screen());
+        // A long answer of one's own wraps under "Type something." on screen; the card still reads it.
+        await option(3).click();
+        const field = card.locator('.question-editor textarea');
+        await field.waitFor({ timeout: 20_000 });
+        await field.fill(typed);
+        await card.locator('.question-editor-actions button.secondary-button').click();
+        await card.locator('.question-editor-actions button.primary-button').click({ timeout: 30_000 });
+        await ui.waitReply('ccm-ask-body-done');
+        assert.ok(answers['ask-body'].includes(typed), answers['ask-body']);
       });
     },
   },

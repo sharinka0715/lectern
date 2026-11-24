@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.331
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Run the question probe.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────
+←  ☐ Submission  ☐ Check…  ☐ Queue…  ☐ Notif…  ✔ Submit  →
+
+提交吗？
+
+❯ 1. 提交，含 736 abs 20k (Recommended)
+     一个 H200 job 依次跑 736 rel 20k 和 736 abs 20k，约 40
+     分钟
+  2. 提交，只测 736 rel 20k
+     H200 只跑 736 rel 20k，约 20 分钟；和 736 abs 只能对比
+     30k/60k
+  3. Type something.
+────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+──────────────────────────── align between image and audio ─

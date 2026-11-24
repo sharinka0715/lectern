@@ -52,7 +52,7 @@
 .question-preview figcaption { color: var(--secondary-text); font-size: var(--text-meta); }
 .question-preview pre { max-width: 100%; overflow-x: auto; white-space: pre; margin: calc(6 * var(--ui-px)) 0 0; padding-bottom: calc(2 * var(--ui-px)); color: var(--text); font: var(--text-label)/1.5 var(--font-mono); }
 .question-review div { padding: calc(6 * var(--ui-px)) 0; }
-.question-review dt { color: var(--secondary-text); font-size: var(--text-meta); }
+.question-review dt { color: var(--secondary-text); font-size: var(--text-meta); white-space: pre-wrap; }
 .question-review dd { margin: calc(3 * var(--ui-px)) 0 0; font-size: var(--text-ui); white-space: pre-wrap; }
 .question-actions { margin-top: calc(7 * var(--ui-px)); padding-top: calc(7 * var(--ui-px)); border-top: 1px solid var(--line); }
 .question-actions [role="status"] { font-size: var(--text-meta); color: var(--muted); }

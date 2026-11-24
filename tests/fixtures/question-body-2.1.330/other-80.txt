@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /home/user/project
+
+
+❯ Run the question probe.
+────────────────────────────────────────────────────────────────────────────────
+ ☐ H200 job
+
+│ 要提交这个 H200 job 来测 736 rel 20k 吗？我建议同一个 job 顺带测 736 abs
+│ 20k：736 rel 只有 20k，没有同步数的 abs
+│ 对照就分不清是动作表示还是训练步数的影响。
+│
+│ 384 abs 30k 已经在本机 2 张 L40 上开始跑（约 25 分钟），不占这个 job。
+│
+│ - Job 名：demo-grad-eval-736rel-20k-736abs-20k（yaml：work/jobs/demo-grad-eval
+│ -736rel-20k-736abs-20k.yaml，复制自上次的 demo-grad-eval-736abs-60k-init）
+│ - 镜像：registry.example.com/demo-team/sample-va:1234567-abc-trainer（同样的
+│ 565→550 驱动修正）
+│ - 命令：依次对 736 rel global_step_20000、736 abs global_step_20000 跑 8 卡
+│ torchrun grad_alignment.py（128 窗口、seed 0），写到各自 run 的
+│ eval/grad_align/step20000，最后 sleep infinity
+│ - 队列 9001 demo-queue-gpu（788 卡里空 208），1 节点 × 8 张 gpu-a-141g | 20
+│ CPU | 220 GiB，GUARANTEED_SHARED，priority 8，不可抢占，rdma false，workspace
+│ 10001（context abc），挂载和上次相同
+│ - 预计：每个 ckpt 约 18 分钟（含 3 到 4 分钟加载权重），两个一共约 40
+│ 分钟。确认 gram.pt 都写好后我把 job 停掉。
+
+  1. 提交，含 736 abs 20k (Recommended)
+     一个 H200 job 依次跑 736 rel 20k 和 736 abs 20k，约 40 分钟
+  2. 提交，只测 736 rel 20k
+     H200 只跑 736 rel 20k，约 20 分钟；和 736 abs 只能对比 30k/60k
+❯ 3. 先跑 736 rel 20k，跑完看一下 gram.pt 的大小和
+     eval/grad_align/step20000/summary.json 再决定要不要接着跑 736 abs 20k
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel
+──────────────────────────────────────────────── align between image and audio ─

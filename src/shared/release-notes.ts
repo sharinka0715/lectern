@@ -49,6 +49,8 @@ export const releaseNotes: ReleaseNote[] = [
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',
         'Changing the interface font size now scales line heights, vertical spacing and row heights with it, so the sidebar and other lists no longer leave extra gaps.'],
+      ['Claude Code 的提问正文有空行、列表或代码，或自定义回答很长时，也显示为问答卡（空行和列表照原样），不必接管终端回答。',
+        "Claude Code's questions with blank lines, lists or code, or a long typed answer, show as question cards (blank lines and lists kept) instead of leaving only the terminal."],
     ],
   },
   {

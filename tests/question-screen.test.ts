@@ -233,10 +233,11 @@ test('one question, other shapes: unwrapped title, single multi-select with wrap
   assert.equal(preview.question, '首页相册墙的版式你更喜欢哪一种？左边是按时间排列的瀑布流，右边是按地点分组的网格，两种都已经做好了示例，可以直接对比（ImageGrid 组件同时支持两种布局）。');
   assert.deepEqual(preview.options.map(o => [o.kind, o.label]), [['choice', '瀑布流'], ['choice', '分组网格'], ['chat', 'Chat about this']]);
   assert.equal(preview.preview, '┌──┐┌────┐\n│  ││    │\n└──┘└────┘');
-  // Malformed variants still reject.
+  // Malformed frames still reject; the question between the frame's anchors never does (a row
+  // without its bar stays as it is: question-body.test.ts).
   const frame = single330('wrapped-named-120');
+  assert.ok(parse(frame.replace('│ 组件显示的缩略图墙', '  组件显示的缩略图墙'), { pendingToolUse: true }));
   for (const broken of [
-    frame.replace('│ 组件显示的缩略图墙', '  组件显示的缩略图墙'), // a title line lost its bar
     frame.replace('     。和 CI 修复', '。和 CI 修复'), // a description lost its indent
     frame.replace('  3. Type something.\n', ''),
     frame.replace(/\n─+ Demo 示例开发 ─\n?$/u, '\n❯ Returned composer\n'),

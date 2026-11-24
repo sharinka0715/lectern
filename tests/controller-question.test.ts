@@ -179,6 +179,23 @@ test('会话记录还没有这次调用时，Claude Code 在等回答的原屏�
   } finally { await controller.dispose(); }
 });
 
+test('用户报告的原屏（2.1.33x 经网关，问题有空行和列表，会话记录还没有调用）出卡，不再只有横幅', async () => {
+  const reported = readFileSync(new URL('./fixtures/question-body-2.1.331/reported-120.txt', import.meta.url), 'utf8');
+  const {controller, state, poll} = await earlyQuestionSession();
+  try {
+    state.screen = reported;
+    const card = (await poll()).question!;
+    assert.ok(card, 'a card while Claude Code waits for "input needed"');
+    assert.equal(card.toolUseId, undefined);
+    assert.match(card.question!, /影响。\n\n384 abs 30k[^\n]+job。\n\n- Job 名：demo-grad-eval-736rel-20k-736abs-20k（yaml：[^\n]+\n- 镜像：/u);
+    assert.deepEqual(card.tabs, [{label:'H200 job', answered:false}]);
+    assert.deepEqual(card.options.map(option => [option.number, option.kind]), [[1,'choice'],[2,'choice'],[3,'choice'],[4,'other'],[5,'chat']]);
+    // Claude Code not waiting for an answer: the same screen is no card without a call.
+    state.native = {status:'busy'};
+    assert.equal((await poll()).question, undefined);
+  } finally { await controller.dispose(); }
+});
+
 test('凭原屏出的问答卡照常作答（绑定读到的会话记录位置）；调用连同回执一起写入后，迟到的画面不再出卡', async () => {
   const {controller, state, answered, poll, call, result, multi, composer} = await earlyQuestionSession();
   try {
