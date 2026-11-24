@@ -24,6 +24,9 @@ const xmlValue = (xml: string, tag: string) => {
   return raw?.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').trim();
 };
 
+// The re-arm advice changes across Claude Code versions, so match the shape of the notice.
+const monitorExpiryNotice = /^\[Monitor (?:expired after [^\n]+? with (?:no events|\d+ events?) delivered\.|timed out\b)[^\n]*\b[Rr]e-arm\b[^\n]*\]$/;
+
 /** A notification that says the subagent stopped while its own background work
  * still ran (Claude Code 2.1.329: status "completed", the result "may be interim").
  * It notifies again only if it goes on by itself; Claude Code marks it finished
@@ -331,9 +334,11 @@ export class SessionActivityStore {
     }
     this.bind(entry, task);
     const item = entry.item, event = xmlValue(raw, 'event'), summary = xmlValue(raw, 'summary'), result = xmlValue(raw, 'result');
+    const nativeStatus = xmlValue(raw, 'status');
+    const expiry = nativeStatus === undefined && item.kind === 'monitor' && event && monitorExpiryNotice.test(event) ? event : undefined;
     // Two identical native events at different times are still two events.
-    if (event && this.event(item, event, 'notice:' + at + ':' + event.slice(0, 1024), at) && item.kind === 'monitor') this.record(entry, event + '\n', true);
-    const status = statusFor(xmlValue(raw, 'status'));
+    if (event && !expiry && this.event(item, event, 'notice:' + at + ':' + event.slice(0, 1024), at) && item.kind === 'monitor') this.record(entry, event + '\n', true);
+    const status = expiry ? 'completed' : statusFor(nativeStatus);
     if (!status) return;
     const interim = item.kind === 'agent' && interimNotice(summary, xmlValue(raw, 'note'));
     if (interim && summary) this.event(item, summary, 'notice:' + at + ':' + summary.slice(0, 1024), at);
@@ -349,7 +354,7 @@ export class SessionActivityStore {
       entry.attempts = 0;
     }
     if (this.finish(entry, status, at)) entry.waiting = interim;
-    item.summary = (result || summary)?.slice(0, 3072) ?? item.summary;
+    item.summary = expiry ?? (result || summary)?.slice(0, 3072) ?? item.summary;
     if (summary && item.kind !== 'agent') {
       const code = /\bexit(?:ed with)? code\s+(-?\d+)\)?\s*$/i.exec(summary);
       if (code) item.exitCode = Number(code[1]);

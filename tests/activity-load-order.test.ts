@@ -50,10 +50,11 @@ const notice = (task: string, tool: string | undefined, status: string | undefin
 const report = (text: string, tokens: number) => `\n<result>${text}</result>\n<usage><subagent_tokens>${tokens}</subagent_tokens><tool_uses>3</tool_uses><duration_ms>60000</duration_ms></usage>`;
 const interim = (task: string, tool?: string) => notice(task, tool, 'completed', `Agent "Fixture ${task}" is waiting on its own background work`,
   '\n<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>' + report('Interim.', 900));
+const monitorExpiry = '[Monitor expired after 30m with no events delivered. Re-arm it if you still need the watch — and widen the filter if silence was unexpected.]';
 
 /** Two subagents launched, finished, resumed (one ends with interim notices only, one is
- * still running), a background shell that completes and one still running, a monitor with
- * an event that TaskStop ends, a late delivery after a resume, and two image attachments. */
+ * still running), a background shell that completes and one still running, monitors that
+ * stop and expire, a late delivery after a resume, and two image attachments. */
 function session(): JsonRecord[] {
   const c = conversation();
   c.prompt(0, 'Start the background work', true);
@@ -68,10 +69,12 @@ function session(): JsonRecord[] {
   c.queue('enqueue', 3, event); c.delivered(3, event); c.reply(3, 'Noted the log line.', 1);
   const tests = notice('bshella01', 'toolu_shellA', 'completed', 'Background command "Run tests" completed (exit code 0)');
   c.queue('enqueue', 5, tests); c.delivered(5, tests); c.reply(5, 'Tests passed.', 1);
-  c.prompt(8, 'Start another helper');
+  c.prompt(8, 'Start another helper and watch');
   c.call(8, 'toolu_agentB', 'Agent', { description: 'Fixture docs', prompt: 'Check the docs.', subagent_type: 'Explore', run_in_background: true });
   c.result(8, 'toolu_agentB', { isAsync: true, status: 'async_launched', agentId: agentB, description: 'Fixture docs' });
-  c.reply(8, 'The second helper runs.', 2);
+  c.call(8, 'toolu_monB', 'Monitor', { command: 'tail -f example.log', description: 'Watch example', timeout_ms: 1_800_000 });
+  c.result(8, 'toolu_monB', { taskId: 'bmonb0002', timeoutMs: 1_800_000, persistent: false });
+  c.reply(8, 'The second helper and watch run.', 2);
   const doneA = notice(agentA, 'toolu_agentA', 'completed', 'Agent "Fixture review" finished', report('Review report.', 1000));
   c.queue('enqueue', 12, doneA); c.delivered(13, doneA); c.reply(13, 'The review is in.', 1);
   // Its delivery comes only after the resume below: the first observation counts.
@@ -90,6 +93,7 @@ function session(): JsonRecord[] {
   c.queue('remove', 32, firstWait); c.queue('remove', 32, secondWait);
   c.absorbed(32, 30, firstWait); c.absorbed(32, 31, secondWait);
   c.reply(33, 'The reviewer reported again.', 1);
+  c.absorbed(39, 38, notice('bmonb0002', undefined, undefined, 'Monitor event: "Watch example"', `\n<event>${monitorExpiry}</event>`));
   c.prompt(40, 'Here is a screenshot; resume the docs helper', true);
   c.call(40, 'toolu_sendB', 'SendMessage', { to: agentB, summary: 'More', message: 'Add the screenshot.' });
   c.result(40, 'toolu_sendB', { success: true, message: `Resuming agent ${agentB.slice(0, 7)}`, resumedAgentId: agentB, revivedAgentId: agentB });
@@ -121,7 +125,7 @@ function paged(rows: JsonRecord[], cut: number, size: number, check: (display: M
   return display;
 }
 
-test('the activity a full read reconstructs: resumes, interim ends, a late delivery, shells, a monitor and attachments', () => {
+test('the activity a full read reconstructs: resumes, interim ends, a late delivery, shells, monitors and attachments', () => {
   const full = read(session());
   const item = (id: string) => full.activity.snapshot(true).find(entry => entry.id === id)!;
   assert.deepEqual([item('toolu_agentA').status, item('toolu_agentA').resumes, item('toolu_agentA').resumedAt, item('toolu_agentA').endedAt, item('toolu_agentA').priorRunMs],
@@ -130,6 +134,9 @@ test('the activity a full read reconstructs: resumes, interim ends, a late deliv
     ['running', 1, at(40), undefined, 6 * 60_000], 'the delivery after the resume belongs to the run before it');
   assert.deepEqual([item('toolu_shellA').status, item('toolu_shellA').exitCode, item('toolu_shellA').endedAt], ['completed', 0, at(5)]);
   assert.deepEqual([item('toolu_monA').status, item('toolu_monA').endedAt, item('toolu_monA').events.map(event => event.text)], ['stopped', at(22), ['line one']]);
+  assert.deepEqual([item('toolu_monB').status, item('toolu_monB').endedAt, item('toolu_monB').summary, item('toolu_monB').events],
+    ['completed', at(38), monitorExpiry, []]);
+  assert.equal(full.activity.transcriptOutput('toolu_monB'), undefined);
   assert.equal(item('toolu_shellB').status, 'running');
   assert.equal(attachments(full).length, 2);
 });

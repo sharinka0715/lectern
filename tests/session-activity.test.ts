@@ -31,7 +31,7 @@ test('native notification before the next user message completes an idle backgro
   assert.equal(original[0].status,'running');
 });
 
-test('only a successful TaskStop changes the exact monitor, reads stay bounded, and user output is never proof of exit', () => {
+test('TaskStop only changes the exact monitor on success, reads stay bounded, and output-file text is never proof of exit', () => {
   const store = new SessionActivityStore(sid);
   store.ingest([call('mon','Monitor',{command:'example'}),result('mon',{taskId:'b222',timeoutMs:5000})]);
   const notification = '<task-notification>\n<task-id>b222</task-id>\n<summary>Monitor event: "test"</summary>\n<event>x &lt;y&gt;</event>\n</task-notification>';
@@ -246,4 +246,102 @@ test('older records: notification only as an attachment, resume results shared i
   assert.equal(agentState(store, 'a600').status, 'running');
   assert.equal(agentState(store, 'a601').status, 'running', 'the short id in "Resuming agent" names the recipient');
   assert.equal(agentState(store, 'a601').resumedAt, at(20));
+});
+
+const monitorLaunch = () => [
+  { ...call('mon', 'Monitor', { command: 'tail -f example.log', description: 'Watch example', timeout_ms: 1_800_000 }), cwd: '/home/dev/example', timestamp: at(0) },
+  { ...result('mon', { taskId: 'b222', timeoutMs: 1_800_000, persistent: false }), timestamp: at(0) },
+];
+const monitorNotice = (event: string, status?: string) =>
+  `<task-notification>\n<task-id>b222</task-id>\n${status ? `<status>${status}</status>\n` : ''}<summary>Monitor event: "Watch example"</summary>\n<event>${event}</event>\n</task-notification>`;
+const expiry = '[Monitor expired after 30m with 5 events delivered. Re-arm it if you still need the watch.]';
+
+test('a monitor expires from either delivery form without adding to its events or output', () => {
+  const done = monitorNotice(expiry);
+  for (const [record, endedAt] of [
+    [{ ...absorbed(done, 30), timestamp: at(32) }, at(30)],
+    [delivered(done, 31), at(31)],
+  ] as const) {
+    const store = new SessionActivityStore(sid);
+    store.ingest([...monitorLaunch(), delivered(monitorNotice('example ready'), 5)]);
+    assert.equal(backgroundCounts(store.snapshot(true), undefined, 'idle').monitors, 1);
+    store.ingest([record]);
+    const [item] = store.snapshot(true);
+    assert.equal(item.status, 'completed');
+    assert.equal(item.endedAt, endedAt);
+    assert.equal(item.summary, expiry);
+    assert.deepEqual(item.events.map(event => event.text), ['example ready']);
+    assert.equal(store.transcriptOutput('mon'), 'example ready\n');
+    assert.equal(backgroundCounts(store.snapshot(true), undefined, 'idle').monitors, 0);
+    assert.equal(activityTally(store.snapshot(true)), '1 完成');
+  }
+});
+
+test('an enqueued monitor expiry applies once, even if delivered after a newer notification', () => {
+  const store = new SessionActivityStore(sid);
+  const done = monitorNotice(expiry);
+  store.ingest([...monitorLaunch(), enqueue(done, 30)]);
+  const [ended] = store.snapshot(true);
+  assert.deepEqual([ended.status, ended.endedAt, ended.summary], ['completed', at(30), expiry]);
+  assert.deepEqual(ended.events, []);
+  assert.equal(store.transcriptOutput('mon'), undefined);
+  store.ingest([delivered(monitorNotice('example closed', 'completed'), 31)]);
+  const beforeDelivery = store.snapshot(true);
+  assert.notEqual(beforeDelivery[0].summary, expiry);
+  store.ingest([delivered(done, 32)]);
+  assert.deepEqual(store.snapshot(true), beforeDelivery);
+  assert.equal(store.transcriptOutput('mon'), 'example closed\n');
+});
+
+test('native monitor expiry and timeout wording variants complete the task', () => {
+  const rearm = 'Re-arm it only if you have more to do before you reply; a few minutes after your reply a new watch is likely stopped, so tell the user what to check instead';
+  const stderr = "Its command wrote to stderr, which isn't delivered as events and may mean it failed: see `/home/dev/example/tasks/monitor.output`. ";
+  const variants = [
+    '[Monitor expired after 1m 30s with no events delivered. Re-arm it if you still need the watch — and widen the filter if silence was unexpected.]',
+    '[Monitor expired after 1h 0m 5s with 1 event delivered. Re-arm it only if you have more to do before you reply; after your reply a new watch may stop within a minute, so tell the user what to check instead.]',
+    `[Monitor expired after 30m with no events delivered. ${stderr}${rearm} — and widen the filter if silence was unexpected.]`,
+    '[Monitor timed out — re-arm if needed.]',
+    `[Monitor timed out. ${rearm}.]`,
+    `[Monitor timed out with no events delivered. ${stderr}Re-arm if needed.]`,
+    `[Monitor timed out with no events delivered. ${stderr}${rearm}.]`,
+    '[Monitor expired after 45m with 3 events delivered. Re-arm only when asked.]',
+  ];
+  for (const event of variants) {
+    const store = new SessionActivityStore(sid);
+    store.ingest([...monitorLaunch(), delivered(monitorNotice(event), 30)]);
+    const [item] = store.snapshot(true);
+    assert.deepEqual([item.status, item.endedAt, item.summary], ['completed', at(30), event], event);
+    assert.deepEqual(item.events, []);
+    assert.equal(store.transcriptOutput('mon'), undefined);
+  }
+});
+
+test('an explicit monitor status wins and a stale expiry does not change the result', () => {
+  const store = new SessionActivityStore(sid);
+  store.ingest([...monitorLaunch(), delivered(monitorNotice(expiry, 'failed'), 30)]);
+  const [failed] = store.snapshot(true);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.endedAt, at(30));
+  assert.equal(failed.summary, 'Monitor event: "Watch example"');
+  assert.deepEqual(failed.events.map(event => event.text), [expiry]);
+  store.ingest([absorbed(monitorNotice(expiry), 29)]);
+  assert.deepEqual(store.snapshot(true), [failed]);
+  assert.equal(store.transcriptOutput('mon'), expiry + '\n');
+});
+
+test('expiry-like script output is still a normal monitor event', () => {
+  const store = new SessionActivityStore(sid);
+  const lines = [
+    '[Monitor expired after 30m with no events delivered.]',
+    '[Monitor expired after 30m with 5 events delivered. Re-arming for the next example.]',
+    `example output: ${expiry}`,
+    `${expiry} (example output)`,
+    '[Monitor expired after 30m with 5 events delivered. Re-arm only when asked.',
+    '[Monitor expired after 30m with 5 events delivered. The script will check again.]',
+  ];
+  store.ingest([...monitorLaunch(), ...lines.map((line, i) => delivered(monitorNotice(line), 34 + i))]);
+  const [item] = store.snapshot(true);
+  assert.equal(item.status, 'running');
+  assert.deepEqual(item.events.map(event => event.text), lines);
+  assert.equal(store.transcriptOutput('mon'), lines.join('\n') + '\n');
 });

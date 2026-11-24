@@ -57,6 +57,8 @@ export const releaseNotes: ReleaseNote[] = [
         "Claude Code's questions with blank lines, lists or code, or a long typed answer, show as question cards (blank lines and lists kept) instead of leaving only the terminal."],
       ['回复中有后台子代理或命令时，实时预览不再把等待子代理、子代理消息、折叠或运行中的命令、完成通知等终端状态行当成正文显示。',
         "With background agents or commands running, the live preview no longer shows terminal status rows (waiting for agents, subagent messages, folded or running commands, notices) as reply text."],
+      ['Monitor 按时限到期后，后台任务栏显示它已完成，运行计数随之更新。',
+        'When a Monitor reaches its time limit, the task column marks it as completed and the running count updates.'],
     ],
   },
   {
