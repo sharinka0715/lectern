@@ -7,6 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
+import { startConversation } from './fixtures/sidebar-folders.mjs';
 const exec = promisify(execFile), host = process.env.LECTERN_SSH_HOST;
 assert.ok(host, 'Set LECTERN_SSH_HOST to an SSH alias for the test machine');
 assert.match(host, /^(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/);
@@ -17,7 +18,7 @@ await mkdir(root, { recursive: true });
 const cwd = (await remote('mktemp -d /tmp/lectern-manual-XXXXXX')).trim();
 assert.match(cwd, /^\/tmp\/lectern-manual-[A-Za-z0-9]+$/);
 const report = { success: false, root, host, cwd, requests: 0, checks: [], screens: [], originalPanes: await remote("tmux list-panes -a -F '#{pane_id}|#{@lectern_session_id}|#{pane_current_command}'") };
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_LOG_CONTENT: '1' };
+const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'diagnostics'), LECTERN_DIAGNOSTIC_CONTENT: '1' };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const workspaceId = 'native-manual', name = `${host} · 原生交互测试`;
 let app, page, sid, paneId;
@@ -68,7 +69,9 @@ try {
   await page.evaluate(({workspaceId,name,host,cwd}) => window.desktop.saveWorkspace({id:workspaceId,name,kind:'ssh',host,cwd}), {workspaceId,name,host,cwd});
   await page.reload(); await page.waitForFunction(() => !!window.desktop);
   await page.evaluate(() => { window.__snapshots = []; window.desktop.onSnapshot(s => { window.__snapshot = s; window.__snapshots.push(s); }); });
-  await page.getByRole('button', { name: `在 ${name} 新建对话`, exact:true }).click();
+  // 新建对话 only opens a draft whose first message starts Claude Code (a real request);
+  // start the pane without a message and open it from the sidebar, as the old button did.
+  await startConversation(page, workspaceId);
   await waitFrame(() => !!window.__snapshot?.paneId && (!!window.__snapshot.directoryTrust || window.__snapshot.navigationStatus === 'idle'));
   ({ sessionId: sid, paneId } = await snapshot()); report.sessionId = sid; report.paneId = paneId;
   const initial = await frame('startup');

@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron } from './fixtures/electron.mjs';
+import { openConversation } from './fixtures/sidebar-folders.mjs';
 import { Backend } from '../src/backend/index.ts';
 
 const root = await realpath(await mkdtemp(path.join(process.platform === 'win32' ? tmpdir() : '/tmp', 't-mode-')));
@@ -33,7 +34,8 @@ try {
   const page=await app.firstWindow();page.setDefaultTimeout(35000);
   await page.evaluate(()=>{window.desktop.onSnapshot(s=>{window.__mode=s;});});
   for(const s of sessions) {
-    await page.locator('.session-row[data-session-id="'+s.id+'"]').click();
+    // Six new conversations: the folder lists five until 展开更多 (openConversation clicks it).
+    await openConversation(page,ws.id,s.id);
     // The test user accepts the one warning solely in the disposable bypass pane.
     if(s.mode==='bypassPermissions') {
       await page.waitForFunction(id=>window.__mode?.sessionId===id && window.__mode.navigationStatus==='waiting' && window.__mode.viewport?.includes('WARNING: Claude Code running in Bypass Permissions mode'),s.id);

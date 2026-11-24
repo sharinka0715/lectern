@@ -6,7 +6,7 @@
 //   (Workspace.historyScan === false); folders saved with desktop.saveWorkspace scan at once;
 // - 新建对话 opens a draft, and its Claude Code starts with the first message: a real request
 //   to the default model. startConversation starts the pane without a message instead.
-import { refreshFolderUntil } from './sidebar-refresh.mjs';
+import { refreshFolder } from './sidebar-refresh.mjs';
 
 /** The folder's conversation list, shown while it is expanded. */
 export const folderGroup = (page, workspaceId) => page.locator(`[id="workspace-children-${workspaceId}"]`);
@@ -50,13 +50,19 @@ export async function scanFolder(page, workspaceId, { timeout = 45_000 } = {}) {
   await note.waitFor({ state: 'detached', timeout });
 }
 
-/** Expands the folder and clicks the conversation's row. `refresh` reads the folder again until the row
- * shows (a conversation the sidebar has not read yet); otherwise the row is waited for. */
+/** Expands the folder and clicks the conversation's row. The folder lists its five newest
+ * conversations: 展开更多 shows ten more until the row is there. `refresh` also reads the folder
+ * again every 2 seconds (a conversation the sidebar has not read yet); otherwise its next read is awaited. */
 export async function openConversation(page, workspaceId, sessionId, { refresh = false, timeout = 45_000 } = {}) {
   await expandFolder(page, workspaceId);
   const row = sessionRow(page, workspaceId, sessionId);
-  if (refresh) await refreshFolderUntil(page, workspaceId, row, { timeout });
-  else await row.waitFor({ timeout });
+  const more = folderGroup(page, workspaceId).locator('button.tree-more:not(.tree-collapse)');
+  const end = Date.now() + timeout;
+  for (let refreshed = 0; !(await row.count()); await page.waitForTimeout(200)) {
+    if (Date.now() > end) throw new Error(`No sidebar row for conversation ${sessionId} in folder ${workspaceId}`);
+    if (await more.count()) await more.click();
+    else if (refresh && Date.now() - refreshed > 2000) { await refreshFolder(page, workspaceId); refreshed = Date.now(); }
+  }
   await row.click();
 }
 

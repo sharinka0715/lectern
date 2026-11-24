@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { selectNativeScenario, validateNativeAnswer } from './native-dialogue.mjs';
+import { startConversation } from './fixtures/sidebar-folders.mjs';
 
 const exec = promisify(execFile);
 const root = path.resolve('test-results', `native-${new Date().toISOString().replace(/[:.]/g, '-')}`);
@@ -39,7 +40,9 @@ try {
       if (window.__nativeSnapshots.length > 500) window.__nativeSnapshots.shift();
     });
   });
-  await page.getByRole('button', { name: /^新建对话/ }).first().click();
+  // 新建对话 only opens a draft whose first message starts Claude Code (a real request);
+  // start the pane without a message and open it from the sidebar, as the old button did.
+  await startConversation(page, 'native-diagnostics');
   await page.waitForFunction(() => !!window.__nativeSnapshot?.paneId);
   sessionId = await page.evaluate(() => window.__nativeSnapshot.sessionId);
   paneId = await page.evaluate(() => window.__nativeSnapshot.paneId);

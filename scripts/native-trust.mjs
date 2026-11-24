@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { selectNativeScenario, validateNativeAnswer } from './native-dialogue.mjs';
+import { startConversation } from './fixtures/sidebar-folders.mjs';
 const exec = promisify(execFile);
 const root = path.resolve('test-results', `native-trust-${Date.now()}`);
 await mkdir(root, { recursive: true });
@@ -21,10 +22,11 @@ assert.ok(Number.isInteger(dialogueTurns) && dialogueTurns >= 0 && dialogueTurns
 report.requestedDialogueTurns = dialogueTurns;
 const owned = [];
 let app, page;
-async function newSession(workspaceId, name) {
-  const previousId = await page.evaluate(() => window.__snapshot?.sessionId);
-  await page.getByRole('button', { name: `在 ${name} 新建对话`, exact: true }).click();
-  await page.waitForFunction(({ id, previousId }) => window.__snapshot?.workspaceId === id && window.__snapshot.paneId && window.__snapshot.sessionId !== previousId, { id: workspaceId, previousId });
+async function newSession(workspaceId) {
+  // 新建对话 only opens a draft whose first message starts Claude Code (a real request);
+  // start the pane without a message and open it from the sidebar, as the old button did.
+  const started = await startConversation(page, workspaceId);
+  await page.waitForFunction(({ id, sid }) => window.__snapshot?.workspaceId === id && window.__snapshot.sessionId === sid && !!window.__snapshot.paneId, { id: workspaceId, sid: started.id });
   const snapshot = await page.evaluate(() => window.__snapshot);
   owned.push({ workspaceId, sessionId: snapshot.sessionId, paneId: snapshot.paneId });
   return snapshot;
@@ -33,7 +35,14 @@ async function trustCard(workspaceId) {
   await page.waitForFunction(id => window.__snapshot?.workspaceId === id && window.__snapshot.directoryTrust && window.__snapshot.status === 'waiting', workspaceId);
   const card = page.locator('section[aria-label="目录信任确认"]'); await card.waitFor();
   assert.equal(await page.getByRole('textbox', { name: '发送给 Claude 的消息' }).isDisabled(), true);
-  assert.equal(await page.locator('button[data-setting-kind="model"]').isDisabled(), true);
+  // The model list can be browsed at any time (it is the machine's list, not read from the pane),
+  // but no choice can be applied while the trust prompt holds the native input.
+  const picker = page.locator('button[data-setting-kind="model"]'), menu = page.locator('[data-setting-menu="model"]');
+  await picker.click();
+  await menu.getByRole('option').first().waitFor();
+  assert.equal(await menu.locator('button[role="option"]:not(:disabled)').count(), 0, 'No model can be chosen during the trust prompt');
+  await picker.click();
+  await menu.waitFor({ state: 'hidden' });
   return card;
 }
 async function paneAlive(paneId) {
@@ -58,7 +67,7 @@ try {
     window.__snapshots = [];
     window.desktop.onSnapshot(value => { window.__snapshot = value; window.__snapshots.push(value); });
   });
-  const home = await newSession('trust-home', '主目录·提示检查');
+  const home = await newSession('trust-home');
   const homeCard = await trustCard('trust-home');
   const initialHome = await page.evaluate(() => window.__snapshot);
   assert.equal(initialHome.directoryTrust.cwd, homedir());
@@ -75,18 +84,18 @@ try {
   await page.locator('section[aria-label="目录信任确认"]').waitFor({ state: 'hidden' });
   report.home = { cwd: homedir(), sessionId: home.sessionId, scope: 'session', defaultChoice: 'No, exit', action: 'exit', trusted: false };
   // Reopening home must still ask: the test has never accepted broad home trust.
-  const homeAgain = await newSession('trust-home', '主目录·提示检查');
+  const homeAgain = await newSession('trust-home');
   await trustCard('trust-home');
   await page.locator('button[data-trust-decision="exit"]').click();
   await waitExited(homeAgain.paneId);
   report.home.promptedAgain = true;
 
-  const rejected = await newSession('trust-scratch', '临时目录·信任测试');
+  const rejected = await newSession('trust-scratch');
   const rejectedCard = await trustCard('trust-scratch');
   assert.equal(await rejectedCard.getAttribute('data-directory-trust-cwd'), cwd);
   await rejectedCard.locator('button[data-trust-decision="exit"]').click();
   await waitExited(rejected.paneId);
-  const accepted = await newSession('trust-scratch', '临时目录·信任测试');
+  const accepted = await newSession('trust-scratch');
   const acceptCard = await trustCard('trust-scratch');
   assert.equal(await acceptCard.getAttribute('data-directory-trust-cwd'), cwd, 'No did not persist trust');
   const before = await page.evaluate(() => window.__snapshot);

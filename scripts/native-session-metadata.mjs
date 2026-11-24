@@ -51,7 +51,9 @@ try {
   assert.ok(model&&(recover?/^(?:Sonnet|Haiku)\b/i:/^Sonnet\b/i).test(model.label),'Do not send a request unless native initialization observed an explicitly allowed model');
   assert.ok(effort);assert.ok(initial.contextUsage?.totalInputTokens>0);assert.ok(initial.executionMode);
   assert.match(await page.locator('[data-setting-kind="model"]').innerText(),new RegExp(model.label));
-  assert.equal(await page.locator('[data-context-input-tokens]').getAttribute('data-context-input-tokens'),String(initial.contextUsage.totalInputTokens));
+  // A pane Lectern started shows its status line's count (SessionTelemetryDisplay); otherwise the last request's.
+  const shownInput=initial.statusLineManaged&&initial.statusLine?.inputTokens!==undefined?initial.statusLine.inputTokens:initial.contextUsage.totalInputTokens;
+  assert.equal(await page.locator('[data-context-input-tokens]').getAttribute('data-context-input-tokens'),String(shownInput));
   report.initial={paneId:initial.paneId,model:model.label,effort:effort.label,mode:initial.executionMode,context:initial.contextUsage,messages:initial.messages.length};
   report.checks.push('automatic-native-model-and-effort','footer-mode-observed','historical-last-request-input');
   await page.screenshot({path:path.join(root,'auto-initialized.png')});
@@ -110,7 +112,9 @@ finally{
   const events=(await Promise.all(names.map(n=>readFile(path.join(root,'diagnostics',n),'utf8')))).flatMap(t=>t.trim().split('\n').filter(Boolean).map(JSON.parse));
   report.nativeMenuReads=events.filter(e=>e.event==='settings.get.start'&&e.context?.sessionId===source.sessionId).map(e=>e.context.kind??e.data.kind);
   if(report.success){
-    try{assert.deepEqual(report.nativeMenuReads,report.checks.includes('model-change-refreshes-effort')?['model','effort','effort']:['model','effort']);assert.equal(report.finalPanes,report.originalPanes);report.checks.push('exactly-two-native-initialization-reads','original-panes-preserved');}
+    // The menus come from the machine's model list (model-catalogs.ts), so attaching, reselecting and
+    // a model change never read the native menus in this pane (once per kind, and effort again after a model change, before).
+    try{assert.deepEqual(report.nativeMenuReads,[]);assert.equal(report.finalPanes,report.originalPanes);report.checks.push('no-native-menu-reads','original-panes-preserved');}
     catch(error){report.success=false;report.error=error.stack;process.exitCode=1;}
   }
   await writeFile(path.join(root,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));

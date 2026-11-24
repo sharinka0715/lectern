@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { _electron } from './fixtures/electron.mjs';
+import { startConversation } from './fixtures/sidebar-folders.mjs';
 
 const exec = promisify(execFile);
 const root = await realpath(await mkdtemp('/tmp/lectern-line-'));
@@ -154,7 +155,8 @@ try {
     await menu.waitFor({state:'hidden'});
   }
 
-  await page.getByRole('button',{name:/^新建对话/}).first().click();
+  // 新建对话 only opens a draft; start the pane without a message and open it from the sidebar.
+  await startConversation(page,workspaceId);
   const fresh=await waitForLine();
   assert.notEqual(fresh.sessionId,history);
   await assertScoped(fresh);
@@ -261,8 +263,10 @@ try {
   }
   report.readsWhileViewing = reads.length - report.chooser.reduce((count,m)=>count+m.nativeReads,0);
   if (!baseline) {
-    assert.deepEqual(reads.map(e => e.context.kind).sort(), ['effort','model']);
-    assert.ok(reads.every(e => ![fresh.sessionId,history].includes(e.context.sessionId)), 'both reads come from the machine model list, not a conversation pane');
+    // The menus come from the machine's model list (Claude Code's SDK initialize, model-catalogs.ts):
+    // no native /model or /effort menu is read in any pane any more (it used to be once per kind).
+    assert.deepEqual(reads, [], 'no native menu reads');
+    assert.ok(events.some(e => e.event === 'backend.model_probe.start'), 'the choices come from the machine model list');
   }
   for (const m of report.chooser) {
     const expected = baseline ? 1 : 0;
@@ -274,11 +278,22 @@ try {
       assert.deepEqual(m.labels,first.labels,'reopening preserves all selectable native alternatives');
     }
   }
-  const applications = events.filter(e=>e.event==='settings.set.start');
+  // The default switch is one typed `/effort <level>` (settings.set_inline); the menu way
+  // (settings.set, opened with `/effort`) remains for choices without an inline name.
+  const applications = events.filter(e=>e.event==='settings.set.start' || e.event==='settings.set_inline.start');
   assert.equal(applications.length,1,'one explicit effort change');
-  const applyOpens = opens.filter(e=>e.context.operationId===applications[0].context.operationId);
-  assert.deepEqual(applyOpens.map(e=>e.data.content),baseline ? ['/effort','/effort'] : ['/effort'],'the current release verifies from the same menu transaction');
-  assert.equal(opens.length+resumedCommands.length,reads.length+applyOpens.length,'each native open belongs to a requested read or application');
+  if (baseline) {
+    const applyOpens = opens.filter(e=>e.context.operationId===applications[0].context.operationId);
+    assert.deepEqual(applyOpens.map(e=>e.data.content),['/effort','/effort'],'the baseline verifies from a second menu');
+    assert.equal(opens.length+resumedCommands.length,reads.length+applyOpens.length,'each native open belongs to a requested read or application');
+  } else {
+    const inputs = events.filter(e=>e.event==='capture.settings.input');
+    const applyInputs = inputs.filter(e=>e.context.operationId===applications[0].context.operationId);
+    assert.equal(applyInputs.length,1,'the change types one native command');
+    assert.match(applyInputs[0].data.content,applications[0].event==='settings.set_inline.start'
+      ? new RegExp('^/effort '+report.userSelectedEffort+'$','i') : /^\/effort$/);
+    assert.equal(inputs.length+resumedCommands.length,applyInputs.length,'each native command belongs to the application');
+  }
   assert.equal(events.filter(e=>e.event==='controller.send.start').length,0);
   assert.equal(report.modelRequests,0,'chooser and status line send no model requests');
   report.success=true;
