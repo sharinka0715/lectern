@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from './fixtures/electron.mjs';
+import { _electron, resizeWindow } from './fixtures/electron.mjs';
 import { tsImport } from 'tsx/esm/api';
 
 const { parseQuestionScreen } = await tsImport('../src/core/question-screen.ts', import.meta.url);
@@ -134,16 +134,37 @@ try {
 
   // A short row split can scroll all the way to the final buttons without
   // enlarging either pane. Use a long display projection only for this layout check.
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(950,640));
+  await resizeWindow(app, page, 950, 640);
   await primary.getByRole('button',{name:'并排打开对话'}).click();
   const long = {...parseQuestionScreen(scenarios.preview.screens.start),preview:'前端溢出验证\n'.repeat(150)+'x'.repeat(500)};
   await show('preview','start',{question:long});
   await primary.locator('.question-preview pre').waitFor();
   if ((await page.locator('.split-workspace.divided').getAttribute('data-direction'))!=='rows') await primary.getByRole('button',{name:'切换分屏方向'}).click();
-  const bounds = await card.evaluate(el=>{
-    const box=el.getBoundingClientRect(), pane=el.closest('.desk-pane').getBoundingClientRect();
-    return {scroll:el.scrollHeight>el.clientHeight, contained:box.bottom<=pane.bottom+1 && box.top>=pane.top-1, width:el.scrollWidth<=el.clientWidth+1};
-  }); assert.deepEqual(bounds,{scroll:true,contained:true,width:true});
+  const bounds = await card.evaluate(el => new Promise((resolve, reject) => {
+    const pane = el.closest('.desk-pane'), dock = el.closest('.composer-area');
+    let previous, frame;
+    const timeout = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      reject(new Error('Timed out waiting for the split question layout to settle'));
+    }, 3000);
+    // The dock can carry its old minimum height into a shorter pane while easing.
+    function measure() {
+      const box = el.getBoundingClientRect(), paneBox = pane.getBoundingClientRect();
+      const positions = [box, paneBox, dock.getBoundingClientRect()]
+        .flatMap(rect => [rect.x, rect.y, rect.width, rect.height]);
+      const animating = [...pane.getAnimations(), ...dock.getAnimations({subtree:true})]
+        .some(animation => animation.pending || animation.playState === 'running');
+      if (el.isConnected && !animating && previous?.every((value, index) => value === positions[index])) {
+        clearTimeout(timeout);
+        resolve({scroll:el.scrollHeight>el.clientHeight, contained:box.bottom<=paneBox.bottom+1 && box.top>=paneBox.top-1, width:el.scrollWidth<=el.clientWidth+1});
+        return;
+      }
+      previous = animating ? undefined : positions;
+      frame = requestAnimationFrame(measure);
+    }
+    frame = requestAnimationFrame(measure);
+  }));
+  assert.deepEqual(bounds,{scroll:true,contained:true,width:true});
   await button('取消问答').scrollIntoViewIfNeeded(); await page.screenshot({path:path.join(results,'scroll-split.png')});
   await page.locator('.desk-pane[data-view="secondary"]').getByRole('button',{name:'关闭此分屏'}).click();
   await show('other','focus'); await other.fill('不应跨题保留的草稿'); await clear();
