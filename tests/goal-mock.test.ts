@@ -6,13 +6,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Backend, quoteShell, runCommand } from '../src/backend';
 import { MessageDisplay } from '../src/core/message-display';
+import { turnComposer } from '../src/core/turn-controls';
 import type { Workspace } from '../src/shared/types';
 
 // The offline mock's /goal (scripts/mock-claude.mjs) in a real tmux, driven through the backend: the
 // indicator ticks every 25 ms so it can change between the reads of a guarded key.
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
+const numberedTail = (screen: string) => screen.trimEnd().split('\n')
+  .map((line, index) => `${index + 1} | ${line}`).slice(-12).join('\n');
 test('with the goal indicator ticking above the input box: /goal clear during a reply, an inline switch, the stop key', { skip: process.platform === 'win32', timeout: 90_000 }, async t => {
-  // Split inside the timer without holding the whole frame across several ticks.
+  // Split inside the timer and across the editor as it moves. A single cut keeps the redraw short.
   const mockEnv = {
     LECTERN_MOCK_GOAL_TICK_MS: '25',
     LECTERN_MOCK_STREAM_MS: '60',
@@ -20,6 +23,7 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
     LECTERN_MOCK_CHUNK_BYTES: process.env.LECTERN_MOCK_CHUNK_BYTES ?? '216',
     LECTERN_MOCK_CHUNK_MS: process.env.LECTERN_MOCK_CHUNK_MS ?? '5',
     LECTERN_MOCK_CHUNK_GOAL_ROW: '1',
+    LECTERN_MOCK_CHUNK_SPLIT_AT: process.env.LECTERN_MOCK_CHUNK_SPLIT_AT ?? '0,768',
   };
   const saved = Object.keys(mockEnv).map(key => [key, process.env[key]] as const);
   Object.assign(process.env, mockEnv);
@@ -35,9 +39,21 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
     const capture = async (pane: string) => (await runCommand(workspace, ['tmux', '-L', socket, 'capture-pane', '-p', '-t', pane].map(quoteShell).join(' '))).stdout.toString();
     const until = async (pane: string, test: (screen: string) => boolean, label: string) => {
       for (let i = 0; i < 400; i++) { const screen = await capture(pane); if (test(screen)) return screen; await pause(25); }
-      assert.fail(`never: ${label}\n${await capture(pane)}`);
+      assert.fail(`never: ${label}\n${numberedTail(await capture(pane))}`);
     };
     const session = await backend.createSession(workspace), paneId = session.paneId!;
+    const withPaneFrames = async (label: string, action: (beforeAction: (screen: string) => void) => Promise<void>) => {
+      let before = await capture(paneId);
+      try { await action(screen => { before = screen; }); }
+      catch (cause) {
+        const failedFrame = () => capture(paneId).catch(() => '(capture-pane unavailable)');
+        const after = await failedFrame();
+        await pause(25);
+        const later = await failedFrame();
+        const frames = [`before:\n${numberedTail(before)}`, `after:\n${numberedTail(after)}`, `25 ms later:\n${numberedTail(later)}`];
+        throw new Error(`${label}: ${String(cause)}\n${frames.join('\n')}`, { cause });
+      }
+    };
     await until(paneId, screen => screen.includes('shortcuts'), 'ready');
     const pid = Number((await runCommand(workspace, ['tmux', '-L', socket, 'display-message', '-p', '-t', paneId, '#{pane_pid}'].map(quoteShell).join(' '))).stdout.toString());
     // A goal whose reply goes on: /goal clear typed during it runs at once and writes only the cleared record.
@@ -54,13 +70,22 @@ test('with the goal indicator ticking above the input box: /goal clear during a 
     const catalog = await backend.probeModelCatalog(workspace);
     const ticket = backend.bindSettingChoices(workspace, session.id, paneId, { kind: 'model', command: '/model', complete: true,
       options: catalog.models.map(row => ({ label: row.label, description: row.description, value: row.value })) });
-    const verified = await backend.setSessionSetting(workspace, session.id, ticket.token, ticket.options.find(option => option.label === 'Haiku')!.id, undefined, 'inline');
-    assert.equal(verified.options.find(option => option.current)?.label, 'Haiku');
+    await withPaneFrames('inline model switch', async () => {
+      const verified = await backend.setSessionSetting(workspace, session.id, ticket.token, ticket.options.find(option => option.label === 'Haiku')!.id, undefined, 'inline');
+      assert.equal(verified.options.find(option => option.current)?.label, 'Haiku');
+    });
     // A reply under the ticking goal stops on the first key.
-    await backend.sendMessage(workspace, session.id, 'a reply to stop while the goal timer ticks');
-    await until(paneId, screen => /esc to interrupt/u.test(screen), 'replying');
-    await backend.turnAction(workspace, session.id, paneId, pid, { kind: 'stop' });
-    await until(paneId, screen => !/esc to interrupt/u.test(screen), 'stopped');
+    await withPaneFrames('stop', async beforeAction => {
+      await backend.sendMessage(workspace, session.id, 'mock-hold reply while the goal timer ticks');
+      const replying = await until(paneId, screen => {
+        // The mock draws the spinner before the editor. Wait for the lower rule and footer too.
+        const editor = turnComposer(screen);
+        return !!editor?.running && screen.split('\n')[editor.top + 3]?.trim() === '⏸ manual mode on · ? for shortcuts';
+      }, 'replying');
+      beforeAction(replying);
+      await backend.turnAction(workspace, session.id, paneId, pid, { kind: 'stop' });
+      await until(paneId, screen => !/esc to interrupt/u.test(screen), 'stopped');
+    });
     // The records Claude Code would write: as Lectern reads them.
     const file = (await backend.discover(workspace)).sessions.find(item => item.id === session.id)!.path!;
     const display = new MessageDisplay(session.id);

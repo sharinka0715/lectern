@@ -127,14 +127,21 @@ const noted = text => text.replace(/^⏺ /u, '\x1b[37m⏺\x1b[39m ');
 const callBullet = blink => `\x1b[2m${blink ? ' ' : '⏺'}\x1b[0m`;
 const chunkBytes = Number(process.env.LECTERN_MOCK_CHUNK_BYTES), chunkMs = Number(process.env.LECTERN_MOCK_CHUNK_MS);
 const chunkGoalRow = process.env.LECTERN_MOCK_CHUNK_GOAL_ROW === '1';
+// Force a single cut at a byte offset. A list cycles through offsets, with zero
+// using the normal chunking mode for that frame.
+const goalFrameSplits = (process.env.LECTERN_MOCK_CHUNK_SPLIT_AT ?? '0').split(',').map(Number)
+  .filter(offset => Number.isSafeInteger(offset) && offset >= 0);
+let nextGoalFrameSplit = 0;
 const chunkWait = Number.isSafeInteger(chunkBytes) && chunkBytes > 0 && Number.isFinite(chunkMs) && chunkMs > 0
   ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
-function writeFrame(frame, indicator = '') {
+function writeFrame(frame, indicator = '', splitAt = 0) {
   if (!chunkWait) { process.stdout.write(frame); return; }
   // Simulate a PTY delivering one frame in pieces without interleaving two draws.
   const bytes = Buffer.from(frame);
   let end = chunkBytes;
-  if (chunkGoalRow) {
+  if (splitAt > 0) {
+    end = Math.min(splitAt, bytes.length);
+  } else if (chunkGoalRow) {
     // Keep a split inside the timer text. Pausing at every boundary can block stdin
     // for several ticks before the fixture gets to paint a pasted draft.
     const start = indicator ? bytes.lastIndexOf(indicator + '\x1b[K\r\n') : -1;
@@ -145,7 +152,7 @@ function writeFrame(frame, indicator = '') {
     if (start > 0) Atomics.wait(chunkWait, 0, 0, chunkMs);
     process.stdout.write(bytes.subarray(start, end));
     start = end;
-    end = chunkGoalRow ? bytes.length : end + chunkBytes;
+    end = chunkGoalRow || splitAt > 0 ? bytes.length : end + chunkBytes;
   }
 }
 const draw = () => {
@@ -194,7 +201,8 @@ const draw = () => {
   // let a read on a slow macOS runner, where the pty hands a frame over in pieces, catch the redraw
   // half done and refuse a key over rows that never changed.
   if (typeof fixtureAgents === 'number' || permission || goal || goalCleared) writeFrame('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J',
-    goal && !goal.paused ? goalIndicatorShown : undefined);
+    goal && !goal.paused ? goalIndicatorShown : undefined, goal && goalFrameSplits.length
+      ? goalFrameSplits[nextGoalFrameSplit++ % goalFrameSplits.length] : 0);
   else writeFrame('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
