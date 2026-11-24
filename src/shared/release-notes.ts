@@ -40,7 +40,10 @@ export const releaseNotes: ReleaseNote[] = [
       ['添加项目时，可在目录选择器里直接新建本机或 SSH 文件夹，并选为工作目录。',
         'When adding a project, create a folder on your computer or an SSH host directly from the picker and use it as the working directory.'],
     ],
-    fixes: [],
+    fixes: [
+      ['续接会话等操作使项目扫描结果过期时，会话列表会自动重试，避免误报连接错误。',
+        'The conversation list retries automatically when an action such as resuming a chat supersedes a folder scan, avoiding a misleading connection error.'],
+    ],
   },
   {
     version: '0.2.2',
