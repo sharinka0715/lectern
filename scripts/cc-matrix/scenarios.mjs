@@ -819,6 +819,12 @@ export const SCENARIOS = [
       api.script('queued', () => ({ text: 'Queued message answered (ccm-queued-done).' }));
       api.script('steered', () => ({ text: 'Steered reply (ccm-steered-done).' }));
       const streaming = () => page.waitForFunction(selector => [...document.querySelectorAll(selector)].some(el => el.dataset.source === 'preview' && el.textContent.includes('compatibility matrix streams')), sel.assistant, { timeout: 40_000 });
+      // The fake API writes a slow reply's end (`done`, with `aborted` when Claude Code dropped the stream)
+      // only at its next pause, up to 200 ms after the drop, and Claude Code may go on first: 2.1.321 sent
+      // the steering request some 150 ms before dropping the reply. Read a slow request once it has ended
+      // (dropped, or streamed to the end: about 18 s in all).
+      const ended = script => poll(() => api.requests.find(r => r.script === script), r => r?.done !== undefined, 30_000);
+      const timeline = (...entries) => JSON.stringify(entries.map(r => r && { script: r.script, at: r.at, done: r.done, aborted: r.aborted }));
       await check('queue', async () => {
         await startChat(ctx, folders.main, 'Slow reply ccm:slow-a');
         await page.locator(sel.stop).waitFor({ timeout: 40_000 });
@@ -839,8 +845,10 @@ export const SCENARIOS = [
         await ui.type('Change course ccm:steered');
         await page.locator(sel.turnAction).nth(1).click();
         await ui.waitReply('ccm-steered-done', { timeout: 60_000 });
-        const slowB = api.requests.find(r => r.script === 'slow-b'), steered = api.requests.find(r => r.script === 'steered');
-        assert.ok(slowB.aborted || steered.at < slowB.done, 'the steering message went out before the reply finished');
+        const slowB = await ended('slow-b'), steered = api.requests.find(r => r.script === 'steered');
+        // Steering, unlike queueing, does not wait for the reply: its request went out before the reply ended
+        // by itself (dropping it, before or just after, is Claude Code's way of steering).
+        assert.ok(slowB.aborted || steered.at < (slowB.done ?? Infinity), `the steering message went out before the reply finished: ${timeline(slowB, steered)}`);
       });
       await check('interrupt', async () => {
         await ui.waitStatus('idle', 60_000);
@@ -851,8 +859,9 @@ export const SCENARIOS = [
         await page.locator(sel.stop).click();
         await ui.waitStatus('idle', 30_000);
         await page.waitForFunction(([selector, count]) => document.querySelectorAll(selector).length > count, [`${sel.assistant} .message-interrupted`, before], { timeout: 20_000 });
-        const slowC = api.requests.find(r => r.script === 'slow-c');
-        assert.ok(slowC.aborted || !slowC.done, 'the model request was cancelled');
+        // Read before its end was written, a reply still streaming passed as cancelled.
+        const slowC = await ended('slow-c');
+        assert.ok(slowC.aborted, `the model request was cancelled: ${timeline(slowC)}`);
       });
     },
   },
