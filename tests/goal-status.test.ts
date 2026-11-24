@@ -7,6 +7,7 @@ import { goalCheckinOf, goalEventOf } from '../src/core/goal-records';
 import { observeGoal } from '../src/main/goal-observation';
 import { recordRow } from '../src/core/transcript-store';
 import type { JsonRecord } from '../src/core/jsonl';
+import { replyParts } from '../src/renderer/reply-activities';
 
 // Claude Code's native /goal from its records (core/goal-status.ts, goal-records.ts): real
 // sessions of 2.1.331 and 2.1.300 (placeholder conditions, sandbox paths) and synthetic ones.
@@ -170,6 +171,22 @@ function conversation() {
   const compact = () => row('system', { subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'manual', durationMs: 30 } });
   return { rows, row, status, command, set, reply, notMet, notice, prompt, compact };
 }
+
+test('a merged goal check stays at the first check, between the surrounding reply parts', () => {
+  const c = conversation();
+  c.set('Finish the sample');
+  c.reply('First attempt.');
+  c.notMet('Finish the sample', 'The first step is missing.');
+  c.reply('Second attempt.');
+  c.notMet('Finish the sample', 'The second step is missing.');
+  c.reply('Final attempt.');
+  const message = read(SID, c.rows).getMessages().at(-1)!;
+  for (const compact of [true, false]) {
+    const parts = replyParts(message, compact).flatMap(part => part.kind === 'text' ? [part.text.trim()]
+      : part.kind === 'notice' ? [part.notice.goal!.kind + (part.notice.goal!.count ?? '')] : []);
+    assert.deepEqual(parts, ['set', 'First attempt.', 'not-met2', 'Second attempt.\n\nFinal attempt.']);
+  }
+});
 const checkinText = (condition: string) => `<task-notification>\n<summary>Goal check-in: background work still running</summary>\n</task-notification>\n<system-reminder>\nGoal check-in: «${condition}» is still active, and evaluation has been deferred for 30 min because background work is still running:\n- b1 · shell · npm test\n- a2 · subagent · Review the docs\nCheck on their progress.\n</system-reminder>`;
 
 test('a compaction restates the goal: checks and setting time stay; a /goal after it is a new setting', () => {

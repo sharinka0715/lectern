@@ -214,6 +214,8 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   let offset = 0;
   const content = parts.map(part => {
     if (part.kind === 'image') return <AttachmentImage key={part.key} attachment={part.attachment} onOpen={onOpenAttachment} />;
+    if (part.kind === 'notice') return part.notice.goal ? <GoalNotice key={part.key} goal={part.notice.goal} />
+      : <TaskNotification key={part.key} text={part.notice.text} onOpenPath={onOpenPath} />;
     if (part.kind === 'text' && layout) {
       const start = offset, end = offset += part.text.length;
       const chips = layout.chips.filter(chip => chip.start >= start && chip.end <= end).map(chip => ({ start: chip.start - start, end: chip.end - start,
@@ -274,8 +276,6 @@ export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachm
       <div className="message-content">
         <ReplyContent message={message} replyDetail={replyDetail} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />
         {message.interrupted && <p className="message-interrupted">{t('chat.interrupted')}</p>}
-        {message.taskNotifications?.map(notice => notice.goal ? <GoalNotice key={notice.id} goal={notice.goal} />
-          : <TaskNotification key={notice.id} text={notice.text} onOpenPath={onOpenPath} />)}
         {!!files?.length && <div className="artifact-attachments">
           {files.map(ref => ref.path
             ? <FileLink key={ref.id} path={ref.path} onOpen={onOpenPath} explicit><Paperclip size={13} />{ref.name}</FileLink>

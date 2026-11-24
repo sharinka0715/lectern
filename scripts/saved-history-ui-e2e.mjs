@@ -4,7 +4,8 @@
 // failure names its part (formerly task-notice-ui-e2e, archive-ui-e2e and transcript-render-e2e):
 //   notice   a background task notification folds to one line in the command rows' style and
 //            without a grey surface; the keyboard opens its full text and file reference, the mouse
-//            folds it again (screenshot test-results/task-notice-expanded.png)
+//            folds it again; the notice sits between the call and the reply it triggers
+//            (screenshot test-results/task-notice-expanded.png)
 //   archive  archiving a conversation from the sidebar leaves its file untouched, survives a reload
 //            and is restored from Settings → 回收站
 //   render   progress notes (narration thinking) show as text, other thinking folds like Claude
@@ -25,7 +26,7 @@ async function part(name, run) {
   try { await run(); } catch (error) { error.message = `[${name}] ${error.message}`; throw error; }
 }
 
-// ── notice: a tool call, then a task notification about it ──
+// ── notice: prose and a tool call, then a task notification that triggers more prose ──
 const noticeChat = { sid: randomUUID(), title: '后台检查已完成', filename: 'result.txt' };
 noticeChat.detail = `共检查 3 个文件。\n结果见 ${noticeChat.filename}`;
 function noticeHistory() {
@@ -39,10 +40,11 @@ function noticeHistory() {
     return JSON.stringify(r);
   }
   return [row('user', '检查项目文件'),
+    row('assistant', '开始检查文件。'),
     row('assistant', [{ type: 'tool_use', id: 'check', name: 'Bash', input: { command: 'ls' } }]),
     row('user', [{ type: 'tool_result', tool_use_id: 'check', content: '已启动检查' }]),
     row('user', `<task-notification>\n<summary>${title}</summary>\n<result>${detail}</result>\n</task-notification>`, { origin: { kind: 'task-notification' } }),
-    row('assistant', '检查完成。')].join('\n') + '\n';
+    row('assistant', '已收到检查结果。')].join('\n') + '\n';
 }
 
 // ── archive: two finished conversations, one to keep and one to archive ──
@@ -109,6 +111,10 @@ try {
     const style = el => { const s = getComputedStyle(el); return [s.fontSize, s.padding, s.lineHeight, s.color]; };
     const surface = el => { const s = getComputedStyle(el); return [s.backgroundColor, s.borderTopWidth]; };
     await summary.waitFor();
+    const reply = page.locator('.message-assistant .message-content');
+    const order = await reply.locator(':scope > .markdown, :scope > [data-tool-id], :scope > .task-notice').evaluateAll(nodes =>
+      nodes.map(el => el.getAttribute('data-tool-id') ?? el.querySelector('.activity-subject')?.textContent ?? el.textContent.trim()));
+    assert.deepEqual(order, ['开始检查文件。', 'check', title, '已收到检查结果。']);
     assert.equal(await notice.evaluate(el => el.open), false);
     assert.ok((await summary.innerText()).includes(title), '折叠时应能看到具体任务摘要');
     assert.deepEqual(await summary.evaluate(style), await tool.locator('summary').evaluate(style));
@@ -123,7 +129,7 @@ try {
     await notice.locator('xpath=ancestor::article[1]').screenshot({ path: 'test-results/task-notice-expanded.png' });
     await summary.click(); await body.waitFor({ state: 'detached' });
     assert.equal(await notice.evaluate(el => el.open), false);
-    console.log('PASS notice：通知默认单行收起，摘要沿用命令行字号与间距，无灰底和边框；键盘展开可读全文、可访问文件引用，鼠标可收起。');
+    console.log('PASS notice：通知位于工具调用和后续正文之间，默认单行收起，沿用命令行样式，可展开全文和文件引用。');
   });
 
   await part('archive', async () => {

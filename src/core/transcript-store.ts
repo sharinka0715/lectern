@@ -105,6 +105,12 @@ function commandText(text: string): string | undefined {
   return args ? `${name} ${args}` : name;
 }
 
+function taskNoticeText(text: string): string {
+  const summary = /<summary>([\s\S]*?)<\/summary>/.exec(text)?.[1]?.trim();
+  const result = /<result>([\s\S]*?)<\/result>/.exec(text)?.[1]?.trim();
+  return [summary, result].filter(Boolean).join('\n\n') || text;
+}
+
 function normalize(record: JsonRecord, key: string, order: number, parent: string | null, bodies: boolean): TranscriptRow {
   const row: TranscriptRow = { key, order, parent, kind: 'hidden', type: string(record.type), timestamp: string(record.timestamp) };
   const cwd = bodies ? string(record.cwd) : undefined;
@@ -175,13 +181,18 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
   }
   if (record.isVisibleInTranscriptOnly) return row;
   if (record.type === 'attachment') {
-    const queued = object(record.attachment);
-    if (queued.type === 'queued_command' && queued.humanTurn === true && object(queued.origin).kind === 'human' && queued.commandMode === 'prompt') {
-      const text = contentText(queued.prompt);
+    if (queued && (attachment.commandMode === 'task-notification' || object(attachment.origin).kind === 'task-notification')) {
+      // Enqueue records have no parent and the terminal draws the notice on delivery.
+      row.kind = 'notification';
+      if (bodies) row.text = taskNoticeText(contentText(attachment.prompt));
+      return row;
+    }
+    if (queued && attachment.humanTurn === true && object(attachment.origin).kind === 'human' && attachment.commandMode === 'prompt') {
+      const text = contentText(attachment.prompt);
       if (text.trim()) {
         row.kind = 'user';
         row.text = bodies ? text : undefined;
-        row.timestamp = string(queued.timestamp) ?? row.timestamp;
+        row.timestamp = string(attachment.timestamp) ?? row.timestamp;
         return row;
       }
     }
@@ -255,9 +266,7 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
         row.kind = 'notification';
         // The native producer is authoritative. Identical XML typed by a human
         // remains a regular user message.
-        const summary = /<summary>([\s\S]*?)<\/summary>/.exec(text)?.[1]?.trim();
-        const result = /<result>([\s\S]*?)<\/result>/.exec(text)?.[1]?.trim();
-        row.text = bodies ? [summary, result].filter(Boolean).join('\n\n') || text : undefined;
+        if (bodies) row.text = taskNoticeText(text);
       } else if (/^\[Request interrupted by user(?: for tool use)?\]$/u.test(text.trim()) && !row.attachments?.length
           && record.origin === undefined && record.promptSource === undefined) {
         // Claude Code's own marker after Esc or a refused tool; its TUI shows

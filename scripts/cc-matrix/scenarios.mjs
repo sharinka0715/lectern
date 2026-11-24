@@ -59,6 +59,7 @@ export const FEATURES = [
   { id: 'session-settings', title: 'Switch model and effort in a running session' },
   { id: 'statusline', title: 'Status line: model, context usage, billing route' },
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
+  { id: 'background-notice-order', title: 'Background shell completion appears between the original reply and the reply it triggers' },
   { id: 'background-settings', title: 'Model and effort switched from the pickers after the reply while a background subagent still runs' },
   { id: 'preview-rows', title: "Live preview while background work runs: the reply's prose only, never the rows around it (waiting for agents, a subagent's message, folded and running commands, notifications)" },
   { id: 'subagent-column', title: "Subagent column: the subagent's own JSONL found, its turns shown live" },
@@ -1087,7 +1088,7 @@ export const SCENARIOS = [
   },
   {
     id: 'background',
-    features: ['background', 'background-settings'],
+    features: ['background', 'background-notice-order', 'background-settings'],
     timeoutMs: 200_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
@@ -1115,8 +1116,19 @@ export const SCENARIOS = [
       // Claude Code reports busy while the subagent runs, its screen back at the empty prompt.
       // The pickers switch model and effort there; a reply in progress would not allow it.
       try {
-        await check('background-settings', async () => {
+        await check('background-notice-order', async () => {
           await ui.waitReply('ccm-bg-notified', { timeout: 60_000 });
+          const order = await page.locator(`${sel.assistant} .message-content`).last()
+            .locator(':scope > .markdown, :scope > .task-notice').evaluateAll(nodes =>
+              nodes.map(el => el.querySelector('.activity-subject')?.textContent ?? el.textContent.trim()));
+          const started = order.findIndex(text => text.includes('ccm-bg-started'));
+          const notices = order.filter(text => text.includes('Wait in the background'));
+          const delivered = order.indexOf(notices[0]);
+          const replied = order.findIndex(text => text.includes('ccm-bg-notified'));
+          assert.equal(notices.length, 1, JSON.stringify(order));
+          assert.ok(started >= 0 && started < delivered && delivered < replied, JSON.stringify(order));
+        });
+        await check('background-settings', async () => {
           const id = await ui.activeSessionId();
           await page.locator(`${sel.row(id)}[data-background][data-status="idle"]`).waitFor({ timeout: 30_000 });
           ctx.note('native-status', await nativeStatus(sandbox, id));

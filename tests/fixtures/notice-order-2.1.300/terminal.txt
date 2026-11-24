@@ -1,0 +1,34 @@
+Claude Code 2.1.300, 120-column terminal excerpts
+
+After both shell notifications are enqueued, with the foreground command held:
+
+● Before the foreground call.
+
+  Running 1 shell command…
+  ⎿  $ until test -f finish-foreground; do sleep 0.05; done; echo foreground-done
+
+After delivery:
+
+● Before the foreground call.
+
+  Ran 1 shell command
+
+● Background command "Sample pair B" completed (exit code 0)
+
+● Background command "Sample pair A" completed (exit code 0)
+
+● After the foreground call.
+
+  Ran 1 shell command
+
+● Initial answer complete.
+
+✻ Waiting for 1 background agent to finish
+
+● Background command "Sample idle task" completed (exit code 0)
+
+● Reply to the idle task.
+
+● Agent "Sample helper" finished · 0s
+
+● Reply to the helper.

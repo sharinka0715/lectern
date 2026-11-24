@@ -1,7 +1,7 @@
 import { sedEdit } from '../shared/sed-edit';
 import { t, type MessageKey } from '../shared/i18n';
 import { diffLines } from 'diff';
-import type { ChatMessage, MessageAttachment, PeerMessage, ToolBlock } from '../shared/types';
+import type { ChatMessage, MessageAttachment, PeerMessage, ReplyNotice, ToolBlock } from '../shared/types';
 import { artifactPath } from './artifact-paths';
 
 export type LineChanges = { added: number; removed: number };
@@ -14,6 +14,7 @@ export type Activity = ToolActivity | { kind: 'peer'; key: string; peer: PeerMes
 /** `cwd`: the directory Claude Code was in when it wrote the text. */
 export type ReplyPart = { kind: 'text'; key: string; text: string; cwd?: string } |
   { kind: 'image'; key: string; attachment: MessageAttachment } |
+  { kind: 'notice'; key: string; notice: ReplyNotice } |
   { kind: 'activities'; key: string; offset: number | null; rows: Activity[] };
 
 // The verb is a message key, translated when the row is built.
@@ -104,7 +105,7 @@ export function toolActivity(tool: ToolBlock): ToolActivity {
 }
 
 /** Interleave using both recorded cursors: a delivery may sit between calls at the very same text offset. */
-export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'attachments' | 'cwds'>, compact: boolean): ReplyPart[] {
+export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'taskNotifications' | 'attachments' | 'cwds'>, compact: boolean): ReplyPart[] {
   const parts: ReplyPart[] = [];
   const cwds = message.cwds ?? [];
   let cursor = 0, nextTool = 0, textKey = 'start';
@@ -133,11 +134,25 @@ export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMe
       add(toolActivity(tool), tool.textOffset, tool.textOffset === null ? 0 : fallback);
     }
   }
+  const notices = message.taskNotifications ?? [];
+  let nextNotice = 0;
+  function noticesUntil(end: number) {
+    while (nextNotice < end && nextNotice < notices.length) {
+      const notice = notices[nextNotice++];
+      const offset = Math.min(notice.textOffset ?? message.text.length, message.text.length);
+      toolsUntil(notice.toolsBefore ?? message.tools.length, offset);
+      textUntil(offset);
+      const key = `notice:${notice.id}`;
+      parts.push({ kind: 'notice', key, notice });
+      textKey = `after:${key}`;
+    }
+  }
   const peers = message.peerMessages ?? [];
   let nextPeer = 0;
   function peersUntil(end: number) {
     while (nextPeer < end && nextPeer < peers.length) {
       const peer = peers[nextPeer++];
+      noticesUntil(peer.notificationsBefore ?? 0);
       toolsUntil(peer.toolsBefore, peer.textOffset);
       add({ kind: 'peer', key: `peer:${JSON.stringify([peer.sender, peer.id])}`, category: 'received', peer }, peer.textOffset, peer.textOffset);
     }
@@ -146,6 +161,7 @@ export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMe
     if (!attachment.image) continue;
     const offset = Math.min(attachment.textOffset ?? message.text.length, message.text.length);
     peersUntil(attachment.peersBefore ?? peers.length);
+    noticesUntil(attachment.notificationsBefore ?? 0);
     toolsUntil(attachment.toolsBefore ?? message.tools.length, offset);
     textUntil(offset);
     const key = `image:${attachment.id}`;
@@ -153,6 +169,7 @@ export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMe
     textKey = `after:${key}`;
   }
   peersUntil(peers.length);
+  noticesUntil(notices.length);
   toolsUntil(message.tools.length, message.text.length);
   textUntil(message.text.length);
   return parts;

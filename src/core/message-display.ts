@@ -684,6 +684,10 @@ export class MessageDisplay {
     return [...turn.parts.values()].map(part => part.text).filter(Boolean).join('\n\n');
   }
 
+  private replyPosition(turn: Turn) {
+    return { textOffset: this.canonicalText(turn).length, toolsBefore: this.toolsInOrder(turn).length };
+  }
+
   private newTurn(text?: string, optimistic = false, uuid?: string, timestamp?: string): Turn {
     while (this.usedTurnIndices.has(this.nextTurnIndex)) this.nextTurnIndex++;
     const index = this.nextTurnIndex++;
@@ -702,14 +706,14 @@ export class MessageDisplay {
   }
 
   private appendReplyAttachments(turn: Turn, refs: MessageAttachment[], partText?: string) {
-    const hasImage = refs.some(ref => ref.image);
-    const prefix = hasImage ? this.canonicalText(turn).length : 0;
-    const tools = hasImage ? this.toolsInOrder(turn).length : 0;
+    const { textOffset: prefix, toolsBefore: tools } = refs.some(ref => ref.image)
+      ? this.replyPosition(turn) : { textOffset: 0, toolsBefore: 0 };
     for (const ref of refs) {
       const offset = partText === undefined ? 0 : ref.textOffset ?? 0;
       (turn.attachments ??= []).push(ref.image ? { ...ref,
         textOffset: prefix + (prefix && offset ? 2 : 0) + offset,
         toolsBefore: tools + (partText === undefined ? 0 : ref.toolsBefore ?? 0), peersBefore: turn.peerMessages?.length ?? 0,
+        notificationsBefore: turn.taskNotifications?.length ?? 0,
       } : ref);
     }
   }
@@ -771,15 +775,14 @@ export class MessageDisplay {
     }
     if (row.kind === 'notification') {
       const turn = this.current ??= this.newTurn();
-      if (row.text) (turn.taskNotifications ??= []).push({ id: row.key, text: row.text });
+      const position = this.replyPosition(turn);
+      if (row.text) (turn.taskNotifications ??= []).push({ id: row.key, text: row.text, ...position });
       if (row.peers?.length) {
-        const textOffset = this.canonicalText(turn).length;
-        const toolsBefore = this.toolsInOrder(turn).length;
         for (const peer of row.peers) {
           const identity = JSON.stringify([peer.sender, peer.id]);
           if (this.seenPeerMessages.has(identity)) continue;
           this.seenPeerMessages.add(identity);
-          (turn.peerMessages ??= []).push({ ...peer, textOffset, toolsBefore });
+          (turn.peerMessages ??= []).push({ ...peer, ...position, notificationsBefore: turn.taskNotifications?.length ?? 0 });
         }
       }
       return;
@@ -863,7 +866,7 @@ export class MessageDisplay {
       }
       if (goal.kind === 'checkin' && JSON.stringify(previous) === JSON.stringify(goal)) return;
     }
-    list.push({ id: row.key, text: row.text ?? '', goal });
+    list.push({ id: row.key, text: row.text ?? '', goal, ...this.replyPosition(turn) });
   }
 
   /**

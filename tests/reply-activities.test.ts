@@ -6,8 +6,9 @@ import { replyParts, summarizeActivities, toolActivity } from '../src/renderer/r
 const call = (id: string, name: string, textOffset: number | null | undefined, input = {}, extra: Partial<ToolBlock> = {}): ToolBlock =>
   ({ id, name, input: JSON.stringify(input), textOffset, ...extra });
 const delivered = (id: string, textOffset: number, toolsBefore: number) => ({ id, source: 'agent' as const, text: '核对完毕', textOffset, toolsBefore });
-const layout = (message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'attachments'>, compact = true) => replyParts(message, compact)
-  .map(part => part.kind === 'text' ? part.text : part.kind === 'image' ? part.attachment.name : part.rows.map(row => row.kind === 'peer' ? row.peer.id : row.tool.id));
+const layout = (message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'taskNotifications' | 'attachments'>, compact = true) => replyParts(message, compact)
+  .map(part => part.kind === 'text' ? part.text : part.kind === 'image' ? part.attachment.name : part.kind === 'notice' ? part.notice.id
+    : part.rows.map(row => row.kind === 'peer' ? row.peer.id : row.tool.id));
 
 test('正文两侧分组，同一位置的混合调用与多封投递保持原生顺序', () => {
   const message = { text: '前文𠀀后续', tools: [call('cmd', 'Bash', 0), call('send', 'SendMessage', 4), call('edit', 'Edit', 4), call('read', 'Read', 6)],
@@ -23,6 +24,16 @@ test('图片按原生文本位置插入，同一位置上的图片分隔前后�
     attachments: [{ id: 'i', name: 'reward', image: true as const, textOffset: 1, peersBefore: 1, toolsBefore: 1 }] };
   assert.deepEqual(layout(message), ['首', ['a', 'p'], 'reward', ['q', 'b'], '尾']);
   assert.deepEqual(layout({ text: '一二', tools: [], attachments: [{id:'old', name:'旧图片', image:true}] }), ['一二','旧图片']);
+});
+
+test('notices keep their own rows and their order with peer messages and images at one offset', () => {
+  const message = { text: '首尾', tools: [call('a', 'Read', 1), call('b', 'Read', 1)],
+    taskNotifications: [{ id: 'n1', text: 'First notice', textOffset: 1, toolsBefore: 1 }, { id: 'n2', text: 'Second notice', textOffset: 1, toolsBefore: 1 }],
+    peerMessages: [{ ...delivered('p', 1, 1), notificationsBefore: 1 }, { ...delivered('q', 1, 1), notificationsBefore: 2 }],
+    attachments: [{ id: 'i', name: 'reply image', image: true as const, textOffset: 1, peersBefore: 1, toolsBefore: 1, notificationsBefore: 1 }] };
+  assert.deepEqual(layout(message), ['首', ['a'], 'n1', ['p'], 'reply image', 'n2', ['q', 'b'], '尾']);
+  assert.deepEqual(layout(message, false), ['首', ['a'], 'n1', ['p'], 'reply image', 'n2', ['q'], ['b'], '尾']);
+  assert.deepEqual(layout({ text: '答复', tools: [], taskNotifications: [{ id: 'old', text: 'Old notice' }] }), ['答复', 'old']);
 });
 
 test('缺少调用或没有原生位置时不推断连续性', () => {

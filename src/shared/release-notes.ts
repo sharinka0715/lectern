@@ -67,6 +67,8 @@ export const releaseNotes: ReleaseNote[] = [
         "With background agents or commands running, the live preview no longer shows terminal status rows (waiting for agents, subagent messages, folded or running commands, notices) as reply text."],
       ['Monitor 按时限到期后，后台任务栏显示它已完成，运行计数随之更新。',
         'When a Monitor reaches its time limit, the task column marks it as completed and the running count updates.'],
+      ['后台任务通知和目标事件按送达顺序穿插显示在回复正文与工具调用之间。',
+        'Background task notifications and goal events appear in delivery order alongside reply text and tool calls.'],
       ['续接会话等操作使项目扫描结果过期时，会话列表会自动重试，避免误报连接错误。',
         'The conversation list retries automatically when an action such as resuming a chat supersedes a folder scan, avoiding a misleading connection error.'],
     ],

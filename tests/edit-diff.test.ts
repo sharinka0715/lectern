@@ -41,7 +41,7 @@ test('native background completion and tool references stay with the human turn,
   const messages = display.getMessages();
   assert.deepEqual(messages.map(m => m.role), ['user', 'assistant']);
   assert.equal(messages[1].tools[0].result, 'fixture__search');
-  assert.deepEqual(messages[1].taskNotifications, [{ id: 'notice', text: 'Search completed.\n\nAuthorization timed out.' }]);
+  assert.deepEqual(messages[1].taskNotifications, [{ id: 'notice', text: 'Search completed.\n\nAuthorization timed out.', textOffset: 0, toolsBefore: 1 }]);
   display.ingestJsonl(JSON.stringify({ ...notification, uuid: 'quoted', parentUuid: 'answer', origin: undefined }) + '\n');
   assert.equal(display.getMessages().filter(m => m.role === 'user').at(-1)?.text, text);
 });

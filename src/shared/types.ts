@@ -151,10 +151,11 @@ export interface MessageAttachment {
   name: string;
   image?: true;
   revision?: string;
-  /** 图片前已有的正文字数（UTF-16）、工具调用数和代理消息数。 */
+  /** Counts before an image: UTF-16 code units of reply text, tool calls, peer messages and notices. */
   textOffset?: number;
   toolsBefore?: number;
   peersBefore?: number;
+  notificationsBefore?: number;
   /** Present for file-backed references. Embedded transcript bodies are fetched on demand by id. */
   path?: string;
   /** A folder Claude Code attached (an @-mentioned directory). */
@@ -205,11 +206,18 @@ export interface GoalObservation {
   /** No live Claude Code: an active goal comes back when the session is resumed. */
   history?: boolean;
 }
+export interface ReplyNotice {
+  id: string;
+  text: string;
+  goal?: GoalEvent;
+  textOffset?: number;
+  toolsBefore?: number;
+}
 export interface ChatMessage {
   /** Active-branch, persisted human checkpoint; never a GUI turn index. */
   rewindUuid?: string;
-  taskNotifications?: { id: string; text: string; goal?: GoalEvent }[];
-  peerMessages?: (PeerMessage & { textOffset: number; toolsBefore: number })[];
+  taskNotifications?: ReplyNotice[];
+  peerMessages?: (PeerMessage & { textOffset: number; toolsBefore: number; notificationsBefore?: number })[];
   attachments?: MessageAttachment[];
   /** The user interrupted this reply (Esc, or a refused tool permission). */
   interrupted?: boolean;
