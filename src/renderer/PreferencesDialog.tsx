@@ -419,17 +419,17 @@ export function PreferencesDialog({
               <p>{t('prefs.workflowsHelp')}</p>
               <label>
                 {t('prefs.cacheTtl')}
-                <select aria-label={t('prefs.cacheTtl')} value={settings.promptCacheTtlPreset}
+                <select aria-label={t('prefs.cacheTtl')} aria-describedby="cache-ttl-default-help cache-ttl-help" value={settings.promptCacheTtlPreset}
                   onChange={e => setDesktop({ promptCacheTtlPreset: promptCacheTtlPreset(e.target.value) })}>
                   {promptCacheTtlPresets.map(preset => <option key={preset} value={preset}>{t(cacheTtlLabels[preset])}</option>)}
                 </select>
               </label>
-              <p>{t('prefs.cacheTtlDefaultHelp')}</p>
-              <p>{t('prefs.cacheTtlHelp')}</p>
+              <p id="cache-ttl-default-help">{t('prefs.cacheTtlDefaultHelp')}</p>
+              <p id="cache-ttl-help">{t('prefs.cacheTtlHelp')}</p>
               <label>{t('prefs.dialogHooks')}
-                <input type="checkbox" checked={settings.dialogHooks} onChange={e => setDesktop({ dialogHooks: e.currentTarget.checked })} />
+                <input type="checkbox" aria-describedby="dialog-hooks-help" checked={settings.dialogHooks} onChange={e => setDesktop({ dialogHooks: e.currentTarget.checked })} />
               </label>
-              <p>{t('prefs.dialogHooksHelp')}</p>
+              <p id="dialog-hooks-help">{t('prefs.dialogHooksHelp')}</p>
               {hookStatus && <p className="pref-hook-status" data-hook-state={hookStatus.state} role="status">{t(hookStatusText(hookStatus))}</p>}
               <QuitPreferenceSetting resetKey={quitReset} />
               <button className="pref-action" onClick={() => {

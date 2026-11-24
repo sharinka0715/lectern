@@ -73,6 +73,15 @@ try {
     await select.waitFor();
   };
   const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('lectern.desktop.preferences.v1') ?? '{}').promptCacheTtlPreset);
+  /** The help the control points to (aria-describedby), so other settings' help on the page never matches. */
+  const help = control => control.evaluate(el => {
+    const ids = el.getAttribute('aria-describedby')?.split(/\s+/).filter(Boolean) ?? [];
+    return ids.map(id => document.getElementById(id)?.textContent ?? `(no #${id})`).join('\n');
+  });
+  const assertHelp = async (control, texts) => {
+    const text = await help(control);
+    for (const part of texts) assert.ok(text.includes(part), `the cache setting's help says "${part}": ${text}`);
+  };
   const choose = async preset => {
     await openSession();
     await select.selectOption(preset);
@@ -87,9 +96,7 @@ try {
   assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(o => o.value)), ['default', 'both-5m', 'both-1h', 'main-1h-other-5m']);
   assert.deepEqual(await select.locator('option').allInnerTexts(),
     ['默认（由 Claude Code 决定）', '主对话 5 分钟，其他请求 5 分钟', '主对话 1 小时，其他请求 1 小时', '主对话 1 小时，其他请求 5 分钟']);
-  for (const text of ['选默认时 Lectern 不做设置', '按你用的是订阅还是 API 决定', 'Claude 订阅的套餐额度内为 1 小时', '其他请求都是 5 分钟', '普通输入的 2 倍', 'FORCE_PROMPT_CACHING_5M=1', '已在运行的对话不变']) {
-    await settings.getByText(text, { exact: false }).waitFor();
-  }
+  await assertHelp(select, ['选默认时 Lectern 不做设置', '按你用的是订阅还是 API 决定', 'Claude 订阅的套餐额度内为 1 小时', '其他请求都是 5 分钟', '普通输入的 2 倍', 'FORCE_PROMPT_CACHING_5M=1', '已在运行的对话不变']);
   await select.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(shots, 'settings-session-zh.png') });
   await page.keyboard.press('Escape');
@@ -181,7 +188,7 @@ try {
   assert.equal(await englishSelect.inputValue(), 'both-1h');
   assert.deepEqual(await englishSelect.locator('option').allInnerTexts(), ['Default (Claude Code decides)',
     'Main conversation 5 minutes, other requests 5 minutes', 'Main conversation 1 hour, other requests 1 hour', 'Main conversation 1 hour, other requests 5 minutes']);
-  for (const text of ['With Default, Lectern sets nothing', 'subscription or the API', 'FORCE_PROMPT_CACHING_5M=1']) await english.getByText(text, { exact: false }).waitFor();
+  await assertHelp(englishSelect, ['With Default, Lectern sets nothing', 'subscription or the API', 'FORCE_PROMPT_CACHING_5M=1', 'running chats keep theirs']);
   await englishSelect.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(shots, 'settings-session-en.png') });
   const version = /Claude Code v(\d+\.\d+\.\d+)/.exec(pane())?.[1];
