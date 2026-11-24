@@ -36,6 +36,7 @@ export const composer = {
   uploading: ['上传中…', 'Uploading…'],
   removeAttachment: ['移除 {name}', 'Remove {name}'],
   openImage: ['查看大图：{name}', 'View {name} larger'],
+  goalNote: ['设定目标：Claude 会一直工作到条件达成', 'Set a goal: Claude keeps working until the condition holds'],
   sourceBuiltin: ['内置命令', 'Built-in'],
   sourceUser: ['个人', 'Personal'],
   sourceProject: ['项目', 'Project'],

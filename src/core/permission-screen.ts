@@ -1,6 +1,7 @@
 import { stripTerminalEscapes } from './screen';
 import { parseAutoModeBillingNoticeLines, parseAutoModeUnavailableLines } from './auto-mode-screen';
 import { parseNativeDialogLines } from './native-dialog-screen';
+import { parseGoalPanelLines } from './goal-screen';
 import type { NativePermissionOption, NativePermissionScreen } from '../shared/native-permission';
 
 /**
@@ -194,12 +195,21 @@ function autoModeBilling(lines: string[]): NativePermissionScreen | undefined {
  * order; the driver moves by arrows) or, without any, Enter as option 1; Esc is the cancel. */
 function nativeDialog(lines: string[]): NativePermissionScreen | undefined {
   const dialog = parseNativeDialogLines(lines);
-  if (!dialog) return;
+  if (!dialog) return goalPanel(lines);
   const options: NativePermissionOption[] = dialog.choices.length
     ? dialog.choices.map((choice, index) => ({ number: index + 1, label: choice.label, focused: choice.focused }))
     : dialog.enter !== undefined ? [{ number: 1, label: dialog.enter, focused: false, key: 'Enter' }] : [];
   return { kind: 'native-dialog', title: dialog.title, subtitle: dialog.paragraphs, content: [], question: '', footer: dialog.footer, options,
     ...dialog.escape !== undefined && { escape: dialog.escape } };
+}
+
+/** The bare `/goal` status panel (goal-screen.ts) under its "▔▔▔" rule: Claude Code reports it
+ * waiting ("dialog open") until Esc closes it, the only key it offers. */
+function goalPanel(lines: string[]): NativePermissionScreen | undefined {
+  const panel = parseGoalPanelLines(lines);
+  if (!panel) return;
+  return { kind: 'native-dialog', title: panel.title, subtitle: panel.lines, content: [], question: '',
+    footer: `Esc to ${panel.dismiss}`, options: [], escape: panel.dismiss };
 }
 
 /** Which dialog it is, focus aside. A tool dialog's footer may follow the focus; the keyed dialog's footer is its choices. */
@@ -221,7 +231,9 @@ export function permissionGuardLines(viewport: string, screen: NativePermissionS
   if (!viewport.endsWith('\n')) return;
   const rows = viewport.split('\n').slice(0, -1), wanted = JSON.stringify(screen);
   for (let top = rows.length - 1; top >= 0; top--) {
-    if (!fullRule.test(stripTerminalEscapes(rows[top]).replace(/\s+$/u, ''))) continue;
+    // The /goal panel's rule is "▔▔▔…" (goal-screen.ts), possibly with a notice at its end.
+    const rule = stripTerminalEscapes(rows[top]).replace(/\s+$/u, '');
+    if (!fullRule.test(rule) && !/^▔{20,}/u.test(rule)) continue;
     if (JSON.stringify(parsePermissionScreen(rows.slice(top).join('\n') + '\n', options)) === wanted) return rows.length - top;
   }
 }

@@ -160,10 +160,55 @@ export interface MessageAttachment {
   /** A folder Claude Code attached (an @-mentioned directory). */
   directory?: true;
 }
+/** One event of Claude Code's native /goal shown in the chat (core/goal-records.ts). */
+export type GoalEventKind = 'set' | 'not-met' | 'met' | 'failed' | 'cleared' | 'paused' | 'retry' | 'checkin';
+export interface GoalEvent {
+  kind: GoalEventKind;
+  condition?: string;
+  /** The evaluator's reason (not met, met, impossible). */
+  reason?: string;
+  /** Consecutive not-met checks shown as one row: how many, and their reasons oldest first. */
+  count?: number;
+  reasons?: string[];
+  iterations?: number;
+  durationMs?: number;
+  tokens?: number;
+  /** Claude Code's own words: a pause or retry notice, a check-in's summary, an error's clear. */
+  notice?: string;
+  /** A check-in: how long the evaluation has been deferred, and the background work it lists. */
+  minutes?: number;
+  tasks?: string[];
+}
+/** What Lectern knows of the session's goal (core/goal-status.ts, main/controller.ts). */
+export type GoalPhase = 'set' | 'checking' | 'not-met' | 'deferred' | 'retrying' | 'paused';
+export interface GoalObservation {
+  status: 'active' | 'met' | 'failed' | 'cleared';
+  /** While active: just set, being checked, last check not met, check deferred, retrying, paused. */
+  phase?: GoalPhase;
+  /** Empty when only the screen shows a goal whose records were not read. */
+  condition: string;
+  /** When it was set (its record's time); not after a /compact restated it without the setting. */
+  setAt?: string;
+  endedAt?: string;
+  /** Not-met checks since it was set (in the records read), and the latest reason. */
+  checks: number;
+  lastReason?: string;
+  lastCheckAt?: string;
+  result?: { reason?: string; iterations?: number; durationMs?: number; tokens?: number };
+  /** Claude Code's latest pause or retry notice while active; an error that cleared it. */
+  notice?: string;
+  deferred?: { at?: string; minutes?: number; tasks: string[]; summary: string };
+  /** transcript: the records read; probe: the last record before them; screen: the indicator only. */
+  source: 'transcript' | 'probe' | 'screen';
+  /** The live indicator above the input box ("◎ /goal active (12s)"): its timer as shown. */
+  screen?: { state: 'active' | 'paused'; elapsed?: string };
+  /** No live Claude Code: an active goal comes back when the session is resumed. */
+  history?: boolean;
+}
 export interface ChatMessage {
   /** Active-branch, persisted human checkpoint; never a GUI turn index. */
   rewindUuid?: string;
-  taskNotifications?: { id: string; text: string }[];
+  taskNotifications?: { id: string; text: string; goal?: GoalEvent }[];
   peerMessages?: (PeerMessage & { textOffset: number; toolsBefore: number })[];
   attachments?: MessageAttachment[];
   /** The user interrupted this reply (Esc, or a refused tool permission). */
@@ -321,6 +366,8 @@ export interface TaskOutputRequest { revision?: number; source?: string; older?:
 export interface SessionSnapshot {
   turnProgress?: TurnProgressObservation;
   lastCompact?: CompactReceipt;
+  /** Claude Code's native /goal: active, or how the latest one ended until the next prompt. */
+  goal?: GoalObservation;
   tasks?: ConversationTask[];
   /** A branch command was submitted; retry only verification and recovery. */
   pendingFork?: { paneId: string; panePid: number };

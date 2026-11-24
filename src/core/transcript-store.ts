@@ -7,6 +7,8 @@ import type { JsonRecord } from './jsonl';
 import { transcriptAttachments, type TranscriptAttachment } from './transcript-attachments';
 import { requestUsage, type ContextUsageObservation } from './request-usage';
 import { isFoldedThought, isNarration } from './thinking';
+import { goalCheckinRecord, goalEventOf, goalSetEcho } from './goal-records';
+import type { GoalEvent } from '../shared/types';
 
 type Kind = 'user' | 'assistant' | 'command' | 'companion' | 'result' | 'duration' | 'compact' | 'attachment' | 'notification' | 'interruption' | 'hidden';
 interface Preservation { anchor?: string; ids?: string[]; head?: string; tail?: string; all: string[] }
@@ -32,6 +34,10 @@ export interface TranscriptRow {
   peers?: PeerMessage[];
   backgroundAgents?: number;
   backgroundWorkflows?: number;
+  /** Claude Code's native /goal: a status record, a pause or retry notice, a check-in. */
+  goal?: GoalEvent;
+  /** The set event comes from the "Goal set: …" echo, which stands in for a set record not read. */
+  goalEcho?: boolean;
 }
 
 export interface TranscriptChange {
@@ -115,9 +121,25 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
       row.backgroundAgents = count(record.pendingBackgroundAgentCount);
       row.backgroundWorkflows = count(record.pendingWorkflowCount);
     }
-    return row;
   }
   if (record.isCompactSummary) return row;
+  // The goal's records (goal-records.ts) are chat rows; a check-in never becomes a user's bubble.
+  const goal = goalEventOf(record) ?? (() => { const event = goalCheckinRecord(record); return event && { goal: event, text: event.notice ?? '' }; })();
+  if (goal) {
+    row.kind = 'notification';
+    row.goal = goal.goal;
+    if (bodies) row.text = goal.text;
+    return row;
+  }
+  const echo = goalSetEcho(record);
+  if (echo !== undefined) {
+    row.kind = 'notification';
+    row.goal = { kind: 'set', condition: echo };
+    row.goalEcho = true;
+    if (bodies) row.text = `Goal set: ${echo}`;
+    return row;
+  }
+  if (record.type === 'system') return row;
   // 原生记录的来源决定发件人。用户自己粘贴的同名标签仍然是普通聊天文字。
   const attachment = object(record.attachment);
   if (record.type === 'attachment' && (attachment.type === 'task_reminder' || attachment.type === 'todo_reminder')) {

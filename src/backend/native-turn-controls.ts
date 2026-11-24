@@ -4,6 +4,7 @@ import { isIdleEmptyComposer } from '../core/settings-screen';
 import { parseTurnProgress } from '../core/turn-progress';
 import type { RewindMenu, TurnAction } from '../shared/turn-controls';
 import { t } from '../shared/i18n';
+import { goalCommand } from '../shared/native-commands';
 import { keysNotSent, TranscriptChangedNoKeys } from './native-settings';
 
 interface TurnFrame { paneId: string; panePid: number; viewport: string; nativeStatus?: string }
@@ -228,6 +229,19 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     const flushable = (frame: TurnFrame) => { const current = turnComposer(frame.viewport); return running(frame) && !!current?.empty && current.queued.length > 0; };
     if (!flushable(initial)) throw changed();
     await press('steer', true, flushable);
+    return;
+  }
+  if (action.kind === 'command') {
+    // `/goal …` (goalCommand): Claude Code runs it at once while it replies; it is never queued.
+    const text = action.text;
+    if (!validText(text) || text.includes('\n') || !goalCommand(text)) throw new Error(t('native.enterValidMessage'));
+    if (!running(initial) || !editor?.empty) throw changed();
+    await paste(text, true, f => turnComposer(f.viewport)?.empty === true && running(f));
+    // The reply may end meanwhile: Enter runs the command in an idle input box all the same.
+    const typed = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport);
+      return !!actual && sameDraft(actual.text, text) && frame.nativeStatus !== 'waiting' && classifySessionScreen(frame.viewport).status !== 'waiting'; };
+    await waitFor(typed);
+    await press('submit', true, typed);
     return;
   }
   if (action.kind === 'queue' || action.kind === 'steer' || action.kind === 'sendRestored' || action.kind === 'openRewind') {

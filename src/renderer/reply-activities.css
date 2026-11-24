@@ -53,3 +53,10 @@
 .thought-row > .thought-text { color: var(--secondary-text); font-size: var(--text-ui); }
 .thought-row > .thought-text .markdown, .thought-row > .thought-text > * { color: inherit; }
 .activity-row.thought-row[open] > .thought-text { max-height: 24em; overflow: auto; }
+/* Claude Code's /goal rows (MessageDisplay.tsx, GoalNotice): the end of a goal in its colour. */
+.goal-notice-content p { margin: .1em 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.goal-notice-content ol, .goal-notice-content ul { margin: .1em 0; padding-left: 1.4em; overflow-wrap: anywhere; }
+.goal-notice-content code { font-family: var(--font-mono); font-size: .95em; }
+.goal-notice[data-goal-event="met"] .activity-verb { color: var(--success); }
+.goal-notice[data-goal-event="failed"] .activity-verb { color: var(--danger); }
+.goal-notice[data-goal-event="paused"] .activity-verb, .goal-notice[data-goal-event="retry"] .activity-verb { color: var(--warning); }

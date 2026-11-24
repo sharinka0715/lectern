@@ -119,9 +119,12 @@ const agentRows = () => {
 const stateFile = path.join(config, 'screen-state');
 const draw = () => {
   const lines = ['╭─ Claude Code · offline fixture ─╮', '  Local simulation · no model requests', ''];
-  for (const message of history.slice(-4)) lines.push(`${message.role === 'user' ? '❯' : '⏺'} ${message.text}`, '');
+  // The last four messages, with the goal's own rows among them (notes).
+  let from = history.length;
+  for (let shown = 0; from > 0 && shown < 4;) if (history[--from].role !== 'note') shown++;
+  for (const message of history.slice(from)) lines.push(message.role === 'note' ? message.text : `${message.role === 'user' ? '❯' : '⏺'} ${message.text}`, '');
   if (preview) lines.push(`⏺ ${preview}`, '');
-  if (busy && !permission) lines.push('✻ Thinking… (esc to interrupt)', '');
+  if (busy && !permission) lines.push(evaluating ? '✻ Thinking… (running Stop hook · 1s · esc to interrupt)' : '✻ Thinking… (esc to interrupt)', '');
   if (fixtureState === 'compacting') lines.push('✻ Compacting conversation… (20m 27s · ↓ 842 tokens)', '');
   else if (fixtureState === 'progress') lines.push('✻ Whirring… (8s · ↓ 15 tokens)', '');
   if (nativeMenu === 'model') {
@@ -145,6 +148,9 @@ const draw = () => {
     if (input === '/model' || input === '/effort') {
       lines.push(`❯ ${input}       Set the session ${input.slice(1)}`);
     }
+    // The goal indicator (or a busy clear's notice) right-aligned on the row on top of the input box.
+    goalIndicatorShown = goalIndicator();
+    if (goalIndicatorShown) lines.push(goalIndicatorShown.padStart(64));
     lines.push('────────────────────────────────────────────────────────────────', `❯ ${input}`, '────────────────────────────────────────────────────────────────',
       ['progress', 'compacting'].includes(fixtureState) ? '  ⏸ manual mode on · esc to interrupt' : '  ⏸ manual mode on · ? for shortcuts'
         + (typeof fixtureAgents === 'number' && !input ? ' · ↓ to manage' : ''));
@@ -155,7 +161,7 @@ const draw = () => {
   // as the cleared one would (erased after each row and around a bare line feed). Clearing first
   // let a read on a slow macOS runner, where the pty hands a frame over in pieces, catch the redraw
   // half done and refuse a key over rows that never changed.
-  if (typeof fixtureAgents === 'number' || permission) process.stdout.write('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J');
+  if (typeof fixtureAgents === 'number' || permission || goal || goalCleared) process.stdout.write('\x1b[H' + lines.map(line => line.replace(/\n/g, '\x1b[K\n\x1b[1K') + '\x1b[K').join('\r\n') + '\x1b[J');
   else process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n'));
 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -225,6 +231,146 @@ function decide(choice) {
   busy = false;
   setPresence('idle');
 }
+// Claude Code's native /goal (2.1.331's records and screen, research in CLAUDE.md "目标"): `/goal <condition>`
+// sets it and starts a turn; `/goal clear` (and stop|off|reset|none|cancel) clears it, at once even while
+// busy (then only the cleared record, and "Goal cleared: …" on the notice row for 3 s). The condition picks
+// what happens: goal-hold (not met, then a reply that goes on until cleared or Esc), goal-impossible,
+// goal-retry (the check fails, retrying), goal-pause (unmet twice, then paused), goal-pausetool (Claude
+// pauses it: "◎ /goal paused"), goal-checkin (deferred for background work, then a check-in after
+// LECTERN_MOCK_GOAL_CHECKIN_MS); otherwise not met once, then met. Each check shows "running Stop hook"
+// for LECTERN_MOCK_GOAL_EVAL_MS (default 600). The indicator's timer ticks every LECTERN_MOCK_GOAL_TICK_MS
+// (default 1000, as Claude Code), counted as seconds.
+let goal, goalCleared, evaluating = false;
+const goalTickMs = Number(process.env.LECTERN_MOCK_GOAL_TICK_MS) || 1000;
+const goalEvalMs = Number(process.env.LECTERN_MOCK_GOAL_EVAL_MS ?? 600);
+const goalClear = /^(?:clear|stop|off|reset|none|cancel)$/i;
+const now = () => new Date().toISOString();
+const goalStatus = fields => append({ type: 'attachment', uuid: randomUUID(), sessionId: id, cwd: current, timestamp: now(), attachment: { type: 'goal_status', ...fields } });
+const systemRecord = (subtype, fields) => append({ type: 'system', subtype, uuid: randomUUID(), sessionId: id, cwd: current, timestamp: now(), isMeta: false, ...fields });
+const metaUser = content => append({ ...record('user', content), isMeta: true });
+const goalCommandText = args => `<command-name>/goal</command-name>\n            <command-message>goal</command-message>\n            <command-args>${args}</command-args>`;
+function goalIndicator() {
+  if (!goal) return goalCleared && Date.now() < goalCleared.until ? `Goal cleared: ${goalCleared.condition}` : undefined;
+  if (goal.paused) return '◎ /goal paused';
+  const ticks = Math.floor((Date.now() - goal.setAt) / goalTickMs);
+  // An accelerated timer (tests) keeps counting seconds, so the row changes at every tick.
+  return '◎ /goal active' + (ticks < 1 ? '' : ticks < 60 || goalTickMs < 1000 ? ` (${ticks}s)` : ` (${Math.floor(ticks / 60)}m)`);
+}
+let goalIndicatorShown;
+setInterval(() => { if (goalIndicator() !== goalIndicatorShown) draw(); }, Math.min(50, Math.max(5, goalTickMs / 3)));
+/** Streams `text` as the reply's preview, then writes it: false once Esc or a new turn took over. */
+async function speak(text, token) {
+  const chars = [...text], pace = Number(process.env.LECTERN_MOCK_STREAM_MS) || 100;
+  for (let i = 0; i < chars.length; i += 12) {
+    if (token !== generation) return false;
+    preview = chars.slice(0, i + 12).join(''); draw(); await pause(pace);
+  }
+  if (token !== generation) return false;
+  append(record('assistant', [{ type: 'text', text }], { id: randomUUID(), stop_reason: 'end_turn', model: fixtureModels[selectedModel] }));
+  history.push({ role: 'assistant', text }); preview = ''; draw();
+  return true;
+}
+
+/** One check of the goal when Claude would stop: "running Stop hook", then its verdict's records. */
+async function evaluate(verdict, token) {
+  evaluating = true; draw(); await pause(goalEvalMs); evaluating = false;
+  if (token !== generation || !goal) return false;
+  const { condition } = goal, hook = { hookCount: 1, hookInfos: [{ command: condition, promptText: condition }], hookErrors: [], failedHookErrorIndexes: [],
+    hookAdditionalContext: [], preventedContinuation: false, stopReason: '', hasOutput: true, level: 'suggestion', toolUseID: randomUUID() };
+  const stats = { iterations: ++goal.checks, durationMs: Date.now() - goal.setAt, tokens: 48 * goal.checks };
+  if (verdict === 'not-met') {
+    const reason = 'step two is not reported done yet';
+    append({ ...record('user', `Stop hook feedback:\n[${condition}]: ${reason}`), isMeta: true, rowSource: 'harness', hookText: true });
+    goalStatus({ met: false, condition, reason }); systemRecord('stop_hook_summary', hook);
+    history.push({ role: 'note', text: '◯ Goal not yet met… continuing' });
+  } else if (verdict === 'met') {
+    goalStatus({ met: true, condition, reason: 'the assistant reported both steps done', ...stats }); systemRecord('stop_hook_summary', hook);
+    history.push({ role: 'note', text: `✔ Goal achieved (${Math.round(stats.durationMs / 1000)}s · ${stats.iterations} turns · ${stats.tokens} tokens)` });
+    goal = undefined;
+  } else if (verdict === 'failed') {
+    goalStatus({ met: false, failed: true, condition, reason: 'the condition contradicts itself', ...stats }); systemRecord('stop_hook_summary', hook);
+    history.push({ role: 'note', text: `✘ Goal couldn't be achieved (0s · ${stats.iterations} turn · ${stats.tokens} tokens)` });
+    goal = undefined;
+  } else {
+    append({ type: 'attachment', uuid: randomUUID(), sessionId: id, cwd: current, timestamp: now(), attachment: { type: 'hook_non_blocking_error', hookName: 'Stop',
+      hookEvent: 'Stop', stderr: 'JSON validation failed', stdout: 'I cannot answer in JSON.', exitCode: 1, command: condition, durationMs: 9 } });
+    systemRecord('stop_hook_summary', { ...hook, hookErrors: ['JSON validation failed'], failedHookErrorIndexes: [0] });
+    notice('Goal still active · the goal check could not complete · retrying in 1 min (1/3) · send a message to retry now');
+  }
+  draw();
+  return true;
+}
+const notice = content => { systemRecord('informational', { content, level: 'notice' }); history.push({ role: 'note', text: `⏺ ${content}` }); };
+const endTurn = () => { systemRecord('turn_duration', { durationMs: 1000, messageCount: history.length }); busy = false; preview = ''; if (presence) setPresence('idle'); draw(); };
+
+/** `/goal …` entered, idle or busy (Claude Code runs it at once). */
+function goalCommand(args) {
+  if (!args) return; // the status panel: Lectern never types it
+  if (goalClear.test(args)) {
+    const condition = goal?.condition;
+    if (!condition) {
+      systemRecord('local_command', { content: goalCommandText(args), level: 'info' });
+      systemRecord('local_command', { content: '<local-command-stdout>No goal set</local-command-stdout>', level: 'info', commandRun: { command: 'goal', args } });
+      history.push({ role: 'user', text: `/goal ${args}` }, { role: 'note', text: '  ⎿  No goal set' });
+      return;
+    }
+    goalStatus({ met: true, sentinel: true, condition });
+    goal = undefined;
+    if (busy) goalCleared = { condition, until: Date.now() + 3000 };
+    else {
+      systemRecord('local_command', { content: goalCommandText(args), level: 'info' });
+      systemRecord('local_command', { content: `<local-command-stdout>Goal cleared: ${condition}</local-command-stdout>`, level: 'info', commandRun: { command: 'goal', args } });
+      history.push({ role: 'user', text: `/goal ${args}` }, { role: 'note', text: `  ⎿  Goal cleared: ${condition}` });
+    }
+    return;
+  }
+  goalStatus({ met: false, sentinel: true, condition: args });
+  append(record('user', goalCommandText(args)));
+  append({ ...record('user', `<local-command-stdout>Goal set: ${args}</local-command-stdout>`), turnOrigin: 'human' });
+  metaUser(`A session-scoped Stop hook is now active with condition: "${args}". Briefly acknowledge the goal, then immediately start (or continue) working toward it.`);
+  goal = { condition: args, setAt: Date.now(), checks: 0 };
+  goalCleared = undefined;
+  history.push({ role: 'user', text: `/goal ${args}` }, { role: 'note', text: `  ⎿  Goal set: ${args}` });
+  if (!busy) void goalTurn(args);
+}
+async function goalTurn(condition) {
+  busy = true;
+  if (presence) setPresence('busy');
+  const token = ++generation, has = marker => condition.includes(marker);
+  if (has('goal-checkin')) {
+    if (!await speak('Started the background work; waiting for it to finish.', token)) return;
+    endTurn();
+    await pause(Number(process.env.LECTERN_MOCK_GOAL_CHECKIN_MS) || 1500);
+    if (!goal || goal.condition !== condition) return;
+    const content = `<task-notification>\n<summary>Goal check-in: background work still running</summary>\n</task-notification>\n<system-reminder>\nGoal check-in: «${condition}» is still active, and evaluation has been deferred for 1 min because background work is still running:\n- bmock0001 · shell · sleep 80\nCheck on their progress (e.g. read their output). If they are progressing, say so briefly and keep waiting.\n</system-reminder>`;
+    append({ type: 'queue-operation', operation: 'enqueue', timestamp: now(), sessionId: id, content });
+    append({ type: 'queue-operation', operation: 'dequeue', timestamp: now(), sessionId: id });
+    append({ ...record('user', content), origin: { kind: 'task-notification' }, promptSource: 'system', queueOrigin: { kind: 'task-notification', source: 'goal-checkin' } });
+    history.push({ role: 'note', text: '⏺ Goal check-in: background work still running' });
+    busy = true;
+    const again = ++generation;
+    if (await speak('Background work is still running; waiting for it.', again)) endTurn();
+    return;
+  }
+  if (!await speak('Acknowledged the goal; step one done.', token)) return;
+  if (has('goal-pausetool')) { notice('Goal paused · send a message to continue, or run /goal clear'); goal.paused = true; endTurn(); return; }
+  if (has('goal-retry')) { if (await evaluate('error', token)) endTurn(); return; }
+  if (has('goal-impossible')) { if (await evaluate('failed', token)) endTurn(); return; }
+  if (!await evaluate('not-met', token)) return;
+  if (has('goal-hold')) {
+    preview = 'Still working on step two.'; draw();
+    while (token === generation && goal?.condition === condition) await pause(100);
+    if (token === generation && await speak('Still working on step two.', token)) endTurn();
+    return;
+  }
+  if (!await speak('Step two done: both steps are now complete.', token)) return;
+  if (has('goal-pause')) {
+    if (!await evaluate('not-met', token)) return;
+    notice('Goal paused · goal checks kept finding it unmet this turn · send a message to continue');
+  } else if (!await evaluate('met', token)) return;
+  endTurn();
+}
+
 async function answer(text) {
   busy = true;
   if (presence) setPresence('busy');
@@ -274,6 +420,8 @@ async function answer(text) {
   history.push({ role: 'assistant', text: response });
   preview = '';
   draw();
+  // A message continues a paused goal, and the goal is checked when Claude stops.
+  if (goal) { goal.paused = false; await evaluate('not-met', token); }
   if (presence) setPresence('idle');
 }
 process.stdin.setRawMode?.(true);
@@ -320,7 +468,9 @@ process.stdin.on('data', chunk => {
     if ((char === '\r' || char === '\n') && !pasted) {
       const text = input.trim(); input = '';
       const inline = aliasModels && /^\/(model|effort) (\S+)$/.exec(text);
-      if (!busy && (text === '/model' || text === '/effort')) {
+      const goalArgs = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
+      if (goalArgs) goalCommand((goalArgs[1] ?? '').trim());
+      else if (!busy && (text === '/model' || text === '/effort')) {
         nativeMenu = text.slice(1); focus = nativeMenu === 'model' ? selectedModel : selectedEffort;
       } else if (!busy && inline) {
         const list = inline[1] === 'model' ? fixtureModels : fixtureEfforts;

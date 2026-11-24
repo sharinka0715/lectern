@@ -24,3 +24,8 @@
 .composer-completion [aria-selected=true] > svg { color: var(--accent); }
 .composer-completion-loading { padding: calc(8 * var(--ui-px)) 12px; color: var(--muted); font-size: var(--text-meta); }
 .composer-completion-hint { border-top: 1px solid var(--line); margin-top: calc(3 * var(--ui-px)); padding: calc(5 * var(--ui-px)) 8px calc(2 * var(--ui-px)); color: var(--muted); font-size: var(--text-caption); }
+/* What a built-in does ("/goal"): quiet, cut before the source label. */
+.composer-completion [role=option] > .composer-completion-note {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-style: normal; font-size: var(--text-caption); color: var(--muted);
+}

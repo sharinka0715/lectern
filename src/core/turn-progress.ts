@@ -60,7 +60,8 @@ export function parseTurnProgress(viewport: string, editor = turnComposer(viewpo
     else {
       const token = tokens.exec(metric);
       if (token) progress.tokens = { display: token[2], ...(token[1] && { direction: token[1] === '↓' ? 'down' : 'up' }) };
-      else if (/^(?:thinking\b|thought for |running tool for |ran tool for )/i.test(metric)) progress.detail = metric;
+      // "running Stop hook": the /goal evaluator (or another Stop hook) checks whether the turn may end.
+      else if (/^(?:thinking\b|thought for |running tool for |ran tool for |running stop hooks?$)/i.test(metric)) progress.detail = metric;
     }
   }
   if (glyph === '●' && !(progress.elapsed || progress.tokens || inlineHint)) return;

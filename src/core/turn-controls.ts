@@ -1,6 +1,7 @@
 import { classifySessionScreen, stripTerminalEscapes, withoutEditorNotices, withoutTaskRows } from './screen';
 import { nativeTaskPanel } from './native-task-screen';
 import { namedEditorBorder } from './editor-border';
+import { withoutGoalIndicator } from './goal-screen';
 import { completionBlocks } from './slash-completions';
 import type { RewindMenu } from '../shared/turn-controls';
 
@@ -32,11 +33,12 @@ const plainRule = /^\s*(?:[─━▔]{5,}|[─━▔]{5,} [^\n]+ [─━▔]+)\s
 const isRule = (line: string) => plainRule.test(line) || namedEditorBorder.test(line);
 const linesOf = (view: string) => stripTerminalEscapes(view).replace(/\u00a0/g, ' ').split('\n').map(line => line.trimEnd());
 /** The rows every reader of the input box parses (`turnComposer`, turn progress): task
- * rows below the footer dropped, notices on top of the box blanked. Rows above the task
+ * rows below the footer dropped, notices on top of the box blanked (the goal indicator's
+ * ticking timer with them, goal-screen.ts). Rows above the task
  * rows keep their index, so `turnComposer(view).top` is the same row here and in the
  * pane; a count from the bottom is not. */
 export function composerLines(view: string): string[] {
-  return withoutEditorNotices(withoutTaskRows(linesOf(view)));
+  return withoutEditorNotices(withoutGoalIndicator(withoutTaskRows(linesOf(view))));
 }
 function lastMatch(lines: string[], test: (line: string, index: number) => boolean): number {
   for (let i = lines.length - 1; i >= 0; i--) if (test(lines[i], i)) return i;

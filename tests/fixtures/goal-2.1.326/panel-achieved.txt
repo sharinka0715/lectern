@@ -1,0 +1,45 @@
+
+ ▐▛███▛█   Claude Code v2.1.326
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /tmp/ccm-sandbox/work
+
+
+● Auto mode lets Claude handle permission prompts automatically — Claude checks each tool call for risky actions
+  and prompt injection before executing. Actions Claude identifies as safe are executed, while actions Claude
+  identifies as risky are blocked and Claude may try a different approach. Ideal for long-running tasks.
+  Sessions are slightly more expensive. Claude can make mistakes that allow harmful commands to run, it's
+  recommended to only use in isolated environments. Shift+Tab to change mode.
+
+❯ /goal Finish the two-step task ccm:g
+  ⎿  Goal set: Finish the two-step task ccm:g
+
+● Acknowledged the goal; step one done.
+
+◯ Goal not yet met… continuing
+
+● Step two done: both steps are now complete.
+
+✔ Goal achieved (2s · 2 turns · 96 tokens)
+
+✻ Worked for 2s · done 11:25 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   ✔ Goal achieved
+   2s · 2 turns · 96 tokens
+
+   Goal: Finish the two-step task ccm:g
+   /goal <condition> to set another
+
+   Esc to close

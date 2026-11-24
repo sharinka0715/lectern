@@ -1,0 +1,48 @@
+/* Claude Code's /goal above the input box: a pill like the turn's progress (turn-progress.css),
+   opening to its facts like the compaction receipt. Rows follow the interface font (--ui-px). */
+.goal-status > summary {
+  max-width: 100%;
+  margin-left: 6px;
+  padding: calc(3 * var(--ui-px)) 13px calc(3 * var(--ui-px)) 9px;
+  border: 1px solid color-mix(in srgb, var(--action) 22%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--action) 6%, var(--surface-raised));
+  color: var(--secondary-text);
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.goal-status > summary::before { flex: none; }
+.goal-status-icon { flex: none; color: var(--action); }
+.goal-status-label { flex: none; font-weight: 600; }
+.goal-status-phase, .goal-status-excerpt { display: inline-flex; align-items: center; gap: .55rem; min-width: 0; }
+.goal-status-phase { flex: none; }
+.goal-status-phase::before, .goal-status-excerpt::before {
+  content: ""; flex: none; width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: .55;
+}
+.goal-status-excerpt { flex: 0 1 auto; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); max-width: 28em; }
+.goal-status-excerpt::before { display: inline-block; vertical-align: middle; margin-right: .55rem; }
+.goal-status > summary .turn-progress-count { flex: none; }
+.goal-status[data-goal-phase="checking"] .goal-status-icon { animation: goal-status-pulse 1.4s ease-in-out infinite; }
+.goal-status[data-goal-phase="paused"] > summary,
+.goal-status[data-goal-phase="retrying"] > summary { border-color: color-mix(in srgb, var(--warning) 40%, var(--line)); background: color-mix(in srgb, var(--warning-bg) 60%, var(--surface-raised)); }
+.goal-status[data-goal-status="met"] > summary { border-color: color-mix(in srgb, var(--success) 35%, var(--line)); background: color-mix(in srgb, var(--success-bg) 55%, var(--surface-raised)); }
+.goal-status[data-goal-status="met"] .goal-status-icon { color: var(--success); }
+.goal-status[data-goal-status="failed"] > summary { border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); background: color-mix(in srgb, var(--danger-bg) 55%, var(--surface-raised)); }
+.goal-status[data-goal-status="failed"] .goal-status-icon { color: var(--danger); }
+.goal-status[data-goal-status="cleared"] > summary { border-color: var(--line); background: var(--surface-raised); }
+.goal-status[data-goal-status="cleared"] .goal-status-icon { color: var(--muted); }
+.goal-status-facts { max-width: 46rem; max-height: min(40vh, calc(320 * var(--ui-px))); overflow-y: auto; }
+.goal-status-condition { display: flex; flex-direction: column; gap: calc(2 * var(--ui-px)); }
+.goal-status-condition > span { color: var(--muted); }
+.goal-status-condition q { quotes: none; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.goal-status-native { color: var(--muted); overflow-wrap: anywhere; }
+.goal-status-tasks { margin: calc(2 * var(--ui-px)) 0; padding-left: 1.2rem; }
+.goal-status-tasks code { font-family: var(--font-mono); font-size: .95em; overflow-wrap: anywhere; }
+.goal-status-clear {
+  padding: calc(3 * var(--ui-px)) 10px; border: 1px solid var(--danger-line); border-radius: 7px;
+  background: var(--surface-raised); color: var(--danger); font: inherit; cursor: pointer;
+}
+.goal-status-clear:hover:not(:disabled) { background: var(--danger-bg); }
+.goal-status-clear:disabled { opacity: .5; cursor: default; }
+@keyframes goal-status-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .goal-status-icon { animation: none !important; } }

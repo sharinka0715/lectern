@@ -4,6 +4,7 @@ import { classifySessionScreen, stripTerminalEscapes, withoutRightNotice } from 
 import { trailingTaskRows, withoutTaskRows } from './native-task-screen';
 import { completionBlocks } from './slash-completions';
 import { namedEditorBorder } from './editor-border';
+import { withoutGoalIndicator } from './goal-screen';
 import { parseCacheConfirmationLines, type ModelSwitchConfirmation } from './model-switch-confirmation';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 export type { ModelSwitchConfirmation } from './model-switch-confirmation';
@@ -56,11 +57,12 @@ export const TMUX_FOCUS_HINT = "tmux focus-events off · add 'set -g focus-event
 const footerPattern = /\b(?:Enter to (?:set as default|confirm)|Esc to cancel)\b/i;
 // Claude Code 2.1.329+ lists background agents and workflows below the input box's
 // footer; their timers tick every second. Every count from the bottom (footer rows,
-// "within the last 12 rows") starts above them. Rows above keep their index.
+// "within the last 12 rows") starts above them. Rows above keep their index. The goal
+// indicator leaves the effort label and the notices on top of the input box as they were.
 function linesOf(screen: string): string[] {
   const lines = stripTerminalEscapes(screen).replace(/\u00a0/g, ' ').split('\n');
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
-  return withoutTaskRows(lines);
+  return withoutGoalIndicator(withoutTaskRows(lines));
 }
 function lastIndex(lines: string[], test: (line: string, index: number) => boolean): number {
   for (let index = lines.length - 1; index >= 0; index--) if (test(lines[index], index)) return index;

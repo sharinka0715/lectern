@@ -2,6 +2,7 @@ import { completedReplyOffset } from '../core/reply-completion';
 import { t } from '../shared/i18n';
 import { isTranscriptTurnStart } from '../core/transcript-store';
 import { adoptSidechain } from '../core/subagent-records';
+import { goalStatusOf } from '../core/goal-records';
 import type { JsonRecord } from '../core/jsonl';
 import { diagnostic } from '../diagnostics';
 import type { Workspace } from '../shared/types';
@@ -160,8 +161,8 @@ export class TranscriptPages {
     return !!row && isTranscriptTurnStart(row, this.sessionId);
   }
 
-  private async run(script: string, maxBytes: number) {
-    return (await this.transport.run(this.workspace, this.historyGuard + script, { maxBytes, tag: 'session.history_page' })).stdout;
+  private async run(script: string, maxBytes: number, tag = 'session.history_page') {
+    return (await this.transport.run(this.workspace, this.historyGuard + script, { maxBytes, tag })).stdout;
   }
 
   private async bytes(cursor: HistoryCursor, start: number, end: number) {
@@ -284,6 +285,27 @@ fi`, noFile());
     diagnostic.event('backend.history.older_page', { sessionId: this.sessionId, before: cursor.before,
       nextBefore: start, pageBytes, selectedBytes: jsonl.length, skipped }, 'debug');
     return { jsonl, olderCursor: start ? { ...cursor, before: start } : undefined, ...(skipped && { skippedHistoryRecords: skipped }) };
+  }
+
+  /**
+   * The newest `goal_status` record before `cursor.before` (Claude Code's native /goal,
+   * core/goal-records.ts), for a conversation whose first page does not reach back to it.
+   * The target streams those bytes through a fixed-string grep for the record's own key
+   * sequence (a quoted copy inside a message is escaped and never matches), keeps lines up
+   * to 64 KiB and returns the last four; only a record of this session in the exact shape counts.
+   */
+  async lastGoalStatus(cursor: HistoryCursor): Promise<JsonRecord | undefined> {
+    checkCursor(cursor);
+    const script = withTranscript(this.files, `${verified(cursor)}
+start=0; end=${cursor.before}
+{ ${range}; } | { LC_ALL=C grep -F '"attachment":{"type":"goal_status",' || [ "$?" = 1 ]; } | LC_ALL=C awk 'length($0) <= 65536' | tail -n 4`, noFile());
+    const lines = (await this.run(script, 4 * 65538, 'session.goal_probe')).toString('utf8').split('\n').filter(Boolean).reverse();
+    for (const line of lines) {
+      try {
+        const record = JSON.parse(line) as JsonRecord;
+        if (goalStatusOf(record) && record.sessionId === this.sessionId && !record.isSidechain) return record;
+      } catch { /* not a record */ }
+    }
   }
 
   async page(window: FileWindow): Promise<HistoryPage & { skipPartial?: boolean }> {

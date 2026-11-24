@@ -41,6 +41,8 @@ export const releaseNotes: ReleaseNote[] = [
         'The "Most recently updated" and "In progress first" sidebar lists look like "By project": one-line rows on the tree line, group headings that fold like folders, and each project in quiet text.'],
       ['侧栏里展开、折叠的项目文件夹、机器、分组和「展开更多」在切换排序方式和重启后都保持原样，在其他排序里打开对话也不再展开它的文件夹。',
         'Folders, machines and groups opened or folded in the sidebar, and their "Show more", stay so across sort modes and restarts; opening a chat from another sort no longer opens its folder.'],
+      ['可以从聊天框使用 Claude Code 的 /goal，回复进行中也能清除目标；输入框上方显示目标的进行、检查、达成等状态，回复中记录每次检查。',
+        "Claude Code's /goal works from the chat box, clearing too during a reply; a pill above the input box shows the goal in progress, being checked, met or ended."],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',

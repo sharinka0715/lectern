@@ -3,6 +3,7 @@ import { decodeTaskList, taskListFrame } from './native-task-list';
 import { nativeTaskPanel } from '../core/native-task-screen';
 import type { ConversationTask } from '../shared/types';
 import type { ActivityReadTarget, ActivitySample } from '../core/session-activity';
+import type { JsonRecord } from '../core/jsonl';
 import { HistoryIndex } from './history-index';
 import { physicalStamp, selectPhysicalHistory } from './physical-history';
 import { PhysicalHistoryPages } from './physical-history-pages';
@@ -39,7 +40,7 @@ import { effortFrameGuard, keysNotSent, NativeSettings, NavigationKeyNotSent, Se
 import { launchChoiceArgs, parseModelProbe, PROBE_ARGS, PROBE_INPUT } from './model-probe';
 import { launchSettings } from './launch-settings';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
-import { composerFrameGuard, animatedLabelText, guardWindow } from './composer-frame-guard';
+import { composerFrameGuard, animatedLabelText, goalRowText, guardWindow } from './composer-frame-guard';
 import { notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
@@ -1067,6 +1068,12 @@ remaining=$(list_target)
     const files = subagentPaths(await this.subagentDirs(workspace, sessionId), sessionId, agentId);
     return new TranscriptPages(this.transport, workspace, sessionId, files, '', agentId).older(cursor, sizeMiB);
   }
+  /** The last goal record before the first page (TranscriptPages.lastGoalStatus); not across a resumed layout. */
+  async readGoalBefore(workspace: Workspace, sessionId: string, cursor: HistoryCursor): Promise<JsonRecord | undefined> {
+    if (cursor.layout || this.physicalPages.get(this.key(workspace, sessionId))) return;
+    const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
+    return new TranscriptPages(this.transport, workspace, sessionId, this.transcriptPaths(session, location)).lastGoalStatus(cursor);
+  }
   async readOlderHistory(workspace: Workspace, sessionId: string, cursor: HistoryCursor, sizeMiB?: number): Promise<HistoryPage> {
     const session = await this.getSession(workspace, sessionId), location = await this.locate(workspace);
     const key = this.key(workspace,sessionId), layout = this.physicalPages.get(key);
@@ -1567,7 +1574,8 @@ lectern_frame`;
         return bytes.subarray(0, index).toString('utf8');
       };
       const viewport = decode(stdout.subarray(end + boundary.length));
-      const stable = settle && animatedLabelText(decode(stdout.subarray(0, split))) === animatedLabelText(viewport);
+      // The goal indicator's timer may tick between the two reads (composer-frame-guard.ts).
+      const stable = settle && goalRowText(animatedLabelText(decode(stdout.subarray(0, split)))) === goalRowText(animatedLabelText(viewport));
       last = { pane, viewport, location };
       return { paneId, viewport, stable };
     };

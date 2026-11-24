@@ -29,6 +29,7 @@ export const shared = {
   blockedResume: ['要续接历史对话，请在侧栏选择它后点「续接会话」。', 'To continue a past conversation, select it in the sidebar and click "Resume".'],
   blockedVim: ['切换编辑模式会改变原生输入方式，请接管终端后自行操作。', 'Switching the editor mode changes how native input works. Take over the terminal to do it yourself.'],
   blockedDefault: ['需要时请接管终端后在原生界面中操作。', 'If needed, take over the terminal and use the native interface.'],
+  goalTooLong: ['目标条件最多 {limit} 个字符，现在有 {count} 个。请缩短后再发送。', 'A goal condition is limited to {limit} characters; this one has {count}. Shorten it and send again.'],
   blockedCommand: ['/{name} 会打开原生交互界面，不能从聊天框发送。{help}', '/{name} opens a native interactive screen and cannot be sent from the chat box. {help}'],
   titleRequired: ['请输入会话名称', 'Enter a conversation name.'],
   titleSingleLine: ['名称必须为单行，请移除控制字符或不可见字符', 'The name must be a single line. Remove control or invisible characters.'],

@@ -28,4 +28,7 @@ export type TurnAction =
   | { kind: 'rewindTo'; uuid: string }
   | { kind: 'queue' | 'steer'; text: string }
   | { kind: 'checkpoint' | 'previous' | 'next' | 'cancelRewind' | 'restore'; signature: string; index?: number }
-  | { kind: 'sendRestored'; text: string; original: string };
+  | { kind: 'sendRestored'; text: string; original: string }
+  /** A slash command Claude Code runs at once even while it replies (`/goal …`): typed into the
+   * empty input box and entered, never queued. */
+  | { kind: 'command'; text: string };

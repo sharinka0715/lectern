@@ -52,7 +52,7 @@ import { checkForUpdatesFromMenu, UpdatePrompt } from "./UpdatePrompt";
 import { QuitPromptHost } from "./QuitDialog";
 import { needsSshLogin, openSshLogin } from "./ssh-login";
 import { checkSshMachines, markNavigated, setMachineConnection, sshConnectionError, sshMachineKey, sshMachines, useMachineConnections, useNavigated } from "./ssh-machines";
-import { commandPolicy } from "../shared/native-commands";
+import { commandPolicy, goalCommand } from "../shared/native-commands";
 import "./artifacts.css";
 import "./context-menu.css";
 import { ConversationTranscript } from "./ConversationTranscript";
@@ -81,6 +81,7 @@ import { activeDirectoryTrust } from "./directory-trust-state";
 import type { TurnAction } from "../shared/turn-controls";
 import { TurnPanel } from "./TurnControls";
 import { TurnProgress } from './TurnProgress';
+import { GoalStatus } from './GoalStatus';
 import { RewindPicker } from "./RewindPicker";
 import { useComposerCompletion } from "./useComposerCompletion";
 import { useComposerFocus } from "./useComposerFocus";
@@ -417,7 +418,12 @@ function ChatPane({ view, resumes, setResume }: {
   /** /compact is running: a draft can only be queued until the summary is written. */
   const compacting = inTurn && !!controls?.compacting;
   /** A draft typed during a reply: it can be queued or steer the reply (icon buttons by the stop button). */
-  const turnDraft = !question && inTurn && !!draft.trim();
+  /** `/goal …` runs at once even during a reply (Claude Code never queues it): no queue or steer buttons. */
+  const goalDraft = !!goalCommand(draft);
+  const turnDraft = !question && inTurn && !!draft.trim() && !goalDraft;
+  /** The goal pill's details are open (a bare `/goal` opens them). */
+  const [goalOpen, setGoalOpen] = useState(false);
+  useEffect(() => setGoalOpen(false), [workspaceId, sessionId, snapshot?.goal?.condition, snapshot?.goal?.setAt]);
   const restoredDraft = controls?.restoredDraft;
   const adoptedDraft = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -977,6 +983,7 @@ function ChatPane({ view, resumes, setResume }: {
       setDraft(''); composerContext.current?.querySelector<HTMLButtonElement>(`button[data-setting-kind="${policy.target}"]`)?.click();
       return;
     }
+    if (policy.kind === 'route' && policy.target === 'goal') { setDraft(''); showToast(t('app.goalNone')); return; }
     if (policy.kind === 'route') { setError(t('app.draftNoRewind'), target); return; }
     const id = `outgoing:${Date.now()}`, choices = draftChoices, request = sessionRequest.current;
     // Used by this launch only; they come back if it does not start.
@@ -1046,6 +1053,12 @@ function ChatPane({ view, resumes, setResume }: {
       setDraft(''); trigger.click();
       return;
     }
+    if (policy.kind === 'route' && policy.target === 'goal') {
+      // The bare command opens Claude Code's own panel, which holds its input box: show the pill's details instead.
+      setDraft('');
+      if (snapshot?.goal && snapshot.sessionId === sessionId) setGoalOpen(true); else showToast(t('app.goalNone'));
+      return;
+    }
     if (policy.kind === 'route') {
       if (!canRewind || !paneId || !snapshot?.panePid) setError(t('app.rewindWhenReady'));
       else if (policy.target === 'fork') await fork({ paneId, panePid: snapshot.panePid });
@@ -1068,7 +1081,8 @@ function ChatPane({ view, resumes, setResume }: {
     transcript.current?.scrollToLatest();
     try {
       if (turnInput && paneId && snapshot?.panePid) {
-        const action: TurnAction = restoredDraft ? {kind:'sendRestored',text:sent,original:restoredDraft} : {kind:mode,text:sent};
+        const action: TurnAction = restoredDraft ? {kind:'sendRestored',text:sent,original:restoredDraft}
+          : goalCommand(sent) ? {kind:'command',text:sent.trim()} : {kind:mode,text:sent};
         await window.desktop.turnAction(workspace.id,sessionId,paneId,snapshot.panePid,action);
       } else await window.desktop.sendMessage(workspace.id, sessionId, sent);
       if (
@@ -1088,6 +1102,24 @@ function ChatPane({ view, resumes, setResume }: {
     } finally {
       setSending(false);
     }
+  }
+
+  /** The goal pill's "Clear goal": `/goal clear`, confirmed first; during a reply Claude Code runs it at once. */
+  async function clearGoal() {
+    const goal = snapshot?.sessionId === sessionId ? snapshot?.goal : undefined;
+    if (!workspace || !sessionId || !paneId || !snapshot?.panePid || !goal || sending || !canSend) return;
+    const ok = await confirmAction({ title: t('telemetry.goalClearTitle'), danger: true, confirmLabel: t('telemetry.goalClear'),
+      message: goal.condition ? t('telemetry.goalClearMessage', { condition: goal.condition.length > 200 ? goal.condition.slice(0, 200) + '…' : goal.condition })
+        : t('telemetry.goalClearMessageUnknown') });
+    if (!ok || selected.current.workspaceId !== workspace.id || selected.current.sessionId !== sessionId) return;
+    setSending(true);
+    setError("");
+    try {
+      if (inTurn && !restoredDraft) await window.desktop.turnAction(workspace.id, sessionId, paneId, snapshot.panePid, { kind: 'command', text: '/goal clear' });
+      else await window.desktop.sendMessage(workspace.id, sessionId, '/goal clear');
+    } catch (e) {
+      if (selected.current.workspaceId === workspace.id && selected.current.sessionId === sessionId) setError(errorText(e));
+    } finally { setSending(false); }
   }
 
   async function actOnTurn(action: TurnAction) {
@@ -1725,6 +1757,8 @@ function ChatPane({ view, resumes, setResume }: {
           )}
           {!question && <>
           <TurnPanel state={controls} busy={sending || terminalLocked || busy} act={action => void actOnTurn(action)}/>
+          {snapshot?.goal && snapshot.sessionId === sessionId && <GoalStatus key={`goal:${settingScope}`} goal={snapshot.goal} open={goalOpen}
+            onOpenChange={setGoalOpen} canClear={canSend && !sending && !!paneId && !snapshot.goal.history} onClear={() => void clearGoal()} />}
           <TurnProgress snapshot={snapshot} />
           <form
             className={`composer${composerFocus.lock.disabled ? " composer-inactive" : ""}${attachments.dragging ? " composer-drop" : ""}`}

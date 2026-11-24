@@ -5,6 +5,7 @@ import { AUTO_MODE_BILLING_TITLE, AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudg
 import { nativeTaskPanel, withoutTaskRows } from './native-task-screen';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
 import { namedEditorBorder } from './editor-border';
+import { goalTranscriptRow, withoutGoalIndicator } from './goal-screen';
 import { t } from '../shared/i18n';
 
 export interface ScreenPreview {
@@ -150,7 +151,8 @@ function completedActivityFooter(lines: string[], index: number): boolean {
 function terminalLines(screen: string): string[] {
   const lines = stripTerminalEscapes(screen).split('\n');
   while (lines.length && !lines.at(-1)!.trim()) lines.pop();
-  return withoutEditorNotices(withoutTaskRows(lines));
+  // The goal indicator closes the notice row on top of the input box (goal-screen.ts).
+  return withoutEditorNotices(withoutGoalIndicator(withoutTaskRows(lines)));
 }
 
 // The background task rows below the input box (2.1.329) are cut in native-task-screen.ts,
@@ -312,6 +314,8 @@ export function extractPreview(screen: string, userText: string, knownAnswer = '
       continue;
     }
     if (completedActivityFooter(lines, index)) { inText = false; continue; }
+    // Claude Code's own /goal rows and their indented continuation (goal-screen.ts) are no reply text.
+    if (goalTranscriptRow.test(line)) { suppress = true; inText = false; continue; }
     if (prompt.test(line) || isEditorRule(line)) {
       // A later submitted prompt (including a local slash command) belongs to
       // another terminal interaction even when this turn has no answer yet.

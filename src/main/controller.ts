@@ -4,6 +4,9 @@ import type { TurnAction } from '../shared/turn-controls';
 import { checkpointPosition, RewindRecordChanged, type RewindTarget } from '../backend/native-turn-controls';
 import { canInterruptTurn, readRewind, turnComposer } from '../core/turn-controls';
 import { Backend, validateWorkspace, type HistoryCursor } from '../backend';
+import type { JsonRecord } from '../core/jsonl';
+import { parseGoalIndicator, runningStopHook } from '../core/goal-screen';
+import { observeGoal } from './goal-observation';
 import { repairSlices } from '../backend/transcript-pages';
 import { observedSessionStatus } from '../core/observed-status';
 import { backgroundCounts, backgroundSummary } from '../core/background-work';
@@ -68,6 +71,10 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   /** Whether the latest read found the process that runs the session, and when that process started:
    * from a Lectern pane (`paneLive`), else from the native record of a process elsewhere. */
   live?: SessionLiveness; nativeStartedAt?: number; paneLive?: boolean;
+  /** The last goal record before the first page, read once per opening (Backend.readGoalBefore). */
+  goalProbe?: { record?: JsonRecord };
+  /** Reads in a row with the goal indicator above the input box, and with the input box but no indicator. */
+  goalPresent?: number; goalAbsent?: number;
   screenHash?: string; screenCaptureId?: string; viewportHash?: string; viewportCaptureId?: string; messagesHash?: string; messagesCaptureId?: string };
 
 interface TurnMemory {
@@ -460,6 +467,10 @@ export class Controller extends EventEmitter {
         contextUsage: watch.display.contextUsage, notice: watch.display.notice,
         lastCompact: watch.compactSamples.receipt(watch.display.activity.currentCompact),
         activity, subagentsListed: listed || undefined,
+        // The records now reach further back; the screen part is the last poll's.
+        goal: watch.display.goal ? observeGoal({ records: watch.display.goal.current, source: watch.display.goal.source,
+          live: !!watch.snapshot.paneId && !watch.inactiveHistory, indicator: watch.snapshot.goal?.screen, present: watch.goalPresent ?? 0,
+          absent: watch.goalAbsent ?? 0, checking: watch.snapshot.goal?.phase === 'checking' }) : watch.snapshot.goal,
       };
       this.publish(watch, 'history-prepend', watch.inactiveHistory);
       return watch.snapshot;
@@ -495,6 +506,20 @@ export class Controller extends EventEmitter {
         older.extending = true;
       }
     }
+  }
+  /** A goal set before the first page read is still the session's goal if nothing after it ended it:
+   * read its last record once, in the background (goal-observation.ts). */
+  private probeGoal(watch: Watch, cursor: HistoryCursor) {
+    const probe: NonNullable<Watch['goalProbe']> = {};
+    watch.goalProbe = probe;
+    if (typeof this.backend.readGoalBefore !== 'function') return;
+    this.backend.readGoalBefore(watch.workspace, watch.sessionId, cursor).then(record => {
+      if (this.watch !== watch || watch.goalProbe !== probe || !record) return;
+      probe.record = record;
+      watch.display.seedGoal(record);
+      diagnostic.event('controller.goal.probe', { watchId: watch.id, sessionId: watch.sessionId, found: true });
+      if (this.timer) this.schedulePoll(watch, 0);
+    }, error => diagnostic.event('controller.goal.probe_failed', { watchId: watch.id, error: errorDetails(error) }, 'warn'));
   }
   setTerminalVisible(workspaceId: string, sessionId: string, visible: boolean): void {
     if (typeof visible !== 'boolean') return;
@@ -547,6 +572,8 @@ export class Controller extends EventEmitter {
         effort: watch.snapshot.settings.menus.effort?.options.find(option => option.current)?.label ?? watch.snapshot.settings.observed?.effort?.label } : undefined,
       statusLineManaged: watch.snapshot.statusLineManaged, statusLine: watch.snapshot.statusLine,
       executionMode: watch.snapshot.executionMode, contextUsage: watch.snapshot.contextUsage,
+      goal: watch.snapshot.goal && { status: watch.snapshot.goal.status, phase: watch.snapshot.goal.phase, source: watch.snapshot.goal.source,
+        history: watch.snapshot.goal.history, screen: watch.snapshot.goal.screen?.state },
       directoryTrust: watch.snapshot.directoryTrust ? { cwd: watch.snapshot.directoryTrust.cwd, scope: watch.snapshot.directoryTrust.scope,
         paneId: watch.snapshot.directoryTrust.paneId, token: watch.snapshot.directoryTrust.token } : undefined,
       error: watch.snapshot.error, messagesCaptureId: watch.messagesCaptureId, messagesDigest,
@@ -616,7 +643,11 @@ export class Controller extends EventEmitter {
       const compactRecordsBefore = watch.display.activity.compactRecords;
       let repair = false;
       if (applied) {
-        if (result.reset) watch.older = result.olderCursor ? { cursor: result.olderCursor, ticket: randomUUID() } : undefined;
+        if (result.reset) {
+          watch.older = result.olderCursor ? { cursor: result.olderCursor, ticket: randomUUID() } : undefined;
+          watch.goalProbe = undefined;
+          if (result.olderCursor) this.probeGoal(watch, result.olderCursor);
+        }
         watch.display.ingestJsonl(result.jsonl, result.reset, result.reset ? !!result.olderCursor : undefined);
         if (result.skippedHistoryRecords) watch.display.noteSkippedHistoryRecords(result.skippedHistoryRecords);
         if (result.reset && watch.older && !watch.display.answeredHistoryHead) {
@@ -801,6 +832,18 @@ export class Controller extends EventEmitter {
         settingRevisionAtRead === this.settingRevision && !result.directoryTrust && result.nativeStatus !== 'waiting' &&
         result.session.status !== 'waiting' && result.session.status !== 'error' && result.nativeStatus !== 'shell' ? result.viewport : undefined;
       const turnProgress = progressFrame ? parseTurnProgress(progressFrame, editor, result.nativeStatus === 'busy') : undefined;
+      // Claude Code's native /goal: the records read, the record before them, the live indicator (goal-observation.ts).
+      const goalLive = result.active && !result.hasMore && !result.directoryTrust;
+      const indicator = goalLive && result.viewport ? parseGoalIndicator(result.viewport) : undefined;
+      if (goalLive && result.viewport) {
+        // Counted only while the records say a goal runs: one just set may not show its indicator yet.
+        const running = watch.display.goal?.current?.status === 'active';
+        watch.goalPresent = indicator ? (watch.goalPresent ?? 0) + 1 : 0;
+        watch.goalAbsent = indicator || !running ? 0 : editor ? (watch.goalAbsent ?? 0) + 1 : watch.goalAbsent ?? 0;
+      }
+      const goal = observeGoal({ records: watch.display.goal?.current, source: watch.display.goal?.source,
+        live: goalLive, indicator, present: watch.goalPresent ?? 0, absent: watch.goalAbsent ?? 0,
+        checking: !!turnProgress?.detail && runningStopHook.test(turnProgress.detail) });
       if (result.reset) watch.compactSamples = new CompactSamples();
       else if (!progressFrame || previousHandle !== handle) watch.compactSamples.interrupt();
       if (progressFrame && (turnProgress?.compactPhase || watch.compactSamples.awaitingReceipt)) {
@@ -844,7 +887,7 @@ export class Controller extends EventEmitter {
           ? backgroundSummary(activity, pendingBackground, result.nativeStatus, result.nativeStartedAt, listed) ?? result.session.background : undefined,
         // What closing this conversation would stop, during or after a reply.
         backgroundWork: result.active && !result.hasMore ? backgroundCounts(activity, pendingBackground, result.nativeStatus, result.nativeStartedAt, listed) : undefined,
-        lastCompact: result.hasMore ? undefined : watch.compactSamples.receipt(watch.display.activity.currentCompact), turnProgress,
+        lastCompact: result.hasMore ? undefined : watch.compactSamples.receipt(watch.display.activity.currentCompact), turnProgress, goal,
         tasks: watch.nativeTasks ?? watch.display.tasks.list,
         messages, historyPage: historyPage(watch), screen: result.screen, viewport: result.viewport,
         // While the fast link runs, its captures are newer than this poll's.
@@ -1146,7 +1189,9 @@ export class Controller extends EventEmitter {
       await this.backend.sendMessage(target, sessionId, text, recovering ? watch.snapshot.paneId : undefined);
       // Only reflect a successful transport. Failed SSH commands are never replayed automatically.
       if (!terminalResponse && watch && this.watch === watch && watch.workspace.id === workspaceId && watch.sessionId === sessionId) {
-        const nativeCommand = /^\/(compact|rename)(?:\s|$)/.exec(text.trimStart());
+        // /goal: a clear (or a setting Claude Code refuses) starts no turn, and a setting shows at
+        // once as the goal pill; its "/goal <condition>" bubble comes with Claude's first answer.
+        const nativeCommand = /^\/(compact|rename|goal)(?:\s|$)/.exec(text.trimStart());
         if (nativeCommand) {
           // Local command feedback cannot acknowledge an optimistic chat turn.
           diagnostic.event('controller.optimistic_user.skipped', { reason: 'native-' + nativeCommand[1], inputCaptureId });

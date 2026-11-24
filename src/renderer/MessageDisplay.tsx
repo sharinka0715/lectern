@@ -16,10 +16,11 @@ import './reply-activities.css';
 import { EditDiff } from "./EditDiff";
 import { ToolInput } from "./ToolInput";
 import { Check, ChevronRight, Copy, CornerDownLeft, Mail, Paperclip, SquareTerminal, Terminal } from "lucide-react";
-import type { ChatMessage, MessageAttachment, PeerMessage } from "../shared/types";
+import type { ChatMessage, GoalEvent, MessageAttachment, PeerMessage } from "../shared/types";
 import { reportActionError } from "./diagnostics";
 import type { ReplyDetail } from "./desktop-state";
-import { t } from '../shared/i18n';
+import { formatNumber, t } from '../shared/i18n';
+import { goalDurationText } from './GoalStatus';
 
 type OpenPath = (path: string) => void;
 
@@ -99,6 +100,36 @@ function TaskNotification({ text, onOpenPath }: { text: string; onOpenPath: Open
   return <details className="tool-block activity-row task-notice" onToggle={event => setOpen(event.currentTarget.open)}>
     <summary><span className="activity-verb">{t('chat.taskNotice')}</span><span className="activity-subject">{activityExcerpt(headline)}</span><ChevronRight size={13} aria-hidden="true" /></summary>
     {open && <div className="task-notice-content"><LinkedToolText text={text} onOpen={onOpenPath} /></div>}
+  </details>;
+}
+
+const goalVerbs = { set: 'chat.goalSet', 'not-met': 'chat.goalNotMet', met: 'chat.goalMet', failed: 'chat.goalFailed', cleared: 'chat.goalCleared',
+  paused: 'chat.goalPaused', retry: 'chat.goalRetry', checkin: 'chat.goalCheckin' } as const;
+function checkinText(goal: GoalEvent) {
+  const summary = goal.notice ?? '';
+  const text = t(/no longer running/u.test(summary) ? 'chat.goalCheckinStopped' : /continuing after/u.test(summary) ? 'chat.goalCheckinRetry' : 'chat.goalCheckinRunning');
+  return goal.minutes !== undefined && !/continuing after/u.test(summary) ? `${text} · ${t('chat.goalCheckinFor', { minutes: goal.minutes })}` : text;
+}
+/** Claude Code's native /goal in the chat (core/goal-records.ts): set, each check, the end, Claude Code's
+ * own notices and check-ins, as rows like a background task's notice that open to the details. */
+function GoalNotice({ goal }: { goal: GoalEvent }) {
+  const [open, setOpen] = useState(false);
+  const verb = goal.kind === 'not-met' && (goal.count ?? 1) > 1 ? t('chat.goalNotMetTimes', { count: goal.count! }) : t(goalVerbs[goal.kind]);
+  const stats = goal.kind === 'met' || goal.kind === 'failed' ? [goal.durationMs !== undefined && goalDurationText(goal.durationMs),
+    goal.iterations !== undefined && t('telemetry.goalTurns', { n: goal.iterations }), goal.tokens !== undefined && t('telemetry.goalTokens', { tokens: formatNumber(goal.tokens) })].filter(Boolean).join(' · ') : '';
+  const subject = goal.kind === 'set' || goal.kind === 'cleared' && !goal.notice ? goal.condition : goal.kind === 'checkin' ? checkinText(goal)
+    : goal.kind === 'met' ? stats || goal.reason : goal.kind === 'paused' || goal.kind === 'retry' || goal.kind === 'cleared' ? goal.notice : goal.reason ?? goal.condition;
+  const reasons = goal.reasons ?? (goal.reason !== undefined ? [goal.reason] : []);
+  return <details className="tool-block activity-row task-notice goal-notice" data-goal-event={goal.kind} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary><span className="activity-verb">{verb}</span>{subject && <span className="activity-subject">{activityExcerpt(subject)}</span>}<ChevronRight size={13} aria-hidden="true" /></summary>
+    {open && <div className="task-notice-content goal-notice-content">
+      {goal.condition && <p>{t('chat.goalCondition', { condition: goal.condition })}</p>}
+      {goal.kind === 'not-met' && reasons.length > 1 ? <ol>{reasons.map((reason, i) => <li key={i}>{reason}</li>)}</ol>
+        : reasons.length > 0 && <p>{t('chat.goalReason', { reason: reasons[0] })}</p>}
+      {stats && goal.kind === 'failed' && <p>{stats}</p>}
+      {goal.notice && <p lang="en">{t('chat.goalNative', { notice: goal.notice })}</p>}
+      {!!goal.tasks?.length && <><p>{t('chat.goalTasks')}</p><ul>{goal.tasks.map((task, i) => <li key={i}><code>{task}</code></li>)}</ul></>}
+    </div>}
   </details>;
 }
 
@@ -243,7 +274,8 @@ export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachm
       <div className="message-content">
         <ReplyContent message={message} replyDetail={replyDetail} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />
         {message.interrupted && <p className="message-interrupted">{t('chat.interrupted')}</p>}
-        {message.taskNotifications?.map(notice => <TaskNotification key={notice.id} text={notice.text} onOpenPath={onOpenPath} />)}
+        {message.taskNotifications?.map(notice => notice.goal ? <GoalNotice key={notice.id} goal={notice.goal} />
+          : <TaskNotification key={notice.id} text={notice.text} onOpenPath={onOpenPath} />)}
         {!!files?.length && <div className="artifact-attachments">
           {files.map(ref => ref.path
             ? <FileLink key={ref.id} path={ref.path} onOpen={onOpenPath} explicit><Paperclip size={13} />{ref.name}</FileLink>

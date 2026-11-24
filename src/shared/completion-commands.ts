@@ -1,9 +1,12 @@
 import type { CompletionItem } from './types';
+import type { MessageKey } from './i18n';
 
 // Only built-ins the chat box can use are offered: the allow-listed commands and
 // those Lectern answers with its own controls (see native-commands.ts).
 const common = 'compact context model effort rewind fork';
-const other = 'cost init review security-review pr-comments release-notes todos rename';
+const other = 'goal cost init review security-review pr-comments release-notes todos rename';
+/** What a built-in does, shown beside it in the list where its name alone says too little. */
+export const builtinCommandNotes: Partial<Record<string, MessageKey>> = { goal: 'composer.goalNote' };
 const builtin = (names: string): CompletionItem[] => names.split(' ').map(value => ({value, kind:'command', source:'builtin'}));
 const frequent = builtin(common), rest = builtin(other);
 export function matchingCommands(prefix: string, installed: CompletionItem[] = []): CompletionItem[] {

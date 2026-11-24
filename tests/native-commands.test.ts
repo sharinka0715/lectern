@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { commandPolicy, slashCommandName } from '../src/shared/native-commands';
-import { matchingCommands } from '../src/shared/completion-commands';
+import { commandPolicy, goalCommand, slashCommandName } from '../src/shared/native-commands';
+import { builtinCommandNotes, matchingCommands } from '../src/shared/completion-commands';
 
 test('native slash commands follow the allow-list; installed skills need a machine check; paths are text', () => {
   assert.equal(slashCommandName('/compact keep the tests'), 'compact');
@@ -26,4 +26,24 @@ test('completion offers only usable built-ins plus installed skills', () => {
   assert.deepEqual(offered.slice(0, 2), ['compact', 'context']);
   for (const hidden of ['help', 'config', 'resume', 'clear', 'login']) assert.equal(offered.includes(hidden), false, hidden);
   assert.deepEqual(matchingCommands('team', [{ value: 'team-report', kind: 'command', source: 'user' }]).map(item => item.value), ['team-report']);
+});
+
+test("Claude Code's /goal: a condition and a clear are sent, the bare command opens Lectern's goal pill, an overlong condition stays", () => {
+  assert.deepEqual(commandPolicy('/goal all tests pass'), { kind: 'send', name: 'goal' });
+  for (const alias of ['clear', 'stop', 'off', 'reset', 'none', 'cancel', 'CLEAR']) {
+    assert.deepEqual(commandPolicy('/goal ' + alias), { kind: 'send', name: 'goal' }, alias);
+    assert.deepEqual(goalCommand('/goal ' + alias), { kind: 'clear' }, alias);
+  }
+  assert.deepEqual(commandPolicy('/goal'), { kind: 'route', name: 'goal', target: 'goal' });
+  assert.deepEqual(commandPolicy('  /goal   '), { kind: 'route', name: 'goal', target: 'goal' });
+  assert.deepEqual(goalCommand('/goal  pause the work '), { kind: 'set', condition: 'pause the work' }, 'pause and status are conditions');
+  assert.equal(goalCommand('/goals x'), undefined);
+  assert.equal(goalCommand('please /goal x'), undefined);
+  assert.equal(commandPolicy('/goal ' + 'x'.repeat(4000)).kind, 'send');
+  const long = commandPolicy('/goal ' + 'x'.repeat(4001));
+  assert.equal(long.kind, 'block');
+  assert.match((long as { message: string }).message, /4000.*4001/u);
+  const goal = matchingCommands('go');
+  assert.equal(goal[0]?.value, 'goal');
+  assert.equal(builtinCommandNotes.goal, 'composer.goalNote');
 });

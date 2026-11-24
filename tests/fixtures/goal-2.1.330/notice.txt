@@ -1,0 +1,45 @@
+
+● Step two done: both steps are now complete.
+
+✔ Goal achieved (2s · 2 turns · 96 tokens)
+
+✻ Baked for 2s · done 11:46 PM
+
+❯ /goal Stay active until cleared ccm:g
+  ⎿  Goal set: Stay active until cleared ccm:g
+
+● Acknowledged the goal; step one done.
+
+◯ Goal not yet met… continuing
+
+● Still working on step two.
+
+✻ Baked for 2s · done 11:46 PM
+
+❯ /goal Impossible case ccm:g
+  ⎿  Goal set: Impossible case ccm:g
+
+● Acknowledged the goal; step one done.
+
+✘ Goal couldn't be achieved (0s · 1 turn · 48 tokens)
+  the condition contradicts itself
+
+✻ Cooked for 0s · done 11:46 PM
+
+❯ /goal Evaluator error case ccm:g
+  ⎿  Goal set: Evaluator error case ccm:g
+
+● Acknowledged the goal; step one done.
+
+● Ran 1 stop hook
+  ⎿  Stop hook failed
+     JSON validation failed
+
+● Goal still active · the goal check could not complete · retrying in 1 min (1/3) · send a message to retry now
+
+✻ Cogitated for 0s · done 11:46 PM
+                                                               stop hook problem · ctrl+o to see · ◎ /goal active (1s)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

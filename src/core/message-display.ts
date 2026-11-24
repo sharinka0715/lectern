@@ -1,8 +1,10 @@
 import { SessionActivityStore } from './session-activity';
+import { GoalTracker } from './goal-status';
+import { goalStatusOf } from './goal-records';
 import { adoptSidechain } from './subagent-records';
 import { ConversationTasks } from './conversation-tasks';
 import type { RewindMenu } from '../shared/turn-controls';
-import type { ChatMessage, MessageAttachment, SessionStatus, ToolBlock } from '../shared/types';
+import type { ChatMessage, GoalObservation, MessageAttachment, SessionStatus, ToolBlock } from '../shared/types';
 import type { TranscriptAttachment } from './transcript-attachments';
 import { JsonlDecoder, type JsonRecord } from './jsonl';
 import { isTranscriptTurnStart, TranscriptStore, type TranscriptChange, type TranscriptRow } from './transcript-store';
@@ -50,10 +52,19 @@ function digestMessage(message: ChatMessage) {
 export class MessageDisplay {
   private transcript: TranscriptStore;
   activity: SessionActivityStore;
+  /** Claude Code's native /goal from the records read (goal-status.ts), rebuilt with the activity. */
+  goals: GoalTracker;
+  /** An active goal in the last goal record before the first page (seedGoal), going on with the records read. */
+  private probe?: { record: JsonRecord; tracker: GoalTracker };
   tasks = new ConversationTasks();
   private attachments = new Map<string, TranscriptAttachment>();
   private usage = new TranscriptUsage();
   private command?: TranscriptRow;
+  /** A goal's set record, written before its `/goal <condition>` command: it belongs to that
+   * command's turn (`command` is the command row's key once it came). A compaction restates an
+   * active goal with the same record and no command: `compacted` drops it. */
+  private goalSet?: { row: TranscriptRow; command?: string; restated: boolean };
+  private compacted = false;
   // After compaction Claude Code re-attaches recently read files (`file`
   // attachment records) before the next prompt. They are model context, not
   // files the user attached to the prompt before the compaction.
@@ -93,6 +104,7 @@ export class MessageDisplay {
     this.idBase = agentId ? `${sessionId}:agent:${agentId}` : sessionId;
     this.transcript = new TranscriptStore(sessionId);
     this.activity = new SessionActivityStore(sessionId);
+    this.goals = new GoalTracker(sessionId);
     diagnostic.event('display.created', { sessionId });
   }
 
@@ -190,6 +202,8 @@ export class MessageDisplay {
     this.queuedInputs = [];
     this.transcript = new TranscriptStore(this.sessionId);
     this.activity = new SessionActivityStore(this.sessionId);
+    this.goals = new GoalTracker(this.sessionId);
+    this.probe = undefined;
     this.attachments.clear();
     this.tasks = new ConversationTasks();
     this.seenPeerMessages.clear();
@@ -198,6 +212,8 @@ export class MessageDisplay {
     this.lastReply = undefined;
     this.cwd = undefined;
     this.command = undefined;
+    this.goalSet = undefined;
+    this.compacted = false;
     this.restoring = false;
     this.turns = [];
     this.settledMessages = new WeakMap();
@@ -284,6 +300,8 @@ export class MessageDisplay {
     }
     const previousActivity = this.activity;
     this.activity = new SessionActivityStore(this.sessionId);
+    this.goals = new GoalTracker(this.sessionId);
+    if (this.probe) this.probe = this.seeded(this.probe.record);
     this.queuedInputs = [];
     this.ingestActivity(records);
     this.activity.retainSamples(previousActivity);
@@ -291,6 +309,28 @@ export class MessageDisplay {
     this.applyChange(change, true);
     if (!hasOlder) this.pages = undefined;
     return true;
+  }
+
+  private seeded(record: JsonRecord) {
+    const tracker = new GoalTracker(this.sessionId);
+    tracker.ingest([record]);
+    return { record, tracker };
+  }
+  /**
+   * The last goal record before the first page read (Backend.readGoalBefore). An active goal there is
+   * the session's goal as long as no goal record was read: the records read after it (Claude Code's
+   * pause and retry notices, check-ins) go on from it, as they would in a complete read.
+   */
+  seedGoal(record: JsonRecord | undefined) {
+    const status = record && goalStatusOf(record);
+    if (!record || !status || status.met || status.failed || record.sessionId !== this.sessionId) { this.probe = undefined; return; }
+    this.probe = this.seeded(record);
+    for (const page of this.pages ?? []) this.probe.tracker.ingest(page);
+  }
+  /** The session's goal: from the records read, else from the record before them (seedGoal). */
+  get goal(): { current?: Omit<GoalObservation, 'source'>; source: 'transcript' | 'probe' } | undefined {
+    if (this.goals.seen) return { current: this.goals.current, source: 'transcript' };
+    if (this.probe) return { current: this.probe.tracker.current, source: 'probe' };
   }
 
   // A pending bubble or thinking-only record isn't a recovered reply. An
@@ -304,6 +344,8 @@ export class MessageDisplay {
 
   private ingestActivity(records: JsonRecord[]) {
     this.activity.ingest(records);
+    this.goals.ingest(records);
+    this.probe?.tracker.ingest(records);
     for (const record of records) {
       if (!record.isSidechain && record.sessionId === this.sessionId && typeof record.version === 'string' && /^\d+\.\d+\.\d+[\w.+-]{0,24}$/.test(record.version)) this.version = record.version;
       if (record.type === 'assistant' && !record.isSidechain && record.sessionId === this.sessionId && !record.isApiErrorMessage && record.isUnmetered !== true
@@ -339,6 +381,8 @@ export class MessageDisplay {
       this.turns = rewind ? [] : this.turns.filter(turn => turn.optimistic);
       this.current = undefined;
       this.command = undefined;
+      this.goalSet = undefined;
+      this.compacted = false;
       this.restoring = false;
       this.pendingCount = this.turns.length;
       this.nextTurnIndex = 0;
@@ -382,6 +426,7 @@ export class MessageDisplay {
     // Fully archived turns own neither the live screen nor new tool results.
     this.current = undefined;
     this.command = undefined;
+    this.goalSet = undefined;
     this.restoring = false;
     for (const row of active) if (owners.has(row.key)) this.current = owners.get(row.key);
     const shown = new Set(archive.map(row => row.key));
@@ -666,6 +711,14 @@ export class MessageDisplay {
 
   private applyRow(row: TranscriptRow, existingUsers?: Set<string | undefined>, allowPending = true): void {
     if (this.current) this.settledMessages.delete(this.current);
+    if (row.goal) { this.applyGoal(row); return; }
+    const set = this.goalSet;
+    if (set && row.kind !== 'hidden' && row.kind !== 'attachment') {
+      if (row.kind === 'command' && !set.command && /^\/goal\s+\S/u.test(row.text ?? '')) set.command = row.key;
+      else if (!set.command || set.command !== this.command?.key || row.kind !== 'companion' && row.kind !== 'assistant') this.flushGoalSet();
+    }
+    if (row.kind === 'compact') this.compacted = true;
+    else if (row.kind === 'user' || row.kind === 'assistant') this.compacted = false;
     const refs = row.attachments?.map(attachment => {
       this.attachments.set(attachment.ref.id, attachment);
       return attachment.ref;
@@ -705,6 +758,8 @@ export class MessageDisplay {
     }
     if (this.command && (row.kind === 'companion' || row.kind === 'assistant')) {
       this.applyUser(this.command, existingUsers, allowPending);
+      // "/goal <condition>" became the turn its set record belongs to.
+      if (this.goalSet?.command === this.command.key) this.flushGoalSet();
       this.command = undefined;
     }
     if (row.kind === 'notification') {
@@ -762,6 +817,46 @@ export class MessageDisplay {
     } else {
       turn.finished = false;
     }
+  }
+
+  private applyGoal(row: TranscriptRow) {
+    if (row.goalEcho) {
+      // "Goal set: …" right after its command: the set record before the command already stands for it,
+      // unless the page read began after that record. Then the echo does, in the command's turn.
+      if (this.goalSet?.row.goal?.condition === row.goal!.condition) return;
+      this.flushGoalSet();
+      const command = this.command && /^\/goal\s+\S/u.test(this.command.text ?? '') ? this.command.key : undefined;
+      this.goalSet = { row, restated: false, command };
+      return;
+    }
+    this.flushGoalSet();
+    if (row.goal!.kind === 'set') this.goalSet = { row, restated: this.compacted };
+    else this.pushGoal(row);
+  }
+  private flushGoalSet() {
+    const set = this.goalSet;
+    this.goalSet = undefined;
+    // A compaction's restatement of the goal already going on is no new setting.
+    if (set && (set.command || !set.restated)) this.pushGoal(set.row);
+  }
+  /** Consecutive not-met checks of one goal are one row (with each reason); an error's notice
+   * and the cleared record of one clearing are one row; a check-in delivered twice is one. */
+  private pushGoal(row: TranscriptRow) {
+    const turn = this.current ??= this.newTurn();
+    const list = turn.taskNotifications ??= [], goal = row.goal!, last = list.at(-1), previous = last?.goal;
+    if (last && previous?.kind === goal.kind && (previous.condition === goal.condition || goal.kind === 'cleared' && (!previous.condition || !goal.condition))) {
+      if (goal.kind === 'not-met') {
+        const reasons = [...previous.reasons ?? [previous.reason ?? ''], goal.reason ?? ''];
+        list[list.length - 1] = { ...last, text: row.text ?? last.text, goal: { ...previous, ...goal, count: (previous.count ?? 1) + 1, reasons } };
+        return;
+      }
+      if (goal.kind === 'cleared') {
+        list[list.length - 1] = { ...last, goal: { ...previous, ...goal, condition: previous.condition ?? goal.condition, notice: previous.notice ?? goal.notice } };
+        return;
+      }
+      if (goal.kind === 'checkin' && JSON.stringify(previous) === JSON.stringify(goal)) return;
+    }
+    list.push({ id: row.key, text: row.text ?? '', goal });
   }
 
   /**

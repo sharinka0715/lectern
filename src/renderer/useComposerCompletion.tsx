@@ -4,7 +4,7 @@ import { File, Folder, Slash } from 'lucide-react';
 import type { ChatView, CompletionItem } from '../shared/types';
 import { applyCompletion, completionAction, completionAt } from './completion-input';
 import { imeOwnsKey } from './enter-key';
-import { matchingCommands } from '../shared/completion-commands';
+import { builtinCommandNotes, matchingCommands } from '../shared/completion-commands';
 import './composer-completion.css';
 
 interface Options {
@@ -110,6 +110,7 @@ export function useComposerCompletion({ workspaceId, sessionId, view, enabled, v
         return <div role="option" id={`${id}-option-${i}`} aria-selected={index === i} key={item.kind + item.value}
           onMouseDown={e => e.preventDefault()} onClick={() => accept(item)}>
           <Icon size={14} aria-hidden="true"/><span title={item.value}>{item.kind === 'command' ? '/' : ''}{item.value}{item.kind === 'directory' ? '/' : ''}</span>
+          {item.source === 'builtin' && builtinCommandNotes[item.value] && <em className="composer-completion-note">{t(builtinCommandNotes[item.value]!)}</em>}
           <small>{t(item.kind === 'directory' ? 'composer.directory' : item.kind === 'file' ? 'composer.file' : sources[item.source])}</small>
         </div>;
       })}

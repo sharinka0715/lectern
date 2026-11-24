@@ -10,6 +10,7 @@ export const app = {
   statusError: ['运行异常', 'Error'],
   questionChanged: ['问答状态已变化，请查看当前题目。', 'The question has changed. Check the current question.'],
   permissionChanged: ['权限确认已变化，请查看当前内容。', 'The permission request has changed. Check what it asks now.'],
+  goalNone: ['当前没有目标。发送 /goal 加条件来设定，例如 /goal 所有测试都通过', 'No goal is set. Send /goal with a condition to set one, e.g. /goal all tests pass'],
   chatStartedMessageKept: ['新对话已启动，消息留在它的输入框里', 'The new conversation started; your message is waiting in its input box'],
   chatStartFailed: ['新对话没有启动成功，消息已放回输入框。', 'The new conversation did not start; your message is back in the input box.'],
   needElectron: ['请通过 Electron 启动客户端：npm run dev 或 npm run demo。', 'Start the client through Electron: npm run dev or npm run demo.'],

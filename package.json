@@ -59,6 +59,7 @@
     "test:saved-history": "node scripts/saved-history-ui-e2e.mjs",
     "test:foreground-shell": "node scripts/foreground-shell-e2e.mjs",
     "test:background-work": "node scripts/background-work-e2e.mjs",
+    "test:goal": "node scripts/goal-status-ui-e2e.mjs",
     "test:subagents": "node scripts/subagent-column-e2e.mjs",
     "test:task-column": "node scripts/task-column-e2e.mjs",
     "test:quit": "node scripts/quit-dialog-e2e.mjs",
