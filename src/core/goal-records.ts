@@ -36,13 +36,6 @@ export function goalStatusOf(record: JsonRecord): GoalStatusRecord | undefined {
     reason: text(a.reason), iterations: count(a.iterations), durationMs: count(a.durationMs), tokens: count(a.tokens) };
 }
 
-/** The arguments of a `/goal …` command record (user, or a busy-free system local_command). */
-export function goalCommandArguments(record: JsonRecord): string | undefined {
-  const raw = record.type === 'system' ? text(record.content, 16384) : record.type === 'user' ? contentText(object(record.message).content) : undefined;
-  const match = /^\s*<command-name>\/goal<\/command-name>\s*<command-message>goal<\/command-message>\s*(?:<command-args>([\s\S]*?)<\/command-args>)?\s*$/u.exec(raw ?? '');
-  return match ? (match[1] ?? '').trim() : undefined;
-}
-
 /** Claude Code's own notice about the goal (system/informational): paused, retrying, or cleared by an error. */
 export function goalNoticeOf(content: string): GoalEvent | undefined {
   const notice = content.trim().slice(0, 4096);

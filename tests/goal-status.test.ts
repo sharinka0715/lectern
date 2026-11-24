@@ -5,6 +5,7 @@ import { MessageDisplay } from '../src/core/message-display';
 import { GoalTracker } from '../src/core/goal-status';
 import { goalCheckinOf, goalEventOf } from '../src/core/goal-records';
 import { observeGoal } from '../src/main/goal-observation';
+import { recordRow } from '../src/core/transcript-store';
 import type { JsonRecord } from '../src/core/jsonl';
 
 // Claude Code's native /goal from its records (core/goal-status.ts, goal-records.ts): real
@@ -58,7 +59,7 @@ function paged(sid: string, rows: JsonRecord[], cut: number, size: number) {
 }
 
 test('the goal and its rows depend only on the records, never on how they were read', () => {
-  for (const file of ['goal-2.1.331/session.jsonl', 'goal-2.1.331/checkin.jsonl', 'goal-2.1.300/session.jsonl']) {
+  for (const file of ['goal-2.1.331/session.jsonl', 'goal-2.1.331/checkin.jsonl', 'goal-2.1.300/session.jsonl', 'goal-2.1.300/out-of-order-session.jsonl']) {
     const rows = load(file), sid = sidOf(rows), full = read(sid, rows);
     const shown = (display: MessageDisplay) => display.getMessages().map(m => [m.role, m.text, m.taskNotifications]);
     // Live polls in small reads, split inside records.
@@ -75,12 +76,60 @@ test('the goal and its rows depend only on the records, never on how they were r
   }
 });
 
+// Matrix CI (2.1.300, goal-lifecycle): Claude Code wrote a new session's first turn (the set record, the
+// /goal command, its echo, the reply) after the Stop hook feedback and the not-met check that follow it,
+// parents intact: the file begins with the feedback. The chat's rows follow the chain (set, not-met); the
+// capsule read the file's order, ended on the set record and showed "set" for the whole held turn.
+const lastEvent = (display: MessageDisplay) => display.getMessages().flatMap(m => m.taskNotifications ?? []).flatMap(n => n.goal?.kind ?? []).at(-1);
+const capsule = (display: MessageDisplay) => { const goal = display.goal?.current; return goal && (goal.status === 'active' ? goal.phase : goal.status); };
+/** The capsule says what the chat's last goal row says (a set record's row waits for its command's turn, the capsule does not). */
+const agrees = (display: MessageDisplay, where: string) => {
+  const shown = capsule(display), row = lastEvent(display);
+  assert.ok(shown === row || shown === 'set' && row === undefined, `${where}: the capsule ${shown}, the chat ${row}`);
+};
+
+test('records written out of order (2.1.300): the goal follows the conversation, as its rows do, however it is read', () => {
+  const rows = load('goal-2.1.300/out-of-order-session.jsonl'), sid = sidOf(rows);
+  assert.deepEqual(rows.flatMap(row => goalEventOf(row)?.goal.kind ?? []), ['not-met', 'set', 'met'], 'the file: the check before its setting');
+  // Held: the second reply (13 KB) not written yet.
+  const held = rows.slice(0, rows.findIndex(row => row.type === 'assistant' && JSON.stringify(row).length > 8000));
+  const full = read(sid, held), goal = full.goals.current!;
+  assert.deepEqual(events(full), ['set not-met']);
+  assert.deepEqual([goal.status, goal.phase, goal.checks, goal.lastReason], ['active', 'not-met', 1, 'the transcript does not show the last step yet']);
+  assert.equal(goal.setAt, held.find(row => (row.attachment as JsonRecord | undefined)?.sentinel)!.timestamp);
+  // As Lectern read it (the last 128 KiB, then the page before it with the feedback), any page size, small live reads:
+  // after each read the capsule says what the chat's last goal row says.
+  for (const size of [1, 3, 40]) for (let cut = 1; cut < held.length; cut++) {
+    const display = new MessageDisplay(sid), where = `opened at ${cut}, pages of ${size}`;
+    display.ingestJsonl(encode(held.slice(cut)), true, true);
+    agrees(display, where);
+    for (let end = cut; end > 0;) {
+      const start = Math.max(0, end - size);
+      display.prependJsonl(encode(held.slice(start, end)), start > 0, true, true);
+      agrees(display, `${where}, to ${start}`);
+      end = start;
+    }
+    assert.deepEqual([display.goals.current, events(display)], [goal, ['set not-met']], where);
+  }
+  const live = new MessageDisplay(sid), bytes = encode(held);
+  live.ingestJsonl(Buffer.alloc(0), true, false);
+  for (let at = 0; at < bytes.length; at += 997) {
+    live.ingestJsonl(bytes.subarray(at, at + 997));
+    agrees(live, `small reads to ${at}`);
+  }
+  assert.deepEqual(live.goals.current, goal, 'small reads');
+  // Released: met by the second check, after one that was not.
+  const done = read(sid, rows).goals.current!;
+  assert.deepEqual([done.status, done.checks, done.lastReason, done.result?.iterations], ['met', 1, 'the transcript does not show the last step yet', 2]);
+});
+
+// These files are written in the conversation's order (out-of-order-session.jsonl is not: see above).
 test("every prefix of the records follows Claude Code's own rule: the last goal record decides", () => {
   for (const file of ['goal-2.1.331/session.jsonl', 'goal-2.1.300/session.jsonl', 'goal-2.1.331/checkin.jsonl']) {
-    const rows = load(file), sid = sidOf(rows), tracker = new GoalTracker(sid);
+    const rows = load(file), tracker = new GoalTracker();
     let last: JsonRecord | undefined;
     for (const [i, row] of rows.entries()) {
-      tracker.ingest([row]);
+      tracker.ingest([recordRow(row)]);
       const attached = row.attachment as JsonRecord | undefined;
       if (row.type === 'attachment' && attached?.type === 'goal_status') last = attached;
       const active = !!last && last.met === false && !last.failed;

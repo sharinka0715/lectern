@@ -1,21 +1,26 @@
-import type { GoalObservation } from '../shared/types';
-import type { JsonRecord } from './jsonl';
-import { goalCheckinRecord, goalClearArguments, goalCommandArguments, goalNoticeOf, goalSetEcho, goalStatusOf } from './goal-records';
-import { isTranscriptTurnStart } from './transcript-store';
+import type { GoalEvent, GoalObservation } from '../shared/types';
+import { goalClearArguments } from './goal-records';
+import type { TranscriptRow } from './transcript-store';
 
-const object = (v: unknown): JsonRecord => v && typeof v === 'object' && !Array.isArray(v) ? v as JsonRecord : {};
 const stamp = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? v : undefined;
-const contentText = (v: unknown) => typeof v === 'string' ? v
-  : Array.isArray(v) ? v.map(object).filter(b => b.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n') : '';
+/** The arguments of a `/goal …` command row. */
+const goalArguments = (row: TranscriptRow) => {
+  const match = row.kind === 'command' ? /^\/goal(?:\s+([\s\S]*))?$/u.exec(row.text ?? '') : undefined;
+  return match ? (match[1] ?? '').trim() : undefined;
+};
 
 type State = Omit<GoalObservation, 'source' | 'screen' | 'history'> & { restated?: boolean };
 
 /**
- * The session's goal from its records in order (Claude Code's own rule, research §3.8): the
- * last `goal_status` decides; met or failed means none is active. Like the activity card it
- * depends only on the records' order, never on how they were read (pages, small live reads),
- * and ignores sidechains and other sessions' records. An ended goal (met, failed, cleared)
- * stays the current one until the next human prompt, as the compaction receipt does.
+ * The session's goal from its records in the conversation's order (Claude Code's own rule,
+ * research §3.8): the last `goal_status` decides; met or failed means none is active. It reads
+ * the rows the chat shows the goal's events from (TranscriptStore, chained by parentUuid), in
+ * the same order, so the input area and the chat always agree. Claude Code 2.1.300 can write a
+ * new session's first turn (the set record, the command, the reply) after the check that
+ * follows it; the file's order is no guide. Like the activity card it never depends on how
+ * the records were read (pages, small live reads); sidechains and other sessions never count.
+ * An ended goal (met, failed, cleared) stays the current one until the next human prompt, as
+ * the compaction receipt does.
  *
  * A /compact restates an active goal after its boundary with the same set record; that is a
  * new setting only when the `/goal <condition>` command record follows it.
@@ -30,8 +35,6 @@ export class GoalTracker {
   /** A set record was read: the "Goal set: …" echo that follows it adds nothing. */
   private echoed?: string;
 
-  constructor(private readonly sessionId: string) {}
-
   /** Some goal record was read: the records read decide (never the probe before them). */
   get seen() { return !!this.state; }
 
@@ -42,24 +45,24 @@ export class GoalTracker {
     return goal;
   }
 
-  ingest(records: JsonRecord[]) {
-    for (const r of records) {
-      if (r.isSidechain || r.sessionId !== undefined && r.sessionId !== this.sessionId) continue;
+  /** The projection's rows, in its order (MessageDisplay.applyRow). */
+  ingest(rows: readonly TranscriptRow[]) {
+    for (const row of rows) {
       // Only the next prompt-like record can confirm a setting (bookkeeping records may come between).
-      const setting = this.setting;
-      if (r.type === 'user' || r.type === 'assistant') this.setting = undefined;
-      if (r.type === 'system' && r.subtype === 'compact_boundary') { this.compactSince = true; continue; }
-      const status = goalStatusOf(r);
-      if (status) { this.status(status, stamp(r.timestamp)); continue; }
-      const echo = goalSetEcho(r);
-      if (echo !== undefined) { this.echo(echo, stamp(r.timestamp)); continue; }
-      if (r.type === 'assistant') this.echoed = undefined;
-      this.other(r, setting);
+      const setting = this.setting, goal = row.goal, at = stamp(row.timestamp);
+      if (row.type === 'user' || row.type === 'assistant') this.setting = undefined;
+      if (row.kind === 'compact') { this.compactSince = true; continue; }
+      // A goal_status record (goal-records.ts): neither a check-in nor Claude Code's own notice.
+      if (goal && !row.goalEcho && goal.kind !== 'checkin' && goal.notice === undefined) { this.status(goal, at); continue; }
+      if (goal && row.goalEcho) { this.echo(goal.condition ?? '', at); continue; }
+      if (row.type === 'assistant') this.echoed = undefined;
+      this.other(row, setting);
     }
   }
 
-  private status(record: NonNullable<ReturnType<typeof goalStatusOf>>, at?: string) {
-    const { met, sentinel, failed, condition, reason, iterations, durationMs, tokens } = record;
+  private status(record: GoalEvent, at?: string) {
+    const { kind, condition = '', reason, iterations, durationMs, tokens } = record;
+    const met = kind === 'met' || kind === 'cleared', sentinel = kind === 'set' || kind === 'cleared', failed = kind === 'failed';
     const state = this.state, compacted = this.compactSince;
     this.compactSince = false;
     if (sentinel && !met) {
@@ -102,37 +105,39 @@ export class GoalTracker {
     this.pendingError = undefined;
   }
 
-  private other(r: JsonRecord, setting?: string) {
-    const state = this.state, at = stamp(r.timestamp);
+  private other(row: TranscriptRow, setting?: string) {
+    const state = this.state, at = stamp(row.timestamp), goal = row.goal;
     if (setting !== undefined && state?.status === 'active') {
-      const args = goalCommandArguments(r);
+      const args = goalArguments(row);
       // `/goal <condition>` right after its set record: a new setting, even after a compaction.
       if (args && !goalClearArguments.test(args)) {
         this.state = { status: 'active', phase: 'set', condition: state.condition, checks: 0, ...setting && { setAt: setting } };
         return;
       }
     }
-    if (r.type === 'system' && r.subtype === 'informational' && typeof r.content === 'string') {
-      const notice = goalNoticeOf(r.content);
-      if (notice?.kind === 'cleared') {
+    if (goal && goal.kind !== 'checkin') {
+      // Claude Code's notice (system/informational): paused, retrying, or cleared by an error.
+      if (goal.kind === 'cleared') {
         // Whichever comes first, the error's notice or the cleared record, they describe one clearing.
-        if (state?.status === 'cleared' && !this.promptAfterEnd) state.notice = notice.notice;
-        else this.pendingError = notice.notice;
-      } else if (notice && state?.status === 'active') {
-        state.phase = notice.kind === 'paused' ? 'paused' : 'retrying';
-        state.notice = notice.notice;
+        if (state?.status === 'cleared' && !this.promptAfterEnd) state.notice = goal.notice;
+        else this.pendingError = goal.notice;
+      } else if (state?.status === 'active') {
+        state.phase = goal.kind === 'paused' ? 'paused' : 'retrying';
+        state.notice = goal.notice;
       }
       return;
     }
-    const checkin = goalCheckinRecord(r);
-    if (checkin) {
+    if (goal) {
+      // A check-in: the evaluation deferred while background work runs.
+      const checkin = goal;
       if (state?.status !== 'active') return;
       const summary = checkin.notice ?? '';
       state.deferred = { ...at && { at }, ...checkin.minutes !== undefined && { minutes: checkin.minutes }, tasks: checkin.tasks ?? [], summary };
       state.phase = /continuing after/u.test(summary) ? 'retrying' : /no longer running/u.test(summary) ? state.checks ? 'not-met' : 'set' : 'deferred';
       return;
     }
-    if (!state || !isTranscriptTurnStart(r, this.sessionId) || goalCommandArguments(r) !== undefined) return;
+    // A turn's start (isTranscriptTurnStart): a prompt, or a command other than /goal.
+    if (!state || row.kind !== 'user' && row.kind !== 'command' || goalArguments(row) !== undefined) return;
     // The user's next message: an ended goal is history, a paused or retrying one goes on.
     if (state.status !== 'active') this.promptAfterEnd = true;
     else if (state.phase === 'paused' || state.phase === 'retrying') {

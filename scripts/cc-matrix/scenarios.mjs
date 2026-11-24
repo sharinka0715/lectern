@@ -200,10 +200,16 @@ export async function prepareFolders(sandbox) {
 // /goal (Claude Code 2.1.139+, so every release here). The native footer right of the line above
 // the input box while a goal is active: "◎ /goal active (12s)" (2.1.326+ also "◎ /goal paused").
 const GOAL_FOOTER = /(?:^\s*|· )◎ \/goal (?:active|paused)\b/m;
-/** The goal_status attachments in a session's transcript, in order. */
+/** The goal_status attachments in a session's transcript, in the conversation's order (by parentUuid, as
+ * Claude Code reads it back): 2.1.300 can write a new session's first turn, set record included, after the
+ * check that follows it. */
 async function goalRecords(sandbox, id) {
   const file = id && (await sandbox.projectFiles()).find(name => name.includes(id));
-  return file ? (await readJsonl(file)).filter(r => r.type === 'attachment' && r.attachment?.type === 'goal_status').map(r => r.attachment) : [];
+  if (!file) return [];
+  const records = await readJsonl(file), parents = new Map(records.filter(r => typeof r.uuid === 'string').map(r => [r.uuid, r.parentUuid]));
+  const depth = uuid => { let n = 0; for (const seen = new Set(); parents.has(uuid) && !seen.has(uuid); uuid = parents.get(uuid)) { seen.add(uuid); n++; } return n; };
+  return records.filter(r => r.type === 'attachment' && r.attachment?.type === 'goal_status')
+    .map(r => ({ r, at: depth(r.uuid) })).sort((a, b) => a.at - b.at).map(({ r }) => r.attachment);
 }
 /** What the goal capsule and the chat's goal event rows show. */
 const goalShown = page => page.evaluate(([capsule, rows]) => {

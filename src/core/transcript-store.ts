@@ -18,6 +18,8 @@ export interface TranscriptRow {
   parent: string | null;
   order: number;
   kind: Kind;
+  /** The record's own type (user, assistant, system, attachment, progress). */
+  type?: string;
   timestamp?: string;
   /** Claude Code's working directory when it wrote the record. */
   cwd?: string;
@@ -104,7 +106,7 @@ function commandText(text: string): string | undefined {
 }
 
 function normalize(record: JsonRecord, key: string, order: number, parent: string | null, bodies: boolean): TranscriptRow {
-  const row: TranscriptRow = { key, order, parent, kind: 'hidden', timestamp: string(record.timestamp) };
+  const row: TranscriptRow = { key, order, parent, kind: 'hidden', type: string(record.type), timestamp: string(record.timestamp) };
   const cwd = bodies ? string(record.cwd) : undefined;
   if (cwd) row.cwd = cwd;
   if (record.type === 'system') {
@@ -289,6 +291,11 @@ export function isTranscriptTurnStart(record: JsonRecord, sessionId?: string): b
   if (Array.isArray(content) && content.some(block => object(block).type === 'tool_result')) return false;
   const { kind } = normalize(record, '', 0, null, true);
   return kind === 'user' || kind === 'command';
+}
+
+/** One record as the projection reads it, outside any chain (the goal record before the first page). */
+export function recordRow(record: JsonRecord): TranscriptRow {
+  return normalize(record, string(record.uuid) ?? '', 0, string(record.parentUuid) ?? null, true);
 }
 
 /**

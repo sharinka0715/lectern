@@ -7,7 +7,7 @@ import type { RewindMenu } from '../shared/turn-controls';
 import type { ChatMessage, GoalObservation, MessageAttachment, SessionStatus, ToolBlock } from '../shared/types';
 import type { TranscriptAttachment } from './transcript-attachments';
 import { JsonlDecoder, type JsonRecord } from './jsonl';
-import { isTranscriptTurnStart, TranscriptStore, type TranscriptChange, type TranscriptRow } from './transcript-store';
+import { isTranscriptTurnStart, recordRow, TranscriptStore, type TranscriptChange, type TranscriptRow } from './transcript-store';
 import { TranscriptUsage } from './session-telemetry';
 import { alignPreview, extractPreview, matchText } from './screen';
 import { diagnostic, getDiagnosticsInfo, summarize } from '../diagnostics';
@@ -104,7 +104,7 @@ export class MessageDisplay {
     this.idBase = agentId ? `${sessionId}:agent:${agentId}` : sessionId;
     this.transcript = new TranscriptStore(sessionId);
     this.activity = new SessionActivityStore(sessionId);
-    this.goals = new GoalTracker(sessionId);
+    this.goals = new GoalTracker();
     diagnostic.event('display.created', { sessionId });
   }
 
@@ -202,7 +202,7 @@ export class MessageDisplay {
     this.queuedInputs = [];
     this.transcript = new TranscriptStore(this.sessionId);
     this.activity = new SessionActivityStore(this.sessionId);
-    this.goals = new GoalTracker(this.sessionId);
+    this.goals = new GoalTracker();
     this.probe = undefined;
     this.attachments.clear();
     this.tasks = new ConversationTasks();
@@ -300,8 +300,6 @@ export class MessageDisplay {
     }
     const previousActivity = this.activity;
     this.activity = new SessionActivityStore(this.sessionId);
-    this.goals = new GoalTracker(this.sessionId);
-    if (this.probe) this.probe = this.seeded(this.probe.record);
     this.queuedInputs = [];
     this.ingestActivity(records);
     this.activity.retainSamples(previousActivity);
@@ -312,9 +310,15 @@ export class MessageDisplay {
   }
 
   private seeded(record: JsonRecord) {
-    const tracker = new GoalTracker(this.sessionId);
-    tracker.ingest([record]);
+    const tracker = new GoalTracker();
+    tracker.ingest([recordRow(record)]);
     return { record, tracker };
+  }
+  /** The rows applied since the last rebuild, in the order applyChange applied them: the archive, then the branch. */
+  private projectedRows(): TranscriptRow[] {
+    const active = this.transcript.activeRows(), archive = this.transcript.archivedBefore(active);
+    const shown = new Set(archive.map(row => row.key));
+    return [...archive, ...active.filter(row => !shown.has(row.key))];
   }
   /**
    * The last goal record before the first page read (Backend.readGoalBefore). An active goal there is
@@ -325,7 +329,7 @@ export class MessageDisplay {
     const status = record && goalStatusOf(record);
     if (!record || !status || status.met || status.failed || record.sessionId !== this.sessionId) { this.probe = undefined; return; }
     this.probe = this.seeded(record);
-    for (const page of this.pages ?? []) this.probe.tracker.ingest(page);
+    this.probe.tracker.ingest(this.projectedRows());
   }
   /** The session's goal: from the records read, else from the record before them (seedGoal). */
   get goal(): { current?: Omit<GoalObservation, 'source'>; source: 'transcript' | 'probe' } | undefined {
@@ -344,8 +348,6 @@ export class MessageDisplay {
 
   private ingestActivity(records: JsonRecord[]) {
     this.activity.ingest(records);
-    this.goals.ingest(records);
-    this.probe?.tracker.ingest(records);
     for (const record of records) {
       if (!record.isSidechain && record.sessionId === this.sessionId && typeof record.version === 'string' && /^\d+\.\d+\.\d+[\w.+-]{0,24}$/.test(record.version)) this.version = record.version;
       if (record.type === 'assistant' && !record.isSidechain && record.sessionId === this.sessionId && !record.isApiErrorMessage && record.isUnmetered !== true
@@ -382,6 +384,9 @@ export class MessageDisplay {
       this.current = undefined;
       this.command = undefined;
       this.goalSet = undefined;
+      // The goal is rebuilt from the same rows as its events (goal-status.ts), seeded by the probe's record.
+      this.goals = new GoalTracker();
+      if (this.probe) this.probe = this.seeded(this.probe.record);
       this.compacted = false;
       this.restoring = false;
       this.pendingCount = this.turns.length;
@@ -711,6 +716,8 @@ export class MessageDisplay {
 
   private applyRow(row: TranscriptRow, existingUsers?: Set<string | undefined>, allowPending = true): void {
     if (this.current) this.settledMessages.delete(this.current);
+    this.goals.ingest([row]);
+    this.probe?.tracker.ingest([row]);
     if (row.goal) { this.applyGoal(row); return; }
     const set = this.goalSet;
     if (set && row.kind !== 'hidden' && row.kind !== 'attachment') {
