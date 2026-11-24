@@ -78,7 +78,7 @@ try {
   // The list across projects: opening 甲's oldest conversation there leaves the tree alone.
   await sortBy('最近更新');
   assert.equal(await across().locator('.session-row').count(), 10);
-  assert.equal(await row(alpha[0]).locator('.session-origin').innerText(), '甲项目', 'the folder name follows the title');
+  assert.equal(await row(alpha[0]).locator('.session-origin').innerText(), '本地 · 甲项目', 'the machine and folder under the title');
   await row(alpha[0]).click();
   await page.locator(`.session-row.active[data-session-id="${alpha[0]}"]`).waitFor();
   await page.getByRole('main').getByText('回复：甲 对话 1', { exact: true }).waitFor();

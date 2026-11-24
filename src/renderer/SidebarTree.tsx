@@ -107,7 +107,7 @@ function repeatedTitles(sessions: readonly SessionInfo[]) {
   return duplicates;
 }
 
-function SessionRow({ workspace, session, state, duplicate, selected, splitOpen, origin, place, onSelect, onRename, menuActions }: {
+function SessionRow({ workspace, session, state, duplicate, selected, splitOpen, origin, onSelect, onRename, menuActions }: {
   workspace: Workspace;
   session: SessionInfo;
   state: SidebarSessionState;
@@ -115,9 +115,9 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
   selected: boolean;
   /** The split pane without the focus shows it: pale blue, apart from the focused pane's. */
   splitOpen?: boolean;
-  /** Folder and machine, read out and in the tooltip; `place` is the quieter part shown after the title. */
+  /** Machine and folder in full, read out and in the tooltip. With it the row takes two lines
+   * (the lists across projects): the title line, then the quieter `origin` below it. */
   origin?: string;
-  place?: string;
   onSelect(workspace: Workspace, id: string): void;
   onRename(target: { workspaceId: string; session: SessionInfo }): void;
   menuActions?: SidebarMenuActions;
@@ -131,6 +131,12 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
   const waitingFirstRecord = session.paneId && !session.path && t('sidebar.waitingFirstRecord');
   const inOtherPane = !selected && !!splitOpen;
   const splitNote = inOtherPane && t('sidebar.splitOpen');
+  const line = <>
+    <span className="session-title">{title}</span>
+    {identity && <small>{identity}</small>}
+    <span className="session-state-label">{state.label}</span>
+    {state.dot && <span className={`session-status-dot state-${state.dot}`} aria-hidden="true" />}
+  </>;
   return (
     <div className="session-row-wrap">
       <button
@@ -165,11 +171,10 @@ function SessionRow({ workspace, session, state, duplicate, selected, splitOpen,
         data-loading={state.loading || undefined}
         data-split-open={inOtherPane || undefined}
       >
-        <span className="session-title">{title}</span>
-        {identity && <small>{identity}</small>}
-        {place && <small className="session-origin">{place}</small>}
-        <span className="session-state-label">{state.label}</span>
-        {state.dot && <span className={`session-status-dot state-${state.dot}`} aria-hidden="true" />}
+        {origin ? <>
+          <span className="session-line">{line}</span>
+          <small className="session-origin">{origin}</small>
+        </> : line}
       </button>
       <button
         type="button"
@@ -342,17 +347,14 @@ export function SidebarTree({
   });
   const flat = prefs.sidebarSort !== 'projects';
   const priority = prefs.sidebarSort === 'priority';
-  // A row names its folder; the machine too where folders on two machines share the name.
-  const nameMachines = new Map<string, Set<string>>();
-  for (const machine of machines) for (const { name } of machine.folders) nameMachines.set(name, (nameMachines.get(name) ?? new Set()).add(machine.key));
+  // A row's second line names its machine (as the machine headings do) and folder.
   const globalRows = flat ? visible.flatMap(({ machine, folders, machineMatch }) => folders.flatMap(workspace => {
     const folderMatches = machineMatch || matches(workspace.name, workspace.cwd);
     const sessions = listed(workspace), duplicates = repeatedTitles(sessions);
     return sessions.filter(session => folderMatches || matches(session.title)).map(session => ({
       workspace, session,
       key: archiveKey(workspace.id, session.id),
-      origin: `${workspace.name} · ${machine.name}`,
-      place: nameMachines.get(workspace.name)!.size > 1 ? `${workspace.name} · ${machine.name}` : workspace.name,
+      origin: `${machine.name} · ${workspace.name}`,
       state: displayState(workspace, session),
       duplicate: duplicates.has(session.title),
       selected: isSelected(workspace, session),

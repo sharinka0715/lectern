@@ -37,8 +37,8 @@ export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.3',
     features: [
-      ['侧栏「最近更新」「进行中优先」两种排序与「按项目」观感一致：同样的单行对话、树线和状态点，分组标题像项目文件夹一样可折叠，所属项目以浅色小字跟在标题后。',
-        'The "Most recently updated" and "In progress first" sidebar lists look like "By project": one-line rows on the tree line, group headings that fold like folders, and each project in quiet text.'],
+      ['侧栏「最近更新」「进行中优先」与「按项目」观感一致，分组标题像文件夹一样可折叠；每个对话分两行，上行是对话名，下行以浅色小字写机器和文件夹。',
+        'The "Most recently updated" and "In progress first" sidebar lists look like "By project", with groups that fold like folders; each chat takes two lines: its name, then its machine and folder.'],
       ['侧栏里展开、折叠的项目文件夹、机器、分组和「展开更多」在切换排序方式和重启后都保持原样，在其他排序里打开对话也不再展开它的文件夹。',
         'Folders, machines and groups opened or folded in the sidebar, and their "Show more", stay so across sort modes and restarts; opening a chat from another sort no longer opens its folder.'],
       ['可以从聊天框使用 Claude Code 的 /goal，回复进行中也能清除目标；输入框上方显示目标的进行、检查、达成等状态，回复中记录每次检查。',

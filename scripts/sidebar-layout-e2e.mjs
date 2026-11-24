@@ -99,6 +99,56 @@ async function checkRows() {
   return rows;
 }
 
+// The lists across projects give each conversation two lines: the title line (state and dot on
+// its right, as in the tree), then the machine and folder in smaller text. The knot on the tree
+// line, the end of that line and the rename button sit on the title line.
+async function measureTwoLineRows() {
+  return page.locator('.sidebar-global .session-row').evaluateAll(rows => rows.map((row, index) => {
+    const lines = element => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return new Set([...range.getClientRects()].filter(rect => rect.height > 0).map(rect => Math.round(rect.top))).size;
+    };
+    const first = row.querySelector('.session-line'), title = first.querySelector('.session-title'), second = row.querySelector('.session-origin');
+    const box = row.getBoundingClientRect(), firstBox = first.getBoundingClientRect(), secondBox = second.getBoundingClientRect();
+    const middle = firstBox.top + firstBox.height / 2 - box.top;
+    const knot = getComputedStyle(row, '::before'), line = getComputedStyle(row.parentElement, '::before');
+    const rename = row.parentElement.querySelector('.session-rename').getBoundingClientRect();
+    return {
+      id: row.dataset.sessionId, height: box.height, first: firstBox.height, second: secondBox.height,
+      titleFont: parseFloat(getComputedStyle(title).fontSize), originFont: parseFloat(getComputedStyle(second).fontSize),
+      titleLines: lines(title), originLines: lines(second), origin: second.textContent,
+      stacked: firstBox.top >= box.top - 0.5 && firstBox.bottom <= secondBox.top + 0.5 && secondBox.bottom <= box.bottom + 0.5,
+      knot: parseFloat(knot.top) + parseFloat(knot.height) / 2 - middle,
+      rename: rename.top + rename.height / 2 - box.top - middle,
+      // The tree line of the last row ends at its knot.
+      lineEnd: index === rows.length - 1 ? box.height - parseFloat(line.bottom) - middle : 0,
+      truncated: getComputedStyle(second).textOverflow === 'ellipsis' && second.scrollWidth > second.clientWidth,
+    };
+  }));
+}
+
+function checkTwoLineRows(rows, why) {
+  assert.ok(rows.length > 0, why);
+  for (const row of rows) {
+    const shown = `${why}: ${JSON.stringify(row)}`;
+    assert.ok(row.stacked && row.titleLines === 1 && row.originLines === 1, `Two lines, the title above machine · folder, ${shown}`);
+    assert.ok(row.originFont < row.titleFont, `The second line is in smaller text, ${shown}`);
+    assert.ok([row.knot, row.rename, row.lineEnd].every(offset => Math.abs(offset) <= 1), `Knot, rename button and line end on the title line, ${shown}`);
+  }
+}
+
+async function setFontSize(size) {
+  await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: '设置', exact: true });
+  await settings.getByRole('button', { name: '外观', exact: true }).click();
+  await settings.getByLabel('界面字号').focus();
+  await page.keyboard.press('Home');
+  for (let step = 14; step < size; step++) await page.keyboard.press('ArrowRight');
+  await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
+  await page.waitForFunction(size => parseFloat(getComputedStyle(document.documentElement).fontSize) === size, size);
+}
+
 async function checkBackgroundReplyStatus() {
   const executablePath = process.argv[2];
   app = await _electron.launch({
@@ -204,14 +254,28 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
 
   await selectSort('recent');
   await expectGlobalOrder('recent', sessionId, remoteChat.id, olderId);
-  // One-line rows like the project tree's: the folder name follows the title, quietly; the
-  // machine is in the hover tip and the spoken label.
-  assert.equal(await sessionRow(remoteChat.id).locator('.session-origin').innerText(), remoteWorkspace.name);
-  assert.equal(await sessionRow(sessionId).locator('.session-origin').innerText(), local.workspace.name);
-  assert.match(await sessionRow(remoteChat.id).getAttribute('title'), new RegExp(`\\n${remoteWorkspace.name} · ${remoteWorkspace.host.replaceAll('.', '\\.')}\\n`));
-  assert.match(await sessionRow(sessionId).getAttribute('aria-label'), new RegExp(`${local.workspace.name} · 本地`));
-  const acrossRowHeight = await page.evaluate(() => document.querySelector('.sidebar-global .session-row').getBoundingClientRect().height);
-  assert.ok(acrossRowHeight <= 30, `rows across projects are as compact as the tree's, got ${acrossRowHeight}`);
+  // Two lines: the title, then the machine (named as its sidebar heading) and the folder. The
+  // long local folder name is cut short there; the hover tip and spoken label have it in full.
+  const localOrigin = `本地 · ${local.workspace.name}`, remoteOrigin = `${remoteWorkspace.host} · ${remoteWorkspace.name}`;
+  assert.equal(await sessionRow(remoteChat.id).locator('.session-origin').innerText(), remoteOrigin);
+  assert.equal(await sessionRow(sessionId).locator('.session-origin').innerText(), localOrigin);
+  assert.ok((await sessionRow(remoteChat.id).getAttribute('title')).includes(`\n${remoteOrigin}\n`));
+  assert.ok((await sessionRow(sessionId).getAttribute('title')).includes(`\n${localOrigin}\n`));
+  assert.ok((await sessionRow(sessionId).getAttribute('aria-label')).includes(localOrigin));
+  assert.equal(await sessionRow(remoteChat.id).locator('.session-line .session-state-label').innerText(), '回复中', 'The state stays on the title line');
+  const twoLines = await measureTwoLineRows();
+  checkTwoLineRows(twoLines, 'at 18px');
+  assert.ok(twoLines.every(row => Math.abs(row.height - 46) <= 1), `Two-line rows are 46px at 18px: ${JSON.stringify(twoLines)}`);
+  assert.equal(twoLines.find(row => row.id === sessionId).truncated, true, 'A long machine · folder line ends in an ellipsis');
+  // Both lines follow the interface font size.
+  await setFontSize(14);
+  const smaller = await measureTwoLineRows();
+  checkTwoLineRows(smaller, 'at 14px');
+  for (const [index, row] of smaller.entries()) for (const key of ['height', 'first', 'second']) {
+    const expected = twoLines[index][key] * 14 / 18;
+    assert.ok(Math.abs(row[key] - expected) <= 1, `${key} at 14px: ${row[key]}px, expected ${expected.toFixed(2)}px (${twoLines[index][key]}px at 18px)`);
+  }
+  await setFontSize(18);
   assert.equal(await sessionRow(sessionId).getAttribute('aria-current'), 'page');
 
   await sortControl().press('Enter');
@@ -248,6 +312,11 @@ async function checkGlobalSorting(sessionId, olderId, remoteUpdatedAt) {
   assert.equal(await sessionRow(remoteChat.id).count(), 0);
   await remoteFolder.locator('.workspace-toggle').click();
   assert.equal(await sessionRow(remoteChat.id).getAttribute('aria-current'), 'page');
+  // 按项目 keeps one line per conversation.
+  const treeRows = await page.locator('.sidebar-tree .session-row').evaluateAll(rows => rows.map(row => ({
+    height: row.getBoundingClientRect().height, twoLines: !!row.querySelector('.session-line, .session-origin') })));
+  assert.ok(treeRows.length >= 2 && treeRows.every(row => row.height <= 30 && !row.twoLines), `The project tree keeps one-line rows: ${JSON.stringify(treeRows)}`);
+  return { at18: twoLines[0], at14: smaller[0] };
 }
 
 try {
@@ -364,11 +433,11 @@ try {
   await appendFile(olderLog, olderRecords(24, '较早会话的新问题', '一条未读的回复'));
   await olderRow.locator('.state-unread').waitFor();
 
-  await checkGlobalSorting(sessionId, olderId, olderDate(12));
+  const twoLineRows = await checkGlobalSorting(sessionId, olderId, olderDate(12));
   await app.close();
   app = undefined;
   await checkBackgroundReplyStatus();
-  console.log(JSON.stringify({ success: true, defaultWidth: 304, persistedWidth: preferred, dockedChat, narrowMax: 350, rows, fonts, sidebarSort: 'global recent and active priority across local and SSH, search, keyboard, selection, reload', backgroundReplyStatus: true, resultDirectory }));
+  console.log(JSON.stringify({ success: true, defaultWidth: 304, persistedWidth: preferred, dockedChat, narrowMax: 350, rows, fonts, sidebarSort: 'global recent and active priority across local and SSH, search, keyboard, selection, reload', twoLineRows, backgroundReplyStatus: true, resultDirectory }));
 } catch (error) {
   await page?.screenshot({ path: path.join(resultDirectory, 'failure.png') }).catch(() => {});
   throw error;

@@ -49,8 +49,9 @@ async function history(claudeDir, cwd, titles, reply, day = 1) {
 }
 
 // Colors of a row as the user sees them, once its transitions end: background, text
-// and their contrast ratio. A canvas reads any CSS color syntax (rgb, color(), oklab).
-async function rowColors(element) {
+// and their contrast ratio (of the text in `text`, a selector, if given). A canvas reads
+// any CSS color syntax (rgb, color(), oklab).
+async function rowColors(element, text) {
   await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => {})));
   const context = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
   const parse = value => {
@@ -66,9 +67,9 @@ async function rowColors(element) {
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   };
   const style = getComputedStyle(element);
-  const background = parse(style.backgroundColor), text = parse(style.color);
-  const [hi, lo] = [luminance(background), luminance(text)].sort((a, b) => b - a);
-  return { background, text, contrast: Math.round((hi + 0.05) / (lo + 0.05) * 10) / 10 };
+  const background = parse(style.backgroundColor), color = parse(getComputedStyle(text ? element.querySelector(text) : element).color);
+  const [hi, lo] = [luminance(background), luminance(color)].sort((a, b) => b - a);
+  return { background, text: color, contrast: Math.round((hi + 0.05) / (lo + 0.05) * 10) / 10 };
 }
 
 async function run(locale) {
@@ -208,6 +209,15 @@ async function run(locale) {
     await expectMarks(oldest, newest, 'clicked the blue row in the list across projects');
     await moveAway();
     await sidebarShot('across-projects');
+    // Its rows take two lines (title, then machine · folder): the blue covers both, and the
+    // quieter second line still reads on it.
+    const acrossColors = { title: await row(newest).evaluate(rowColors), origin: await row(newest).evaluate(rowColors, '.session-origin') };
+    assert.ok(bluish(acrossColors.title.background) && acrossColors.title.contrast >= 7 && acrossColors.origin.contrast >= 3.5,
+      `two-line blue row: ${JSON.stringify(acrossColors)}`);
+    assert.ok(await row(newest).evaluate(el => {
+      const box = el.getBoundingClientRect(), second = el.querySelector('.session-origin').getBoundingClientRect();
+      return second.top >= box.top + box.height / 2 && second.bottom <= box.bottom;
+    }), 'the machine · folder line is the lower half of the marked row');
     await row(newest).click();
     await focusedPane('secondary');
     await sortBy(L.byProject);
