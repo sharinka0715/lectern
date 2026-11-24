@@ -12,6 +12,7 @@ import { API_KEY, descendants, readJsonl, reap } from './sandbox.mjs';
 import { textOf } from './fake-api.mjs';
 import { compareVersions } from './versions.mjs';
 import { hookStatus, launchedHooks, setDialogHooks } from '../fixtures/dialog-hooks.mjs';
+import { previewQuestions } from './question-preview-input.mjs';
 
 export const FEATURES = [
   { id: 'model-catalog', title: 'Model/effort lists from the stream-json control-request probe' },
@@ -38,6 +39,7 @@ export const FEATURES = [
   { id: 'permission-deny', title: 'Permission card: deny (reply marked interrupted)' },
   { id: 'question-single', title: 'AskUserQuestion: single question' },
   { id: 'question-multi', title: 'AskUserQuestion: multi-question form with review' },
+  { id: 'question-preview-multi', title: 'AskUserQuestion: mixed three-page form, preview and notes where available, reviewed and submitted with screen reading and hooks' },
   { id: 'question-single-long', title: 'AskUserQuestion: one long wrapped CJK question after a long preamble, wrapped option descriptions, named session' },
   { id: 'question-review-long', title: 'AskUserQuestion: review of long wrapped CJK questions in a named session (submit, cancel)' },
   { id: 'question-early', title: 'AskUserQuestion before the transcript has the call (the stream ends late): a card read off the screen, answered into its call' },
@@ -631,7 +633,7 @@ export const SCENARIOS = [
   },
   {
     id: 'question',
-    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long', 'question-early', 'question-body'],
+    features: ['question-single', 'question-multi', 'question-single-long', 'question-review-long', 'question-early', 'question-body', 'question-preview-multi'],
     timeoutMs: 300_000,
     async run(ctx) {
       const { ui, page, api, sandbox, folders, check } = ctx;
@@ -812,6 +814,60 @@ export const SCENARIOS = [
         await card.locator('.question-editor-actions button.primary-button').click({ timeout: 30_000 });
         await ui.waitReply('ccm-ask-body-done');
         assert.ok(answers['ask-body'].includes(typed), answers['ask-body']);
+      });
+      await check('question-preview-multi', async () => {
+        const selected = [0, 1, 1];
+        const nav = card.locator('nav.question-nav button');
+        const rawPreview = card.locator('.question-preview pre');
+        const note = 'Sample note for the second layout';
+        for (const hooks of [false, true]) {
+          const name = hooks ? 'ask-preview-hooks' : 'ask-preview-screen';
+          ask(name, previewQuestions, 'Three choices for the sample panel.', { tailMs: 1500 });
+          if (hooks) await setDialogHooks(page, true);
+          try {
+            await startChat(ctx, folders.main, 'Start a named sample chat');
+            await ui.waitStatus('idle');
+            await rename('示例会话');
+            assert.equal(!!launchedHooks(await ui.claudeArgv()), hooks);
+            await ui.send(`Ask me three questions ccm:${name}`);
+            await heading(previewQuestions[0].question);
+            if (hooks) await page.waitForFunction(selector => document.querySelector(selector)?.dataset.questionCall, sel.question);
+            else assert.equal(await card.getAttribute('data-question-call'), null);
+            await option(1).click();
+            await heading(previewQuestions[1].question);
+            const hasPreview = (await ui.screen()).includes('n to add notes');
+            ctx.note(name, { hasPreview, hooks });
+            await nav.first().click();
+            await heading(previewQuestions[0].question);
+            assert.equal(await option(1).getAttribute('aria-pressed'), 'true');
+            await nav.last().click();
+            await heading(previewQuestions[1].question);
+            const label = previewQuestions[1].options[1].label;
+            if (hasPreview) {
+              assert.match(await rawPreview.textContent(), /工具栏 A/);
+              await card.getByRole('button', { name: `预览「${label}」` }).click();
+              await rawPreview.filter({ hasText: '工具栏 B' }).waitFor();
+              if (hooks) assert.equal(await rawPreview.textContent(), previewQuestions[1].options[1].preview);
+              await card.getByRole('button', { name: `备注「${label}」` }).click();
+              await card.locator('.question-editor textarea').fill(note);
+              await card.locator('.question-editor-actions button.secondary-button').click();
+              await card.locator('.question-editor-actions button.primary-button').click();
+            } else await option(2).click();
+            await heading(previewQuestions[2].question);
+            await option(2).click();
+            const review = card.locator('dl.question-review');
+            await review.waitFor();
+            assert.deepEqual((await review.locator('dd').allInnerTexts()).map(squash), previewQuestions.map((q, i) => squash(q.options[selected[i]].label)));
+            await card.locator('footer.question-actions button.primary-button').click();
+            await ui.waitReply(`ccm-${name}-done`);
+            for (const [i, q] of previewQuestions.entries()) {
+              assert.ok(answers[name].includes(`"${q.question}"="${q.options[selected[i]].label}"`), answers[name]);
+            }
+            if (hasPreview) assert.ok(answers[name].includes(note), answers[name]);
+          } finally {
+            if (hooks) await setDialogHooks(page, false);
+          }
+        }
       });
     },
   },

@@ -61,6 +61,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Changing the interface font size now scales line heights, vertical spacing and row heights with it, so the sidebar and other lists no longer leave extra gaps.'],
       ['Claude Code 的提问正文有空行、列表或代码，或自定义回答很长时，也显示为问答卡（空行和列表照原样），不必接管终端回答。',
         "Claude Code's questions with blank lines, lists or code, or a long typed answer, show as question cards (blank lines and lists kept) instead of leaving only the terminal."],
+      ['多道题里夹着带预览的题目时也显示为问答卡，可切题、看预览、加备注并提交，读屏和 hooks 都支持。',
+        'Question sets that include preview questions show as question cards, with tabs, previews, notes and the review page, from the screen and with hooks.'],
       ['回复中有后台子代理或命令时，实时预览不再把等待子代理、子代理消息、折叠或运行中的命令、完成通知等终端状态行当成正文显示。',
         "With background agents or commands running, the live preview no longer shows terminal status rows (waiting for agents, subagent messages, folded or running commands, notices) as reply text."],
       ['Monitor 按时限到期后，后台任务栏显示它已完成，运行计数随之更新。',

@@ -1,6 +1,6 @@
 import type { NativeQuestionOption, NativeQuestionScreen } from '../shared/native-question';
-import { footerPattern, namedRule, parseQuestionScreen, previewRows, ruler, standardRows, tabStrip, trimBlank } from './question-screen';
-import { stripTerminalEscapes, terminalCells } from './screen';
+import { firstQuestionOption, footerPattern, insideQuestionFence, parseQuestionScreen, previewRows, questionLines, questionReview, ruler, standardRows, tabStrip, trimBlank } from './question-screen';
+import { terminalCells } from './screen';
 
 /** One question of an AskUserQuestion call's input, as Claude Code handed it to the PreToolUse hook. */
 export interface AskedQuestion {
@@ -33,6 +33,7 @@ export function askedQuestions(input: unknown): AskedQuestion[] | undefined {
 }
 
 const squash = (value: string) => value.replace(/\s+/gu, ' ').trim();
+const compact = (value: string) => value.replace(/\s+/gu, '');
 /** A label as the screen shows it: the same text, or (wrapped or cut by the pane) its start. */
 function sameLabel(screen: string, asked: string) {
   const a = squash(screen), b = squash(asked);
@@ -78,6 +79,7 @@ function fromWhole(screen: NativeQuestionScreen, asked: AskedQuestion[]): Native
       review: screen.review.map((row, i) => ({ ...row, question: shown[i].question })) };
   }
   let found = pages(screen.options, screen.multiSelect, asked);
+  if (screen.activeTab !== undefined) found = found.filter(i => i === screen.activeTab);
   if (found.length > 1) found = found.filter(i => squash(asked[i].question) === squash(screen.question ?? ''));
   return found.length === 1 ? withAsked(screen, asked, found[0], answered) : undefined;
 }
@@ -92,29 +94,55 @@ const moreLines = /^\s*[↑↓] \d+ more lines?$/u;
  * it is on screen after all. The visible choices must be exactly one asked question's options.
  */
 function fromBottom(viewport: string, asked: AskedQuestion[]): NativeQuestionScreen | undefined {
-  let lines = trimBlank(stripTerminalEscapes(viewport).replace(/ /g, ' ').split('\n').map(line => line.trimEnd()));
-  if (lines.length && namedRule.test(lines.at(-1)!)) lines = trimBlank(lines.slice(0, -1));
+  const lines = questionLines(viewport);
   let divider = lines.length - 1;
   while (divider >= 0 && !ruler.test(lines[divider])) divider--;
   if (divider < 1) return;
   const [chat = '', ...tail] = trimBlank(lines.slice(divider + 1));
   const footer = tail.filter(line => line.trim() && !moreLines.test(line)).map(line => line.trim()).join(' ');
   if (!footerPattern.test(footer)) return;
-  let first = divider - 1;
-  while (first >= 0 && !/^(?:❯ | {2})1\. /u.test(lines[first])) first--;
-  if (first < 0) return;
+  const preview = footer.includes('n to add notes');
+  const first = firstQuestionOption(lines, divider, preview);
+  if (first < 0 || insideQuestionFence(lines.slice(0, first))) return;
   let top = first - 1;
   while (top >= 0 && !(ruler.test(lines[top]) && tabStrip(lines[top + 1] ?? ''))) top--;
-  const strip = top >= 0 ? tabStrip(lines[top + 1]) : undefined;
+  const strip = tabStrip(top >= 0 ? lines[top + 1] : lines[0]);
   if (strip && (strip.tabs.length !== asked.length || strip.tabs.some((tab, i) => !sameTab(tab.label, asked[i].header)))) return;
   const rows = trimBlank(lines.slice(first, divider));
-  const answeredBefore = strip ? strip.tabs.some(tab => tab.answered) : rows.some(row => / ✔$/u.test(row));
-  const data = footer.includes('n to add notes') ? previewRows(rows, chat, footer) : standardRows(rows, chat, answeredBefore, terminalCells(lines[divider]));
+  // The preview's right column follows a checked label on the same physical row.
+  // With no tabs, let the preview parser read that marker from the choice column.
+  const answeredBefore = strip ? strip.tabs.some(tab => tab.answered) : preview || rows.some(row => / ✔$/u.test(row));
+  const data = preview ? previewRows(rows, chat, footer, answeredBefore) : standardRows(rows, chat, answeredBefore, terminalCells(lines[divider]));
   if (!data || data.options.filter(o => o.focused).length !== 1) return;
   const found = pages(data.options, data.multiSelect, asked);
   if (found.length !== 1 || (strip && strip.hasReview !== (asked.length > 1 || asked[found[0]].multiSelect))) return;
   const answered = strip ? strip.tabs.map(tab => tab.answered) : asked.map(() => false);
+  if (!strip && data.options.some(option => option.checked)) answered[found[0]] = true;
   return withAsked({ kind: 'question', tabs: [], ...data, footer }, asked, found[0], answered);
+}
+
+/** An intact review body can still be associated with its call after the tabs scroll away. */
+function reviewFromBottom(viewport: string, asked: AskedQuestion[]): NativeQuestionScreen | undefined {
+  if (asked.length === 1 && !asked[0].multiSelect) return;
+  const lines = questionLines(viewport), start = lines.indexOf('Review your answers');
+  if (start < 0 || insideQuestionFence(lines.slice(0, start))) return;
+  const data = questionReview(lines.slice(start).filter(line => !moreLines.test(line)), Infinity);
+  if (!data?.review.length || data.incomplete !== (data.review.length < asked.length)) return;
+  // Without the tab strip, every visible question must identify one asked page, in order.
+  const answered = asked.map(() => false);
+  let previous = -1;
+  for (const row of data.review) {
+    const matches = asked.flatMap((q, i) => compact(q.question) === compact(row.question) ? [i] : []);
+    if (matches.length !== 1 || matches[0] <= previous) return;
+    previous = matches[0];
+    answered[previous] = true;
+    row.question = asked[previous].question;
+  }
+  const strip = tabStrip(trimBlank(lines.slice(0, start)).at(-1) ?? '');
+  if (strip && (!strip.hasReview || strip.tabs.length !== asked.length ||
+      strip.tabs.some((tab, i) => !sameTab(tab.label, asked[i].header) || tab.answered !== answered[i]))) return;
+  return { kind: 'review', tabs: asked.map((q, i) => ({ label: q.header, answered: answered[i] })),
+    activeTab: asked.length, options: data.options, review: data.review, footer: '' };
 }
 
 /**
@@ -126,5 +154,5 @@ function fromBottom(viewport: string, asked: AskedQuestion[]): NativeQuestionScr
  */
 export function readHookQuestion(viewport: string, asked: AskedQuestion[]): NativeQuestionScreen | undefined {
   const whole = parseQuestionScreen(viewport, { pendingToolUse: true });
-  return whole ? fromWhole(whole, asked) : fromBottom(viewport, asked);
+  return whole ? fromWhole(whole, asked) : fromBottom(viewport, asked) ?? reviewFromBottom(viewport, asked);
 }

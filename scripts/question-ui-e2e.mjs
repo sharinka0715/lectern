@@ -8,7 +8,11 @@ import { _electron, resizeWindow } from './fixtures/electron.mjs';
 import { tsImport } from 'tsx/esm/api';
 
 const { parseQuestionScreen } = await tsImport('../src/core/question-screen.ts', import.meta.url);
+const { stripTerminalEscapes } = await tsImport('../src/core/screen.ts', import.meta.url);
 const { scenarios } = JSON.parse(await readFile(new URL('../tests/fixtures/native-contracts/question-2.1.326.json', import.meta.url), 'utf8'));
+const mixedFrames = JSON.parse(await readFile(new URL('../tests/fixtures/question-preview-multi-2.1.331/named-120.json', import.meta.url), 'utf8'));
+scenarios.previewMulti = { screens: Object.fromEntries(Object.entries(mixedFrames).map(([key, { screen, tabs }]) =>
+  [key, tabs ? screen.replace(stripTerminalEscapes(tabs), tabs) : screen])) };
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-question-ui-'));
 const results = path.resolve('test-results', `question-ui-${Date.now()}`);
 await mkdir(results, {recursive:true});
@@ -50,7 +54,8 @@ try {
   const row = number => card.locator(`[data-question-number="${number}"]`);
   async function show(scenario,frame,options={}) {
     const viewport = scenarios[scenario].screens[frame];
-    const screen = parseQuestionScreen(viewport); assert.ok(screen, `${scenario}.${frame} did not parse`);
+    const screen = parseQuestionScreen(viewport, scenario === 'previewMulti' ? { pendingToolUse: true } : undefined);
+    assert.ok(screen, `${scenario}.${frame} did not parse`);
     const token = await app.evaluate(({}, {screen,scenario,viewport,options}) => {
       const f = globalThis.questionUI;
       f.send({...f.base,status:'waiting',navigationStatus:'waiting',viewport,screen:viewport,
@@ -99,6 +104,33 @@ try {
   await page.screenshot({path:path.join(results,'preview-notes.png')});
   await button('结束备注编辑').click(); await expectCall({kind:'cancel'});
   await show('preview','text'); await button('选用此项与备注').click(); await expectCall({kind:'activate',number:2}); await clear();
+
+  await show('previewMulti', 'first');
+  await row(1).click(); await expectCall({kind:'activate',number:1});
+  await show('previewMulti', 'second-after-first-answer');
+  assert.equal(await card.locator('li[aria-current="step"]').innerText(), '计数位置');
+  assert.match(await card.locator('.question-preview pre').innerText(), /工具栏 A/);
+  await button('上一页').click(); await expectCall({kind:'previous'});
+  await show('previewMulti', 'first-answered');
+  assert.equal(await row(1).getAttribute('aria-pressed'), 'true');
+  await button('下一页').click(); await expectCall({kind:'next'});
+  await show('previewMulti', 'second-before-answer');
+  await button('预览「放到列表标题下面并和组名对齐」').click(); await expectCall({kind:'focus',number:2});
+  await show('previewMulti', 'second-pick-2');
+  assert.match(await card.locator('.question-preview pre').innerText(), /工具栏 B/);
+  await button('备注「放到列表标题下面并和组名对齐」').click(); await expectCall({kind:'amend',number:2});
+  await show('previewMulti', 'second-confirm-notes');
+  await notes.fill('用于示例'); await button('写入原屏').click(); await expectCall({kind:'text',text:'用于示例'});
+  const noteInput = parseQuestionScreen(scenarios.previewMulti.screens['second-confirm-notes'], { pendingToolUse: true }).input;
+  await show('previewMulti', 'second-confirm-notes', { question: { input: { ...noteInput, value: '用于示例' } } });
+  assert.equal(await notes.inputValue(), '用于示例');
+  await button('选用此项与备注').click(); await expectCall({kind:'activate',number:2});
+  await show('previewMulti', 'third-after-second-answer');
+  assert.equal(await card.locator('.question-preview').count(), 0);
+  await row(2).click(); await expectCall({kind:'activate',number:2});
+  await show('previewMulti', 'review');
+  assert.equal(await card.locator('dl.question-review dd').count(), 3);
+  await button('提交回答').click(); await expectCall({kind:'activate',number:1}); await clear();
 
   await show('mixed','start'); await button('下一页').click(); await expectCall({kind:'next'});
   await show('mixed','incomplete'); await button('上一页').click(); await expectCall({kind:'previous'});

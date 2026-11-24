@@ -121,7 +121,7 @@ export function QuestionCard({ question: q, busy, unconfirmed, onAction, onViewT
       <div key={i}><dt>{row.question}</dt><dd>{row.answer}</dd></div>)}</dl>}
     {choices.length > 0 && <ul className="question-options">{choices.map(row => <li key={row.number}>
       <div className="question-option-row"><button className="question-option" type="button" disabled={blocked || dirty || (notes && row.number !== input.number)}
-        aria-pressed={q.multiSelect ? row.checked : undefined} data-question-number={row.number}
+        aria-pressed={q.multiSelect || hasReview ? !!row.checked : undefined} data-question-number={row.number}
         title={row.kind !== 'other' && !hasReview ? t('cards.submitsDirectly') : undefined}
         onClick={() => choose(row)}>
         <span className={'question-mark' + (q.multiSelect ? ' multiple' : '')} aria-hidden="true">{row.checked ? <Check size={13}/> : row.number}</span>
@@ -129,9 +129,9 @@ export function QuestionCard({ question: q, busy, unconfirmed, onAction, onViewT
           {row.kind === 'other' && !input && q.input?.value && <small>{q.input.value}</small>}</span>
       </button>
       {row.kind === 'choice' && hasPreview && !notes && <div className="question-option-tools">
-        {hasPreview && <button type="button" disabled={blocked || dirty || row.focused} aria-label={t('cards.previewOption', { label: row.label })} title={t('cards.previewOption', { label: row.label })}
+        {hasPreview && <button type="button" disabled={blocked || notes || row.focused} aria-label={t('cards.previewOption', { label: row.label })} title={t('cards.previewOption', { label: row.label })}
           onClick={() => void act({kind:'focus', number:row.number})}><Eye size={15}/></button>}
-        {q.canAmend && <button type="button" disabled={blocked || dirty} aria-label={t('cards.noteOption', { label: row.label })} title={t('cards.noteOption', { label: row.label })}
+        {q.canAmend && <button type="button" disabled={blocked || notes} aria-label={t('cards.noteOption', { label: row.label })} title={t('cards.noteOption', { label: row.label })}
           onClick={() => void act({kind:'amend', number:row.number})}><PencilLine size={15}/></button>}
       </div>}</div>
       {input?.number === row.number && editor}

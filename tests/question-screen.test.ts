@@ -178,7 +178,7 @@ test('review page: the partial-answer warning reworded in 2.1.329, styling, and 
   }
   const frame = review330('wrapped-named');
   for (const broken of [
-    frame.replace(' │ ● 新版服务', ' ● 新版服务'), // bars on some questions only
+    frame.replace(' │ ● 新版服务', ' │   新版服务'), // a new question without its bullet
     frame.replace(' │   我登录上去', '     我登录上去'), // a continuation line lost its bar
     frame.replace('   → 可以停 (Recommended)\n', ''), // a question without an answer
     frame.replace('   → 每个批次加一台机器', ' │ → 每个批次加一台机器'), // a barred answer

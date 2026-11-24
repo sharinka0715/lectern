@@ -63,7 +63,34 @@ export function tabStrip(line: string) {
   if ((!nav && parts.length !== 1) || !tabs.length || tabs.some(t=>!t || !t[2].trim())) return;
   return {tabs:tabs.map(t=>({label:t![2].trim(),answered:t![1]==='☒'})),hasReview:!!nav};
 }
-function review(lines: string[], tabs: NativeQuestionScreen['tabs'], width: number): NativeQuestionScreen | undefined {
+/** Only an actual terminal highlight identifies the active tab of a plain multi-page form. */
+function activeQuestionTab(line: string, count: number) {
+  const parts = line.split(/(\x1b\[[\d;]+m)/u);
+  let highlighted = false, tab = 0, active: number | undefined;
+  for (const part of parts) {
+    const sgr = /^\x1b\[([\d;]+)m$/u.exec(part);
+    if (sgr) {
+      const codes = sgr[1].split(';').map(Number);
+      for (let i = 0; i < codes.length; i++) {
+        const code = codes[i];
+        if (code === 0 || code === 27 || code === 49) highlighted = false;
+        else if (code === 7 || code >= 40 && code <= 47 || code >= 100 && code <= 107 || code === 48) highlighted = true;
+        if (code === 38 || code === 48) i += codes[i + 1] === 2 ? 4 : 2;
+      }
+    } else {
+      for (const _ of part.matchAll(/[☐☒] (?=\S)|✔ Submit/gu)) {
+        if (highlighted) {
+          if (active !== undefined) return;
+          active = tab;
+        }
+        tab++;
+      }
+    }
+  }
+  return tab === count + 1 ? active : undefined;
+}
+
+export function questionReview(lines: string[], width: number) {
   const rows = lines.filter(s=>s.trim());
   // 2.1.329 dropped the "Ready to submit your answers?" line above the two actions.
   const ready = rows.at(-3) === 'Ready to submit your answers?', end = rows.length - (ready ? 3 : 2);
@@ -79,24 +106,19 @@ function review(lines: string[], tabs: NativeQuestionScreen['tabs'], width: numb
   // 2.1.329 reworded the warning above a partial set of answers.
   const incomplete = /^⚠\s+(?:You have not answered all questions|Some questions are unanswered)$/u.test(rows[i]);
   if (incomplete) i++;
-  // Once any question takes more than a row, every question carries a quote bar (" │ ● …",
-  // continued by " │   …", a blank line of its own by " │"; 2.1.300 to 2.1.331); answers stay
-  // unbarred ("   → …").
-  const barred = rows[i]?.startsWith(' │ ');
-  const head = barred ? /^ │ [●⏺] (.+)$/u : /^ [●⏺] (.+)$/u;
-  const more = barred ? /^ │(?: {3}(.*))?$/u : /^ {3,}(?!→)(\S.*)$/u;
   const answers: NonNullable<NativeQuestionScreen['review']> = [];
   for (; i<end;) {
-    const q = head.exec(rows[i++]); if (!q) return;
-    const question = [q[1]];
+    // Some releases mix quoted, wrapping questions with unquoted short ones on the same page.
+    const q = /^ (│ )?[●⏺] (.+)$/u.exec(rows[i++]); if (!q) return;
+    const barred = !!q[1], question = [q[2]];
+    const more = barred ? /^ │(?: {3}(.*))?$/u : /^ {3,}(?!→)(\S.*)$/u;
     for (let m; i<end && (m = more.exec(rows[i])); i++) question.push(m[1] ?? '');
     const a = /^ {3}→ (.+)$/u.exec(rows[i++] ?? ''); if(!a) return;
     const answer = [a[1]];
     while (i<end && /^ {3,}\S/u.test(rows[i])) answer.push(rows[i++].trim());
     answers.push({question:unwrap(question, width - (barred ? 5 : 3)),answer:joinWrapped(answer)});
   }
-  if (answers.length!==tabs.filter(t=>t.answered).length || incomplete!==tabs.some(t=>!t.answered)) return;
-  return {kind:'review',tabs,activeTab:tabs.length,options,review:answers,footer:''};
+  return { options, review: answers, incomplete };
 }
 export function standardRows(lines:string[], chat:string, hasAnswer:boolean, width:number): Pick<NativeQuestionScreen,'multiSelect'|'options'|'input'> | undefined {
   const options: NativeQuestionOption[] = [], described = new Map<NativeQuestionOption, string[]>();
@@ -142,28 +164,67 @@ export function standardRows(lines:string[], chat:string, hasAnswer:boolean, wid
   options.push({number:Number(chatRow[2]),kind:'chat',label:'Chat about this',focused:chatRow[1]==='❯ '});
   return {multiSelect,options,input};
 }
-export function previewRows(lines:string[],chat:string,footer:string): Pick<NativeQuestionScreen,'options'|'multiSelect'|'canAmend'|'input'|'preview'> | undefined {
+function previewChoices(lines: string[], hasAnswer: boolean) {
+  const options: NativeQuestionOption[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i], number = options.length + 1;
+    const row = numberRow.exec(line);
+    const selected = hasAnswer && /^(❯ | {2}) {2}(\S.*?) ✔$/u.exec(line);
+    if (row) {
+      if (Number(row[2]) !== number) return;
+      const checked = hasAnswer && row[3].endsWith(' ✔');
+      options.push({ number, kind: 'choice', label: checked ? row[3].slice(0, -2) : row[3], focused: row[1] === '❯ ', ...(checked && { checked }) });
+    } else if (selected) {
+      // Adding the check mark can move the number to the next row, ahead of the
+      // rest of the label (e.g. "❯   … ✔" followed by " 2.对齐").
+      const next = /^ ([1-9]\d*)\.(.*)$/u.exec(lines[++i] ?? '');
+      if (!next || Number(next[1]) !== number) return;
+      const label = joinWrapped([selected[2], next[2].trim()].filter(Boolean));
+      options.push({ number, kind: 'choice', label, focused: selected[1] === '❯ ', checked: true });
+    } else {
+      const previous = options.at(-1);
+      if (!previous || !/^ {4,}\S/u.test(line)) return;
+      previous.label = joinWrapped([previous.label, line.trim()]);
+    }
+  }
+  if (options.length >= 2 && options.filter(o=>o.checked).length <= 1) return options;
+}
+
+export function previewRows(lines:string[],chat:string,footer:string,hasAnswer:boolean): Pick<NativeQuestionScreen,'options'|'multiSelect'|'canAmend'|'input'|'preview'> | undefined {
   const chatRow = /^(❯ |  )Chat about this$/u.exec(chat); if (!chatRow) return;
-  const options: NativeQuestionOption[] = [], body:string[] = [];
-  let notes: string | undefined, opened = false, closed = false;
+  const labels: string[] = [], body: string[] = [];
+  let notes: string | undefined, column: number | undefined, boxWidth = 0, closed = false;
   // The option and preview columns share physical lines. Split at the box glyph,
   // not a JS character offset: CJK characters occupy two terminal cells.
   for (const raw of lines) {
-    const fields = /^(.*?)\s+(┌─+┐|│.*│|└─+┘)$/u.exec(raw);
+    const fields = /^(.*?)\s+(┌─+┐|│.*│|├─+ ✂ ─+ \d+ lines? hidden ─+┤|└─+┘)$/u.exec(raw);
     const left = (fields?.[1] ?? raw).trimEnd(), right = fields?.[2];
-    if (right?.startsWith('┌')) { if (opened || closed) return; opened=true; }
-    else if (right?.startsWith('│')) { if (!opened || closed) return; body.push(right.slice(1,-1).replace(/^ /,'').trimEnd()); }
-    else if (right?.startsWith('└')) { if (!opened || closed) return; closed=true; }
+    if (right?.startsWith('┌')) {
+      if (column !== undefined || labels.length) return;
+      column = terminalCells(raw.slice(0, -right.length));
+      boxWidth = terminalCells(right);
+    } else if (right) {
+      if (column === undefined || closed || column !== terminalCells(raw.slice(0, -right.length))) return;
+      // Preview text can contain tabs and characters whose cell width differs between Ink and tmux.
+      if (right.startsWith('└')) {
+        if (boxWidth !== terminalCells(right)) return;
+        closed = true;
+      } else if (right.startsWith('├')) {
+        body.push(right.replace(/^├─+ ✂ ─+ | ─+┤$/gu, ''));
+      } else body.push(right.slice(1,-1).replace(/^ /,'').trimEnd());
+    } else if (column !== undefined && !closed) return;
     if (!left.trim()) continue;
-    const row = numberRow.exec(left);
-    if (row) {
-      if (Number(row[2])!==options.length+1) return;
-      options.push({number:Number(row[2]),kind:'choice',label:row[3],focused:row[1]==='❯ '});
-    } else if (closed && /^ {30,}Notes: /.test(left) && notes===undefined) notes=left.trim().slice('Notes: '.length);
-    else if (closed && notes!==undefined && /^ {30,}\S/u.test(left)) notes+=' '+left.trim();
-    else return;
+    if (closed && column !== undefined) {
+      const aligned = left.startsWith(' '.repeat(column));
+      const note = aligned ? /^Notes: (.+)$/u.exec(left.slice(column)) : null;
+      if (note && notes === undefined) { notes = note[1]; continue; }
+      if (notes !== undefined && aligned) { notes += ' ' + left.trim(); continue; }
+    }
+    if (!right && (column === undefined || terminalCells(left) >= column)) return;
+    labels.push(left);
   }
-  if (!closed || options.length<2 || notes===undefined || !body.length) return;
+  const options = previewChoices(labels, hasAnswer);
+  if (!closed || !options || notes===undefined || !body.length) return;
   const owners = options.filter(o=>o.focused); if (owners.length!==1) return;
   const owner = owners[0], chatFocused = chatRow[1]==='❯ ';
   // Preview keeps its pointer on the last option even when Chat owns the keys.
@@ -190,33 +251,53 @@ export function previewRows(lines:string[],chat:string,footer:string): Pick<Nati
  * earlyQuestion). A chooser in a code block is never one.
  */
 export function parseQuestionScreen(viewport:string, evidence?:{pendingToolUse:true}): NativeQuestionScreen | undefined {
-  let lines = trimBlank(stripTerminalEscapes(viewport).replace(/\u00a0/g,' ').split('\n').map(line=>line.trimEnd()));
-  if (lines.length && namedRule.test(lines.at(-1)!)) lines = trimBlank(lines.slice(0,-1));
+  const raw = viewport.split('\n'), offset = raw.findIndex(line=>stripTerminalEscapes(line).trim());
+  const lines = questionLines(viewport);
   let start = lines.length - 2;
   while (start >= 0 && !(ruler.test(lines[start]) && tabStrip(lines[start+1]))) start--;
   if (start<0) return;
   const before = lines.slice(0,start);
-  const fenced = before.filter(line=>/^\s*(?:[●⏺]\s+)?```/u.test(line)).length%2!==0;
-  if (fenced || (inTranscriptExample(before) && !evidence?.pendingToolUse)) return;
+  if (insideQuestionFence(before) || (inTranscriptExample(before) && !evidence?.pendingToolUse)) return;
   // The rule spans the pane: the width Claude Code wrapped the question to.
   const width = terminalCells(lines[start]);
   const {tabs,hasReview} = tabStrip(lines[start+1])!;
   const section = trimBlank(lines.slice(start+2));
-  if (section[0]==='Review your answers' && hasReview) return review(section,tabs,width);
+  if (section[0]==='Review your answers' && hasReview) {
+    const data = questionReview(section, width);
+    if (!data || data.review.length !== tabs.filter(t=>t.answered).length || data.incomplete !== tabs.some(t=>!t.answered)) return;
+    return {kind:'review',tabs,activeTab:tabs.length,options:data.options,review:data.review,footer:''};
+  }
   let divider = section.length - 1;
   while (divider >= 0 && !ruler.test(section[divider])) divider--;
   if (divider<0) return;
   const tail = trimBlank(section.slice(divider+1)), chat = tail[0]??'';
   const footer = tail.slice(1).map(line=>line.trim()).filter(Boolean).join(' ');
   if (!footerPattern.test(footer)) return;
-  // Searched upwards: a question of its own "  1. …" rows sits above the options.
-  let first = divider - 1;
-  while (first >= 0 && !/^(?:❯ | {2})1\. /u.test(section[first])) first--;
+  const preview = footer.includes('n to add notes');
+  const first = firstQuestionOption(section, divider, preview);
   if (first<2 || section[first-1]!=='') return;
   const question = questionText(trimBlank(section.slice(0,first-1)), width);
   if (!question.trim()) return;
   const rows = trimBlank(section.slice(first,divider));
-  const data = footer.includes('n to add notes') ? previewRows(rows,chat,footer) : standardRows(rows,chat,tabs.some(t=>t.answered),width);
+  const activeTab = tabs.length === 1 ? 0 : activeQuestionTab(raw[offset + start + 1], tabs.length);
+  if (activeTab === tabs.length) return;
+  const hasAnswer = activeTab === undefined ? tabs.some(t=>t.answered) : tabs[activeTab].answered;
+  const data = preview ? previewRows(rows,chat,footer,hasAnswer) : standardRows(rows,chat,hasAnswer,width);
   if (!data || data.options.filter(o=>o.focused).length!==1 || hasReview!==(tabs.length>1 || data.multiSelect)) return;
-  return {kind:'question',tabs,...(tabs.length===1?{activeTab:0}:{}),question,...data,footer};
+  return {kind:'question',tabs,...(activeTab!==undefined?{activeTab}:{}),question,...data,footer};
+}
+
+export const insideQuestionFence = (before: string[]) => before.filter(line=>/^\s*(?:[●⏺]\s+)?```/u.test(line)).length % 2 !== 0;
+
+export function firstQuestionOption(lines: string[], divider: number, preview: boolean) {
+  // Search from the footer. A question's own numbered rows or box sit above the options.
+  const pattern = preview ? /^(?:❯ | {2})(?:1\. | {2}\S).* +┌─+┐$/u : /^(?:❯ | {2})1\. /u;
+  let first = divider - 1;
+  while (first >= 0 && !pattern.test(lines[first])) first--;
+  return first;
+}
+
+export function questionLines(viewport: string) {
+  const lines = trimBlank(stripTerminalEscapes(viewport).replace(/\u00a0/g, ' ').split('\n').map(line=>line.trimEnd()));
+  return lines.length && namedRule.test(lines.at(-1)!) ? trimBlank(lines.slice(0, -1)) : lines;
 }

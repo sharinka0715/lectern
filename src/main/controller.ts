@@ -686,8 +686,9 @@ export class Controller extends EventEmitter {
       }
       const rewind = result.active && memory?.pickerOpen ? readRewind(result.viewport ?? '') : undefined;
       const editor = result.active ? turnComposer(result.viewport ?? '') : undefined;
-      const questionScreen = result.active && result.viewport && !result.directoryTrust && !result.hasMore
-        ? parseQuestionScreen(result.viewport) : undefined;
+      const questionViewport = result.questionViewport ?? result.viewport;
+      const questionScreen = result.active && questionViewport && !result.directoryTrust && !result.hasMore
+        ? parseQuestionScreen(questionViewport) : undefined;
       const applyScreen = !questionScreen && !rewind && !result.hasMore && !settingsOverlap && result.nativeStatus !== 'waiting';
       // The preview reads the coloured capture (reply-rows.ts); diagnostics keep it for replay.
       const previewScreen = result.styledScreen ?? result.screen;
@@ -806,10 +807,10 @@ export class Controller extends EventEmitter {
         // input, the user's state from the screen, its top possibly out of the pane), and names its call.
         const hooked = hookQuestionCall(result.dialogHooks, messages);
         const hookScreen = hooked && (asking || owner === hooked.toolUseId && (!result.nativeStatus || waiting)) && result.active
-          && !result.directoryTrust && !result.hasMore && result.viewport ? readHookQuestion(result.viewport, hooked.asked) : undefined;
+          && !result.directoryTrust && !result.hasMore && questionViewport ? readHookQuestion(questionViewport, hooked.asked) : undefined;
         if (hookScreen) owner = hooked!.toolUseId;
-        const screen = hookScreen ?? (questionScreen || ((owner && waiting || asking) && result.active && !result.directoryTrust && !result.hasMore && result.viewport
-          ? parseQuestionScreen(result.viewport, {pendingToolUse:true}) : undefined));
+        const screen = hookScreen ?? (questionScreen || ((owner && waiting || asking) && result.active && !result.directoryTrust && !result.hasMore && questionViewport
+          ? parseQuestionScreen(questionViewport, {pendingToolUse:true}) : undefined));
         // Claude Code writes a deferred call together with its result: a newly answered question
         // means the card shown so far was answered; its frames still on screen are late (ownQuestion).
         const answered = answeredQuestionId(messages), newlyAnswered = answered !== undefined && answered !== watch.questionAnswered;

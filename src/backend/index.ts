@@ -98,7 +98,7 @@ export interface ReadResult { /** Asked for with `listSubagents`: every subagent
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
   sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean };
   /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
-  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; styledScreen?: string; viewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
+  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; styledScreen?: string; viewport?: string; questionViewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
@@ -1210,12 +1210,15 @@ ${script}`;
     // styledScreen: the same scrollback with colours and attributes (capture-pane -e), which tell
     // Claude's reply apart from the rows around it (core/reply-rows.ts); screen is it without escapes.
     let screen = '', styledScreen: string | undefined, viewport = '', viewportError: string | undefined, capturedAt: number | undefined;
+    let questionViewport: string | undefined;
     let terminalFrame: TerminalFrame | undefined;
     let nativeTasks: ConversationTask[] | undefined;
     const identity = pane && JSON.stringify([key, pane.nativeTarget, pane.cwd, pane.pid, pane.claudePid, pane.native?.procStart, pane.native?.registrationId, pane.serverInstance,
       pane.native?.status, pane.native?.waitingFor, pane.width, pane.height, pane.cursorX, pane.cursorY]);
     const cached = identity && this.screenCache?.identity === identity ? this.screenCache : undefined;
-    const stable = pane?.native?.status && ['idle', 'shell', 'waiting'].includes(pane.native.status);
+    // The active question tab can change its highlight without changing the viewport text.
+    const stable = pane?.native?.status && ['idle', 'shell', 'waiting'].includes(pane.native.status)
+      && !cached?.viewport.includes('✔ Submit  →');
     if (cached && stable && !this.sending.size && !forceViewport && !terminalVisible && !reset && !jsonl.length && Date.now() - cached.capturedAt < 2500) {
       screen = cached.screen; styledScreen = cached.styledScreen; viewport = cached.viewport; capturedAt = cached.capturedAt; nativeTasks = cached.nativeTasks;
     } else if (pane && identity && !pane.identityError) {
@@ -1235,7 +1238,7 @@ ${onlyVisible ? `{ ${capture('-e')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | h
  { ${capture('-e', '-S', '-2000')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c ${STYLED_LIMIT + 128} | base64
 fi`}
 printf '\\0'
-${terminalVisible ? `{ ${this.tmux('capture-pane', '-p', '-e', '-t', pane.id, ';', 'display-message', '-p', '-t', pane.id, '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 262272 | base64` : ''}
+${terminalVisible ? `{ ${this.tmux('capture-pane', '-p', '-e', '-t', pane.id, ';', 'display-message', '-p', '-t', pane.id, '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 262272 | base64` : `case "$lectern_visible" in (*'✔ Submit  →'*) { ${capture('-e')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 65700 | base64 ;; esac`}
 printf '\\0'
 ${taskListFrame(location.claudeDir, sessionId)}
 printf '\\0'
@@ -1243,7 +1246,7 @@ ${hookDir ? readDialogHooks(hookDir, this.dialogHooks.wantsStarted(key)) : ''}
 printf '\\0'
 ${after}`;
       const captured = await this.transport.run(workspace, captureScript, { tag: 'tmux.session_capture', maxBytes: (terminalVisible ? 6 : 5) * 1024 * 1024 + (hookDir ? 2 * 1024 * 1024 : 0) });
-      const [visibleFrame, checksum, historyFrame, physicalFrame, taskFrame, hookFrame, ...postCapture] = captured.stdout.toString('utf8').split('\0');
+      const [visibleFrame, checksum, historyFrame, styledFrame, taskFrame, hookFrame, ...postCapture] = captured.stdout.toString('utf8').split('\0');
       if (hookDir && hookFrame !== undefined) this.dialogHooks.ingest(key, hookDir, hookFrame, sessionId);
       if (pane.claudePid) {
         const observed = decodePresence(postCapture);
@@ -1264,8 +1267,8 @@ ${after}`;
       };
       // Keep escape sequences and physical wraps out of the chat/status parsers.
       // One tmux command list samples the rows and cursor for this pane together.
-      if (physicalFrame) {
-        const physical = decode(physicalFrame, 262144).screen;
+      if (styledFrame && terminalVisible) {
+        const physical = decode(styledFrame, 262144).screen;
         const dims = physical?.match(/\n(\d+) (\d+) (\d+) (\d+) ([01])\n$/);
         if (physical && dims && dims.index !== undefined) {
           const [, cols, rows, x, y, visible] = dims.map(Number);
@@ -1275,6 +1278,11 @@ ${after}`;
       }
       const visible = decode(visibleFrame, 16384);
       viewport = visible.screen ?? ''; viewportError = visible.error;
+      if (styledFrame && !terminalVisible) {
+        // A redraw between the two reads must not contribute an unrelated highlight.
+        const styled = decode(styledFrame, 65536).screen;
+        if (styled && stripTerminalEscapes(styled) === viewport) questionViewport = styled;
+      }
       if (onlyVisible) { screen = viewport; styledScreen = decode(historyFrame, STYLED_LIMIT).screen; }
       else if (!historyFrame && previous && previous.checksum === checksum) { screen = previous.screen; styledScreen = previous.styledScreen; }
       else {
@@ -1316,7 +1324,7 @@ ${after}`;
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
     const dialogHooks = hookDir ? this.dialogHooks.observe(key) : undefined;
-    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, questionViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {
@@ -1541,7 +1549,7 @@ ${after}`;
         if (cursor?.inode !== position.inode || cursor.offset !== position.offset) throw new TranscriptChangedNoKeys();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
-      const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent });
+      const driver = this.settingDriver(workspace, sessionId, { expected, historyGuard, assertCurrent, questionTabs: screen.tabs.length > 1 });
       return performQuestionAction(driver, paneId, panePid, screen, action, assertCurrent, asked);
     });
   }
@@ -1561,7 +1569,7 @@ ${after}`;
       return performPermissionAction(driver, paneId, panePid, screen, action, assertCurrent, call);
     });
   }
-  private settingDriver(workspace: Workspace, sessionId: string, options: { expected?: SettingRuntime; historyGuard?: string; assertCurrent?: () => void; onSwitchDispatch?: () => void } = {}): SettingDriver & TurnDriver & QuestionDriver {
+  private settingDriver(workspace: Workspace, sessionId: string, options: { expected?: SettingRuntime; historyGuard?: string; assertCurrent?: () => void; onSwitchDispatch?: () => void; questionTabs?: boolean } = {}): SettingDriver & TurnDriver & QuestionDriver {
     const { expected } = options;
     const resolve = async () => {
       const session = await this.getSession(workspace, sessionId);
@@ -1581,8 +1589,8 @@ ${after}`;
     let kind: SessionSettingKind = 'model';
     let last: { pane: InternalPane; viewport: string; location: Location } | undefined;
     let pending: Awaited<ReturnType<SettingDriver['inspect']>> | undefined;
-    // 问答的焦点、勾选与编辑器状态均有文本标记。终端主题动画会单独改变 ANSI 颜色。
-    const capture = (id: string) => this.tmux('capture-pane', '-p', '-J', ...(options.assertCurrent ? [] : ['-e']), '-t', id);
+    // The highlight is part of the guarded frame when it identifies a question tab.
+    const capture = (id: string) => this.tmux('capture-pane', '-p', '-J', ...(!options.assertCurrent || options.questionTabs ? ['-e'] : []), '-t', id);
 
     // Capture only the expected pane and resolve the complete foreground/UUID
     // mapping in the same round trip. A changed or ambiguous binding discards
