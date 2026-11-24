@@ -102,6 +102,9 @@ export interface ReadResult { /** Asked for with `listSubagents`: every subagent
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
+export class WorkspaceChangedError extends Error {
+  constructor() { super('Workspace changed while scanning; refresh to use the current session bindings'); }
+}
 /** The session has no transcript and no live pane: Claude exited before writing
  * anything (a refused trust prompt, a crash), so no pane is bound any more. */
 export class SessionGoneError extends Error {
@@ -220,7 +223,7 @@ export class Backend {
   private configRevision(workspaceId: string): number { return this.workspaceConfigRevisions.get(workspaceId) ?? 0; }
   private touchWorkspace(workspaceId: string): void { this.workspaceRevisions.set(workspaceId, this.revision(workspaceId) + 1); }
   private assertCurrentWorkspace(workspace: Workspace, revision: number): void {
-    if (this.revision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== JSON.stringify(workspace)) throw new Error('Workspace changed while scanning; refresh to use the current session bindings');
+    if (this.revision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== JSON.stringify(workspace)) throw new WorkspaceChangedError();
   }
   private assertCurrentWorkspaceConfiguration(workspace: Workspace, revision: number): void {
     if (this.configRevision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== JSON.stringify(workspace)) throw new DirectoryTrustError(t('backend.workspaceConfigChanged'));
@@ -482,14 +485,39 @@ exit 0`;
     const nextOffset = directories.length > DIRECTORY_PAGE_SIZE ? offset + DIRECTORY_PAGE_SIZE : undefined;
     return { path: resolvedPath, directories: directories.slice(0, DIRECTORY_PAGE_SIZE), ...(nextOffset !== undefined ? { nextOffset } : {}) };
   }
+  async createWorkspaceDirectory(target: WorkspaceEndpoint, parentPath: string, name: string): Promise<string> {
+    if (!target || typeof target !== 'object') throw new Error('Invalid workspace endpoint');
+    if (typeof parentPath !== 'string' || !parentPath.startsWith('/')) throw new Error(t('backend.invalidFolderParent'));
+    if (typeof name !== 'string' || !name.trim() || name === '.' || name === '..' || /[/\x00-\x1f\x7f]/.test(name)
+        || name.includes(SEP) || Buffer.byteLength(name) > 255) throw new Error(t('backend.invalidFolderName'));
+    const { kind, host, port } = target;
+    const workspace = validateWorkspace({ id: 'directory-browser', name: 'Directory browser', cwd: parentPath, kind, host, port });
+    const path = `${workspace.cwd.replace(/\/+$/, '')}/${name}`;
+    validateWorkspace({ ...workspace, cwd: path });
+    // Use a single mkdir in the chosen parent. Existing entries are never replaced.
+    const child = q(`./${name}`);
+    const script = `cd -L ${q(workspace.cwd)} || exit 1
+if message=$(mkdir ${child} 2>&1); then exit 0; fi
+if [ -e ${child} ] || [ -L ${child} ]; then
+  message=${q(t('backend.folderNameExists'))}
+fi
+printf '%s\\n' "$message" >&2
+exit 1`;
+    await this.transport.run(workspace, script, { tag: 'workspace.create_directory' });
+    return path;
+  }
   async discoverHistoryProjects(target: HistoryTarget): Promise<HistoryScan> {
     return diagnostic.operation('backend.history_projects', { targetKind: target?.kind }, () => scanHistoryProjects(target, this.transport));
   }
   async discover(workspace: Workspace, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery> {
     const outcome = (patch: { okAt?: number; failedAt?: number; error?: string }) =>
       this.discoveries.set(workspace.id, { ...this.discoveries.get(workspace.id), ...patch });
-    return this.discoverNow(workspace, baselines).then(result => { outcome({ okAt: Date.now() }); return result; },
-      error => { outcome({ failedAt: Date.now(), error: String(error instanceof Error ? error.message : error).split('\n')[0].slice(0, 300) }); throw error; });
+    return this.discoverNow(workspace, baselines).then(result => { outcome({ okAt: Date.now() }); return result; }, error => {
+      if (!(error instanceof WorkspaceChangedError)) {
+        outcome({ failedAt: Date.now(), error: String(error instanceof Error ? error.message : error).split('\n')[0].slice(0, 300) });
+      }
+      throw error;
+    });
   }
   private async discoverNow(workspace: Workspace, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery> {
     return diagnostic.operation('backend.discover', { workspaceId: workspace.id }, async () => {

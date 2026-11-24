@@ -571,6 +571,7 @@ export interface DesktopAPI {
   /** Start scanning a folder's saved conversations (see Workspace.historyScan). */
   enableHistoryScan(id: string): Promise<Workspace>;
   listWorkspaceDirectories(target: WorkspaceEndpoint, path: string, offset?: number): Promise<WorkspaceDirectoryPage>;
+  createWorkspaceDirectory(target: WorkspaceEndpoint, parentPath: string, name: string): Promise<string>;
   /** `/effort ultracode on|off` in this session only; resolves to the verified state. */
   setUltracode(workspaceId: string, sessionId: string, on: boolean): Promise<boolean>;
   /** Options for Claude processes Lectern starts later (dynamic workflows for Ultracode,
@@ -615,7 +616,8 @@ export interface DesktopAPI {
   listArtifactDirectory(workspaceId: string, path?: string, offset?: number): Promise<ArtifactDirectory>;
   previewArtifact(workspaceId: string, path: string): Promise<ArtifactPreview>;
   downloadArtifact(workspaceId: string, path: string): Promise<boolean>;
-  discover(workspaceId: string, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery>;
+  /** Undefined means the scan was superseded by a change to this folder or its bindings. */
+  discover(workspaceId: string, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery | undefined>;
   /** A new conversation. Model and effort apply to this session only; validateMessage is checked, never sent. */
   createSession(workspaceId: string, options?: { model?: string; effort?: string; validateMessage?: string }): Promise<SessionInfo>;
   /** The models and effort levels Claude Code offers on this folder's machine (read once per run). */

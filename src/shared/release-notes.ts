@@ -49,6 +49,8 @@ export const releaseNotes: ReleaseNote[] = [
         'An optional Session setting, off by default, reads questions and permission prompts from Claude Code hooks, so even a dialog taller than the terminal gets a card.'],
       ['回复流式输出时，接在已有段落后面的新文字逐段柔和淡入；已经显示过的文字不再闪动，实时预览换成会话记录、Markdown 重新排版时也不会。',
         "New text streaming into a reply's paragraphs fades in softly; text already shown never fades again, even when the live preview becomes the saved reply."],
+      ['添加项目时，可在目录选择器里直接新建本机或 SSH 文件夹，并选为工作目录。',
+        'When adding a project, create a folder on your computer or an SSH host directly from the picker and use it as the working directory.'],
     ],
     fixes: [
       ['调整界面字号时，行高、上下留白和各行的高度随之等比缩放，侧栏等处不再出现多余的空隙。',
@@ -59,6 +61,8 @@ export const releaseNotes: ReleaseNote[] = [
         "With background agents or commands running, the live preview no longer shows terminal status rows (waiting for agents, subagent messages, folded or running commands, notices) as reply text."],
       ['Monitor 按时限到期后，后台任务栏显示它已完成，运行计数随之更新。',
         'When a Monitor reaches its time limit, the task column marks it as completed and the running count updates.'],
+      ['续接会话等操作使项目扫描结果过期时，会话列表会自动重试，避免误报连接错误。',
+        'The conversation list retries automatically when an action such as resuming a chat supersedes a folder scan, avoiding a misleading connection error.'],
     ],
   },
   {
