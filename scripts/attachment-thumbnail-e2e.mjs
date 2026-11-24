@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { _electron as electron } from 'playwright';
+import { _electron as electron } from './fixtures/electron.mjs';
 
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-attachment-thumbs-'));
 const logs = path.join(profile, 'logs'), uploads = path.join(profile, 'uploads');

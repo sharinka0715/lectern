@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { answerAutoModeCheck, isAutoModeCheck, LOCAL_AUTO_MODE_CHECK } from './fixtures/auto-mode-check.mjs';
 
 const textOf = content => typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => part.text ?? (typeof part.content === 'string' ? part.content : JSON.stringify(part.content ?? ''))).join('\n') : '';

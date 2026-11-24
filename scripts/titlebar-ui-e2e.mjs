@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), 'lectern-titlebar-')));
 const profile = path.join(root, 'profile');

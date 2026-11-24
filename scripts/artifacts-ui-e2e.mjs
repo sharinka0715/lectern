@@ -3,7 +3,7 @@ import { appendFile, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { _electron as electron } from 'playwright';
+import { _electron as electron } from './fixtures/electron.mjs';
 import { spawnSync } from 'node:child_process';
 import { ZipFile } from 'yazl';
 

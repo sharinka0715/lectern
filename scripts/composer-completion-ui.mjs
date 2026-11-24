@@ -1,7 +1,7 @@
 // Standalone renderer regression, no app build, real CLI, SSH, user profile or network.
 // Run: node scripts/composer-completion-ui.mjs
 import { build } from 'esbuild';
-import { _electron as electron } from 'playwright';
+import { _electron as electron } from './fixtures/electron.mjs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';

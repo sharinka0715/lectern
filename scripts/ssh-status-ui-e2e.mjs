@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-status-'));
 const results = path.resolve('test-results');

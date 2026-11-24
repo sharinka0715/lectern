@@ -6,7 +6,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { createQuestionProbe } from './native-question-probe.mjs';
 
 const fixture = await createQuestionProbe();

@@ -11,7 +11,7 @@ import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { _electron } from "playwright";
+import { _electron } from "./fixtures/electron.mjs";
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "tat-")));
 const output = path.resolve("test-results", "attachment-ui-" + Date.now());

@@ -1,7 +1,7 @@
 // node scripts/ssh-config-import-e2e.mjs [packaged-executable]
 // Import Host aliases from a fixture ~/.ssh/config. No SSH connection is made.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

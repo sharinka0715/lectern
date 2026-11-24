@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { nativeBranchFixture } from '../tests/helpers/native-branch-fixture.ts';
 
 const {root, cwd, ws, env: fixture, originalId, ids} = await nativeBranchFixture(36);

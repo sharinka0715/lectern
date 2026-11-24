@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 
 // tmux only ever runs against the private server directory test-all (or the caller) set up.

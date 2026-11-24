@@ -18,6 +18,14 @@ export function installSilentWindows(): void {
   // An occluded or transparent window must still count as visible to the page.
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  // Linux test machines (Xvfb, CI) have no GPU: Chromium first starts a GPU process that
+  // probes OpenGL (Mesa's software llvmpipe), finds it blocklisted and exits, and only then
+  // a second one that composites in software. A screenshot asked for before that exit fails
+  // with "Unable to capture screenshot" (the capture goes down with the first process). The
+  // probe is slow on the first launch on a fresh runner, which is when CI's first screenshot
+  // failed. Without hardware acceleration the GPU process composites in software from the
+  // start, the same pixels as after the fallback, so there is no exit to collide with.
+  if (process.platform === 'linux') app.disableHardwareAcceleration();
   let focused: BrowserWindow | null = null;
   const release = (win: BrowserWindow) => { if (focused === win) focused = null; };
   const quiet = (win: BrowserWindow) => {

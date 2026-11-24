@@ -1,7 +1,7 @@
 // Renderer-only SSH contract test. All history/discovery/session IPC uses local
 // synthetic records. No SSH process, remote input, or model request is allowed.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

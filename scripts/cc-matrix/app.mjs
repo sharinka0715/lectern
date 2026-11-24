@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from '../fixtures/electron.mjs';
 import { SESSION_PREFIX } from './sandbox.mjs';
 
 // Elements fading out stay a moment with data-leaving (inert, hidden from roles): never count or click them.

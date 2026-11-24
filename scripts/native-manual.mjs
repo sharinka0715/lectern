@@ -2,7 +2,7 @@
 // Initially uses one Sonnet request for AskUserQuestion. Further explicit
 // operator text + Enter may send additional requests, counted from final JSONL.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

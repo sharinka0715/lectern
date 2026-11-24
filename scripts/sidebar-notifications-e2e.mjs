@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron as electron } from 'playwright';
+import { _electron as electron } from './fixtures/electron.mjs';
 import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 
 // Isolated demo, real tmux and JSONL. No normal user profile, SSH or model requests.

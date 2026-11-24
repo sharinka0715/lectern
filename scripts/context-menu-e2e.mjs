@@ -1,7 +1,7 @@
 // node scripts/context-menu-e2e.mjs [packaged-executable]
 // Right-click menus in the demo workspace (mock Claude, private tmux). No model request.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';

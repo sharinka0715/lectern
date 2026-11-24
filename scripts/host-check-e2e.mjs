@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 
 const root = await realpath(await mkdtemp('/tmp/lectern-host-check-'));
 const results = path.resolve('test-results');

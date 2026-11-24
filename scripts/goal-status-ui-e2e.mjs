@@ -8,7 +8,7 @@ import { appendFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-goal-ui-'));
 const results = path.resolve('test-results', 'goal-status');

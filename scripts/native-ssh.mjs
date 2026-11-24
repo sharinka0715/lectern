@@ -1,7 +1,7 @@
 // Opt-in real SSH/TUI integration. Installs nothing; only test-owned tmux panes
 // receive input. Model requests are restricted to observed Haiku/Sonnet choices.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

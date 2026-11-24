@@ -1,7 +1,7 @@
 // Explicit opt-in native GUI test. Home trust is observed and rejected only.
 // Only this script's newly created empty temporary workspace is trusted.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

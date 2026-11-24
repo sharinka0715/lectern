@@ -4,7 +4,7 @@ import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { _electron as electron } from 'playwright';
+import { _electron as electron } from './fixtures/electron.mjs';
 import { spawnSync } from 'node:child_process';
 
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-thumbnails-'));

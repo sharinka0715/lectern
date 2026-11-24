@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { Backend, projectSlug } from '../src/backend/index.ts';
 
 const exec = promisify(execFile);

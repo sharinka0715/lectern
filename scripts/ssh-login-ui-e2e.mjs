@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron as electron } from 'playwright';
+import { _electron as electron } from './fixtures/electron.mjs';
 import { packagedExecutable } from './package-executable.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-login-ui-'));

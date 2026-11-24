@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, readdir } from 'node
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 
 const exec = promisify(execFile);
 const root = await realpath(await mkdtemp('/tmp/lectern-line-'));

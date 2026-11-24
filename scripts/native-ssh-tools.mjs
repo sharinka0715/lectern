@@ -1,7 +1,7 @@
 // Real, opt-in Claude Code tools test. The model creates/edits all source files;
 // this harness only creates its empty workspace, drives the GUI and reads evidence.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

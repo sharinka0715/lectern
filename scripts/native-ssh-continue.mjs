@@ -1,7 +1,7 @@
 // Opt-in continuation of a test-owned SSH conversation. Inherits one or two
 // completed requests, installs nothing, and never selects Opus/Default.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

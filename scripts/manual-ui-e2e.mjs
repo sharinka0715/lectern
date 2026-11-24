@@ -1,6 +1,6 @@
 // Isolated Electron + real tmux fixture. No native Claude model request.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 

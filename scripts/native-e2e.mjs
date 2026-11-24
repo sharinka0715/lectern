@@ -1,7 +1,7 @@
 // Explicit opt-in integration test: launches the installed, logged-in Claude TUI
 // and sends one small everyday conversation. Never part of `npm test`.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

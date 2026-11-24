@@ -1,7 +1,7 @@
 // Renderer-only contract test. Synthetic snapshots/IPC never accept a real
 // directory prompt; native trust transactions have separate integration tests.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';

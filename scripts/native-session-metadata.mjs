@@ -1,6 +1,6 @@
 // Opt-in real SSH test. Uses one request in an existing test-owned Sonnet/Haiku session.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

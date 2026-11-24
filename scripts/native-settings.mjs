@@ -1,7 +1,7 @@
 // Explicit opt-in: operates the installed Claude Code TUI and sends one everyday dialogue.
 // All choices come from the actual slash menus. Never reads auth/config credentials.
 import assert from 'node:assert/strict';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';

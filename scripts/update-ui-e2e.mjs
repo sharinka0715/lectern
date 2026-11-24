@@ -10,7 +10,7 @@ import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { _electron } from 'playwright';
+import { _electron } from './fixtures/electron.mjs';
 
 const manifest = JSON.parse(await readFile('package.json', 'utf8'));
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-update-e2e-'));
