@@ -42,10 +42,12 @@ export class ArtifactAccess {
       grants.set(approved, kind);
       windowGrants.set(identity, grants);
     };
-    return { workspace, authorize, remember, check };
+    return { workspace, identity, authorize, remember, check };
   }
-  async resolve(id: string, references: ArtifactReference[]) {
+  async resolve(id: string, references: ArtifactReference[], identity?: string) {
     const request = this.context(id);
+    // Another pane may still show the old workspace while its inventory refreshes.
+    if (identity !== undefined && request.identity !== identity) throw new Error(t('main.workspaceOrWindowChanged'));
     const matches = await this.artifacts.resolveReferences(request.workspace, references);
     request.check();
     return matches;

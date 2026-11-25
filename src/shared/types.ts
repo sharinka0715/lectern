@@ -52,8 +52,10 @@ export interface ArtifactEntry {
   kind: 'file' | 'directory';
 }
 export interface ArtifactDirectory { path: string; entries: ArtifactEntry[]; truncated: boolean; nextOffset?: number }
-/** No existence check is made for paths outside the workspace until the user opens them. */
+/** 'outside' marks a privacy-sensitive path deferred until the user opens it. */
 export type ArtifactResolution = { path: string } | 'outside' | 'missing' | null;
+/** An incomplete search cannot establish whether a previously found target is still unique. */
+export type ArtifactReferenceResult = ArtifactResolution | undefined;
 /** A path as written, or with the directory Claude Code was in when it wrote it (the record's
  * `cwd`, absolute): a relative path is looked for there first. */
 export type ArtifactReference = string | { path: string; cwd: string };
@@ -621,7 +623,7 @@ export interface DesktopAPI {
   /** Embedded images are encoded on this computer; images attached by path, on the machine they are on. */
   previewMessageAttachmentThumbnail(workspaceId: string, sessionId: string, id: string): Promise<ArtifactPreview>;
   downloadMessageAttachment(workspaceId: string, sessionId: string, id: string): Promise<boolean>;
-  resolveArtifactReferences(workspaceId: string, references: ArtifactReference[]): Promise<ArtifactResolution[]>;
+  resolveArtifactReferences(workspaceId: string, references: ArtifactReference[], workspaceIdentity?: string): Promise<ArtifactReferenceResult[]>;
   listArtifactDirectory(workspaceId: string, path?: string, offset?: number): Promise<ArtifactDirectory>;
   previewArtifact(workspaceId: string, path: string): Promise<ArtifactPreview>;
   downloadArtifact(workspaceId: string, path: string): Promise<boolean>;

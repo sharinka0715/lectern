@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { _electron as electron, resizeWindow } from './fixtures/electron.mjs';
+import { refreshFolderUntil } from './fixtures/sidebar-refresh.mjs';
 import { spawnSync } from 'node:child_process';
 import { ZipFile } from 'yazl';
 
@@ -267,6 +268,60 @@ async function verifyWrappedFileLinks(app, page, row, appendRows, cwd) {
   assert.equal(copied.split(file).length - 1, 2, 'Copying plain text preserves both paths verbatim');
   assert.ok(!copied.includes('`'), 'Plain text excludes Markdown markers');
   await resizeWindow(app, page, width, height);
+}
+
+async function verifyCachedLinks(app, page, workspace, project) {
+  const file = 'cached-example.md', marker = '缓存链接示例';
+  const [first, second] = [randomUUID(), randomUUID()];
+  for (const [sessionId, reply] of [[first, marker + '：`' + file + '`'], [second, '另一个对话的正文']]) {
+    const timestamp = new Date().toISOString(), prompt = randomUUID(), answer = randomUUID();
+    const records = [
+      { type: 'user', uuid: prompt, parentUuid: null, sessionId, cwd: workspace.cwd, timestamp, message: { role: 'user', content: '离线测试提问' } },
+      { type: 'assistant', uuid: answer, parentUuid: prompt, sessionId, cwd: workspace.cwd, timestamp,
+        message: { id: answer, role: 'assistant', content: [{ type: 'text', text: reply }], stop_reason: 'end_turn' } },
+    ];
+    await writeFile(path.join(project, sessionId + '.jsonl'), records.map(record => JSON.stringify(record)).join('\n') + '\n');
+  }
+  const row = id => page.locator(`.session-row[data-session-id="${id}"]`);
+  await refreshFolderUntil(page, workspace.id, row(first));
+  await row(second).waitFor();
+  await app.evaluate(({ ipcMain }, file) => {
+    globalThis.artifactResolutionCalls = [];
+    ipcMain.removeHandler('lectern:resolveArtifactReferences');
+    ipcMain.handle('lectern:resolveArtifactReferences', async (_event, _id, references) => {
+      globalThis.artifactResolutionCalls.push(references);
+      return references.map(ref => (typeof ref === 'string' ? ref : ref.path) === file ? { path: file } : null);
+    });
+  }, file);
+  const calls = () => app.evaluate(() => globalThis.artifactResolutionCalls);
+  const link = page.locator(`.message-assistant:not([data-leaving]) [data-file-path="${file}"]`);
+  await row(first).click();
+  await link.waitFor();
+  const originalCalls = await calls();
+  assert.deepEqual(originalCalls.flat().filter(ref => ref.path === file), [{ path: file, cwd: workspace.cwd }]);
+  await row(second).click();
+  await page.getByText('另一个对话的正文', { exact: true }).waitFor();
+  assert.equal(await link.count(), 0);
+  await page.evaluate(({ marker, file }) => {
+    const frames = [];
+    const observer = new MutationObserver(() => {
+      const message = [...document.querySelectorAll('.message-assistant:not([data-leaving])')].find(node => node.textContent.includes(marker));
+      if (!message) return;
+      frames.push({
+        linked: !!message.querySelector(`[data-file-path="${file}"]`),
+        faded: message.matches('[data-fade="in"]') || !!message.querySelector('[data-fade="in"], [data-text-fade]'),
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-fade', 'data-text-fade'] });
+    window.readCachedLinkFrames = () => { observer.disconnect(); return frames; };
+  }, { marker, file });
+  await row(first).click();
+  await link.waitFor();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const frames = await page.evaluate(() => window.readCachedLinkFrames());
+  assert.ok(frames.length > 0, 'Observed the returning transcript');
+  assert.ok(frames.every(frame => frame.linked && !frame.faded), 'The returning link is present in the first commit and never fades in');
+  assert.deepEqual(await calls(), originalCalls, 'Returning to the conversation did not look up its links again');
 }
 
 let app;
@@ -590,9 +645,10 @@ try {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await drawer.count(), 0);
   await verifyToolGroups(page, row, appendRows);
+  await verifyCachedLinks(app, page, workspace, path.dirname(session.path));
   assert.deepEqual(remoteRequests, [], 'Transcript and Markdown links never fetch external resources');
   assert.deepEqual(browserErrors, []);
-  console.log('PASS: offline Electron replies resolved from their records\' working directories, mixed tool and peer groups, delivery order, recorded line counts, collapsed Edit diffs, delayed results, persisted reply detail and reset, file links, Markdown navigation, directory pagination, GIF, PDF pixels, embedded attachment and binary save.');
+  console.log('PASS: offline Electron replies resolved from their records\' working directories, cached file links, mixed tool and peer groups, delivery order, recorded line counts, collapsed Edit diffs, delayed results, persisted reply detail and reset, Markdown navigation, directory pagination, GIF, PDF pixels, embedded attachment and binary save.');
 } finally {
   await app?.close();
   await rm(profile, { recursive: true, force: true });

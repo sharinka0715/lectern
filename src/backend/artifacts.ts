@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { open, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { finished } from 'node:stream/promises';
-import type { ArtifactDirectory, ArtifactEntry, ArtifactPreview, ArtifactReference, ArtifactResolution, Workspace } from '../shared/types';
+import type { ArtifactDirectory, ArtifactEntry, ArtifactPreview, ArtifactReference, ArtifactReferenceResult, ArtifactResolution, Workspace } from '../shared/types';
 import { quoteShell as q, Transport, validateWorkspace } from './transport';
 import { extractOfficeText } from './office-preview';
 import { THUMB_BYTES, THUMB_INPUT_BYTES, ThumbnailCache, thumbnailPreview, thumbnailShell } from './image-thumbnail';
@@ -301,7 +301,7 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
   /** A relative reference with a `cwd` (the directory Claude Code was in when it wrote it) is first
    * checked there, never searched for there. Not found there, the folder's own rules below apply when
    * that directory is in the folder and the path does not climb out of it (`../`). */
-  async resolveReferences(workspace: Workspace, references: ArtifactReference[]): Promise<ArtifactResolution[]> {
+  async resolveReferences(workspace: Workspace, references: ArtifactReference[]): Promise<ArtifactReferenceResult[]> {
     const valid = (ref: ArtifactReference) => typeof ref === 'string' || typeof ref === 'object' && ref !== null && typeof ref.path === 'string' && typeof ref.cwd === 'string';
     if (!Array.isArray(references) || references.length > 32 || !references.every(valid) ||
       references.reduce((n, ref) => n + (typeof ref === 'string' ? Buffer.byteLength(ref) : Buffer.byteLength(ref.path) + Buffer.byteLength(ref.cwd)), 0) > 16384) throw new Error(t('artifacts.batchTooLarge'));
@@ -315,7 +315,7 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
     const locate = await this.locator(workspace, [...paths, ...anchored.flatMap(item => item ? [item.cwd, item.path] : [])]);
     const inFolder = (path: string) => { try { return !locate(path).external; } catch { return false; } };
     const matches: ArtifactResolution[] = references.map(() => null);
-    const direct = new Map<number, Target>(), external = new Map<number, Target>(), keys = new Set<string>(), suffixes = new Map<number, string>();
+    const direct = new Map<number, Target>(), external = new Map<number, Target>(), searchKeys = new Map<number, string>();
     const exact = new Map<number, ReturnType<typeof locate>>(), exactFound = new Set<number>();
     let root: Target | undefined;
     try { root = locate('.'); } catch { /* Still allow exact paths to permitted Markdown trees. */ }
@@ -336,14 +336,15 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
         else external.set(i, target);
         continue;
       }
-      if (root && !root.documents && ref !== '.' && !ref.includes('/') && ref !== '~') { keys.add(ref); continue; }
+      if (root && !root.documents && ref !== '.' && !ref.includes('/') && ref !== '~') { searchKeys.set(i, ref); continue; }
       direct.set(i, target);
       // A relative path written from a subfolder: found below the root when it is not at the root.
       const relative = ref.replace(/^\.\//, '');
       if (root && !root.documents && !target.documents && !/^[~/]/.test(ref) && relative.includes('/') && posix.normalize(relative) === relative) {
-        keys.add(relative); suffixes.set(i, relative);
+        searchKeys.set(i, relative);
       }
     }
+    const keys = new Set(searchKeys.values());
     if (!direct.size && !keys.size && !external.size && !exact.size) return matches;
     const base = root?.absolute ?? [...direct.values(), ...[...exact.values()].filter(target => !target.external)][0]?.base ?? '/';
     const searched = new Set(paths.flatMap(ref => ref.split('/')).filter(name => outputDirectories.has(name)));
@@ -372,8 +373,12 @@ ${aliases.map(alias => `if [ "$(uname -s)" = Darwin ] && [ -L /${alias} ] && [ "
     return matches.map((match, i) => {
       const hit = exactFound.has(i) && exact.get(i);
       if (hit) return { path: hit.path };
-      const ref = paths[i], key = suffixes.get(i) ?? ref, path = match ? undefined : found.get(key);
-      return path ? { path } : !match && complete && keys.has(ref) && !ref.includes('/') && !seen.has(ref) ? 'missing' : match;
+      // A shared batch can contain the same name from a cwd outside the workspace.
+      const key = searchKeys.get(i);
+      if (match || !key) return match;
+      if (!complete) return undefined;
+      const path = found.get(key);
+      return path ? { path } : !paths[i].includes('/') && !seen.has(key) ? 'missing' : null;
     });
   }
 

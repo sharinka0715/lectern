@@ -453,7 +453,7 @@ async function boot() {
     },
     previewInlineImage: (id, reference) => artifactAccess.previewInlineImage(id, reference),
     previewInlineImageThumbnail: (id, reference) => artifactAccess.previewInlineImageThumbnail(id, reference),
-    resolveArtifactReferences: (id, references) => artifactAccess.resolve(id, references),
+    resolveArtifactReferences: (id, references, identity) => artifactAccess.resolve(id, references, identity),
     listArtifactDirectory: (id, reference, offset) => artifactAccess.list(id, reference, offset),
     previewArtifact: (id, reference) => artifactAccess.preview(id, reference),
     downloadArtifact: (id, reference) => artifactAccess.download(id, reference),

@@ -38,6 +38,10 @@ export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.5',
     features: [],
+    changes: [
+      ['文件链接的识别结果在本次运行内保留，切回对话或切换分屏时不再重新识别，已识别的路径立即显示为链接。',
+        'File links stay recognized while Lectern runs: returning to a conversation or switching panes shows them as links at once, without looking them up again.'],
+    ],
     fixes: [
       ['回复中的代码样式文件链接折行时，每行都显示行内代码的底色和描边。',
         'Wrapped file links in replies now show the inline code background and border on every line.'],

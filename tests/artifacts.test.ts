@@ -125,6 +125,7 @@ test("a reply's relative paths are resolved from the directory Claude Code was i
   assert.deepEqual(await access.resolve(workspace.id, at(outside, 'data.csv', './data.csv', 'notes.md', 'unique.md', 'sub/notes.md')), [
     { path: join(outside, 'data.csv') }, { path: join(outside, 'data.csv') }, null, null, null,
   ]);
+  assert.deepEqual(await access.resolve(workspace.id, [...at(outside, 'unique.md'), 'unique.md']), [null, { path: 'other/unique.md' }]);
   // Protected places stay closed from any directory; a directory that is not absolute is ignored.
   assert.deepEqual(await access.resolve(workspace.id, [...at(config, 'private.ts'), ...at('sub', 'notes.md'), ...at(base, 'Project with spaces/notes.md')]),
     [null, null, { path: 'notes.md' }]);
@@ -155,9 +156,25 @@ test('reference searches use the selected transport and discard a changed worksp
   const old = access.resolve(ssh.id, ['index.ts']);
   selected = other;
   await assert.rejects(old, /变化/);
+  await assert.rejects(() => access.resolve(other.id, ['index.ts'], JSON.stringify(ssh)), /变化/);
   assert.deepEqual(await access.resolve(other.id, ['index.ts']), [{ path: 'other-source/index.ts' }]);
   assert.equal(calls.filter(call => call === 'ssh:artifact.resolve').length, 2);
   assert.equal(calls.filter(call => call === 'other:artifact.resolve').length, 1);
+});
+
+test('an incomplete search leaves only its unresolved candidates undecided', async () => {
+  const workspace: Workspace = { id: 'fixture', name: 'Fixture', kind: 'local', cwd: '/fixture/project' };
+  const locator = [workspace.cwd, workspace.cwd, '/fixture/home', '', '', '', '', ''].join('\0');
+  let probes = 'd0\n';
+  const artifacts = new WorkspaceArtifacts(new class extends Transport {
+    override async run(_workspace: Workspace, _script: string, options?: CommandOptions) {
+      return { stdout: Buffer.from(options?.tag === 'artifact.workspace' ? locator : probes), stderr: '' };
+    }
+  }());
+  const references = ['./found.md', '/fixture/outside.md', 'missing.md', 'nested/item.md'];
+  assert.deepEqual(await artifacts.resolveReferences(workspace, references), [{ path: 'found.md' }, null, undefined, undefined]);
+  probes += '!\n';
+  assert.deepEqual(await artifacts.resolveReferences(workspace, references), [{ path: 'found.md' }, null, 'missing', null]);
 });
 
 test('paged directory browsing reaches all children including a file named more', posix, async t => {
