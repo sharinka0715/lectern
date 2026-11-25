@@ -47,6 +47,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Opening Settings while a conversation updates no longer flashes the conversation underneath first.'],
       ['在同一个 Claude Code 进程里压缩（/compact 或自动压缩）之后，也能回退到压缩前的提问。',
         'After a compaction (/compact or automatic) in the same Claude Code process, you can still rewind to prompts from before it.'],
+      ['重试读取当前对话或修改项目显示名时，输入框上方的目标胶囊不再先消失再出现。',
+        'Retrying the current conversation or renaming its project no longer makes the goal capsule above the input box disappear and come back.'],
     ],
   },
   {
