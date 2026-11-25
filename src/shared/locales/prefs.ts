@@ -91,7 +91,7 @@ export const prefs = {
   loginThisMachine: ['登录这台机器', 'Sign in to this machine'],
   reuseSshConnections: ['复用已有的 SSH 连接', 'Reuse existing SSH connections'],
   sshKeepAfterQuit: ['退出后保留 SSH 连接', 'Keep SSH connections after quitting'],
-  sshKeepAfterQuitHelp: ['Lectern 自己建立的连接从最后一个 SSH 会话结束时开始计时，例如退出应用或停止使用这台机器时。时长只对新建连接生效。选择「退出时断开」后，退出时会关闭 Lectern 的所有连接。你的终端或编辑器建立的连接沿用 SSH 配置。', 'For connections Lectern opens itself, the timer starts when their last SSH session ends, for example when you quit the app or stop using the machine. A new duration applies to new connections. Choosing “Disconnect on quit” closes all connections Lectern owns when you quit. Connections from your terminal or editor follow your SSH configuration.'],
+  sshKeepAfterQuitHelp: ['Lectern 自己建立的连接从最后一个 SSH 会话结束时开始计时，例如退出应用或停止使用这台机器时。时长只对新建连接生效。选择「退出时断开」后，退出时会关闭 Lectern 的所有连接。你的终端或编辑器建立的连接沿用 SSH 配置。', 'For connections Lectern opens itself, the timer starts when their last SSH session ends, for example when you quit the app or stop using the machine. A new duration applies to new connections. Choosing "Disconnect on quit" closes all connections Lectern owns when you quit. Connections from your terminal or editor follow your SSH configuration.'],
   sshDisconnectOnQuit: ['退出时断开', 'Disconnect on quit'],
   sshKeep15m: ['15 分钟', '15 minutes'],
   sshKeep1h: ['1 小时', '1 hour'],
