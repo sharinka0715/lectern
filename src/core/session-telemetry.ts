@@ -18,7 +18,8 @@ export interface ExecutionModeObservation {
 // modifier chord (including a two-stroke sequence) inside the explicit hint.
 const stroke = String.raw`(?:(?:ctrl|control|alt|option|meta|cmd|command|shift|super)\+)*(?:[a-z0-9]|f(?:[1-9]|1[0-9]|2[0-4])|tab|space|enter|escape|esc|backspace|delete|up|down|left|right)`;
 const cycleHint = new RegExp(String.raw`^\((?:${stroke})(?: ${stroke})? to cycle\)(?:\s*·.*)?$`, 'i');
-const taskHint = /^(?:\d+ (?:shells?|agents?|monitors?|workflows?|(?:background )?tasks?)|↓ to manage|← for agents|esc to interrupt|\? for shortcuts)$/u;
+const taskCount = String.raw`\d+ (?:shells?|agents?|monitors?|workflows?|(?:background )?tasks?)`;
+const taskHint = new RegExp(String.raw`^(?:${taskCount}(?:, ${taskCount})*|↓ to manage|← for agents|esc to interrupt|\? for shortcuts)$`, 'u');
 const modes: ReadonlyArray<{ mode: ExecutionMode; label: MessageKey; pattern: RegExp }> = [
   { mode: 'auto', label: 'core.modeAuto', pattern: /^auto mode on\b/i },
   { mode: 'acceptEdits', label: 'core.modeAcceptEdits', pattern: /^accept edits on\b/i },
@@ -68,12 +69,12 @@ export function parseExecutionMode(screen: string): ExecutionModeObservation | u
     let label: string;
     if (hintAt >= 0 && cycleHint.test(badge.slice(hintAt + 1))) label = badge.slice(0, hintAt);
     else {
-      // With background work the hint gives way to its count and key hints
-      // ("accept edits on · 1 shell · ↓ to manage"): only those may follow.
-      // The mode's own icon is required then (⏸ for manual mode).
+      // Background work can replace the cycle hint with counts and key hints
+      // ("auto mode on · 1 shell, 1 monitor · ↓ to manage").
       const icon = /^[⏵▶⏸►»]+/u.exec(evidence)?.[0];
       const [first, ...rest] = badge.split(' · ');
-      if (!icon || !rest.length || !rest.every(part => taskHint.test(part)) || icon.startsWith('⏸') !== /^manual mode\b/iu.test(first)) continue;
+      const pauseMode = /^(?:manual|plan) mode\b/iu.test(first);
+      if (!icon || !rest.length || !rest.every(part => taskHint.test(part)) || icon.startsWith('⏸') !== pauseMode) continue;
       label = first;
     }
     const match = modes.find(entry => label.match(entry.pattern)?.[0] === label);

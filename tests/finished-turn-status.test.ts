@@ -48,3 +48,38 @@ test('the permission mode is read when background work replaces the cycle hint',
   assert.equal(parseExecutionMode(fixture('workflow-2.1.329/running.txt'))?.mode, 'acceptEdits');
   assert.equal(parseExecutionMode(screen.replace('accept edits on · 1 shell · ↓ to manage', 'accept edits on · whatever this is')), undefined);
 });
+
+const withTaskFooter = (footer: string) => screen.replace('⏵⏵ accept edits on · 1 shell · ↓ to manage', footer);
+
+test('the permission mode accepts comma-separated background task counts', () => {
+  const cases = [
+    // Claude Code 2.1.321, including the footer at 40 columns.
+    ['⏵⏵ auto mode on · 1 shell, 1 monitor · ← for agents · ↓ to manage', 'auto'],
+    ['⏵⏵ auto mode on · 1 shell, 1 monitor', 'auto'],
+    ['⏵⏵ accept edits on · 2 shells, 2 monitors · ↓ to manage', 'acceptEdits'],
+    ['⏸ plan mode on · 2 shells, 2 monitors · ↓ to manage', 'plan'],
+    ['⏸ manual mode on · 2 shells, 2 monitors · ↓ to manage', 'default'],
+    // Screenshot case and a synthetic mix of the other supported count types.
+    ['⏵⏵ auto mode on · 1 shell, 1 monitor · ↓ to manage', 'auto'],
+    ['⏵⏵ bypass permissions on · 2 agents, 1 workflow, 1 shell · ↓ to manage', 'bypassPermissions'],
+  ];
+  for (const [footer, mode] of cases) {
+    assert.equal(parseExecutionMode(withTaskFooter(footer))?.mode, mode, footer);
+  }
+});
+
+test('the permission mode accepts the aggregate background task count', () => {
+  // Claude Code 2.1.331 with two shells, two monitors and an agent.
+  const footer = '⏵⏵ auto mode on · 5 background tasks · ← for agents · ↓ to manage';
+  assert.equal(parseExecutionMode(withTaskFooter(footer))?.mode, 'auto');
+});
+
+test('each comma-separated entry must be a complete task count', () => {
+  for (const footer of [
+    '⏵⏵ auto mode on · 1 shell, something else · ↓ to manage',
+    '⏵⏵ auto mode on · 1 shell, ↓ to manage',
+    '⏵⏵ auto mode on · 1 shell, 1',
+    '⏵⏵ auto mode on · 1 shell,',
+    '⏵⏵ auto mode on · 1 shell, 1 monitor · something else',
+  ]) assert.equal(parseExecutionMode(withTaskFooter(footer)), undefined, footer);
+});
