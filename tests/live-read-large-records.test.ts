@@ -51,6 +51,7 @@ test('a record larger than one live read does not hold back the question after i
     assert.equal(messages.at(-1)?.tools.find(tool => tool.id === 'toolu_read')?.result?.length, big.length);
   } finally {
     await backend.dispose();
-    await rm(root, { recursive: true, force: true });
+    // Something may still be finishing a write under claude/ just after dispose (seen on macOS CI).
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
