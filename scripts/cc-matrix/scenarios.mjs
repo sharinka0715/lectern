@@ -58,6 +58,7 @@ export const FEATURES = [
   { id: 'compact', title: '/compact with a message queued during compaction' },
   { id: 'rename', title: 'Rename a running session (/rename)' },
   { id: 'rewind-renamed', title: 'Rewind past one-step /model and /effort switches, right after renaming the session to a name too wide for the input box border, with a wrapped skill description among the /rewind completions' },
+  { id: 'rewind-compact', title: 'Rewind to a prompt before /compact in the same Claude Code process' },
   { id: 'session-settings', title: 'Switch model and effort in a running session' },
   { id: 'statusline', title: 'Status line: model, context usage, billing route' },
   { id: 'background', title: 'Background shell and subagent ("running in background")' },
@@ -1072,6 +1073,38 @@ export const SCENARIOS = [
         assert.ok(after.at > summary.done, 'the queued message went out after the summary');
         await ui.waitStatus('idle', 30_000);
         assert.equal(await page.locator(`${sel.assistant} .markdown:text-is("正在等待 Claude…")`).count(), 0, 'no reply left waiting');
+      });
+    },
+  },
+  {
+    id: 'rewind-compact',
+    features: ['rewind-compact'],
+    timeoutMs: 120_000,
+    async run(ctx) {
+      const { ui, page, api, sandbox, folders, check } = ctx;
+      const early = 'First fixture prompt ccm:rewind-compact-early';
+      const before = 'Second fixture prompt ccm:rewind-compact-before';
+      const after = 'Third fixture prompt ccm:rewind-compact-after';
+      api.script('rewind-compact-early', () => ({ text: 'Fixture first reply.' }));
+      api.script('rewind-compact-before', () => ({ text: 'Fixture second reply.' }));
+      api.script('rewind-compact-after', () => ({ text: 'Fixture third reply.' }));
+      await check('rewind-compact', async () => {
+        await startChat(ctx, folders.main, early);
+        await ui.waitReply('Fixture first reply.');
+        await ui.send(before);
+        await ui.waitReply('Fixture second reply.');
+        await ui.send('/compact');
+        await page.locator('[data-compact-receipt]:not([data-leaving])').waitFor({ timeout: 45_000 });
+        await ui.send(after);
+        await ui.waitReply('Fixture third reply.');
+        const message = page.locator(sel.user).filter({ hasText: before });
+        await message.locator('button.message-rewind').waitFor({ state: 'attached' });
+        await page.locator('.rewind-launch').click();
+        await page.locator('dialog.rewind-picker .rewind-choices button', { hasText: before }).click();
+        await page.locator('section.rewind-panel:not([data-leaving]) .rewind-confirm').click({ timeout: 45_000 });
+        await page.waitForFunction(([selector, text]) => document.querySelector(selector)?.value === text, [sel.composer, before], { timeout: 30_000 });
+        await message.waitFor({ state: 'detached' });
+        assert.deepEqual((await page.locator(sel.user).allTextContents()).map(text => text.includes(early)), [true]);
       });
     },
   },

@@ -1,0 +1,74 @@
+[
+  {
+    "phase": "same-once",
+    "startedAt": 1767225600000,
+    "labels": [
+      "Fixture question ccm:base-1",
+      "Fixture question ccm:base-2",
+      "Fixture question ccm:base-3",
+      "Fixture question ccm:base-4",
+      "Fixture question ccm:base-5",
+      "Fixture question ccm:base-6",
+      "Fixture question ccm:base-7",
+      "Fixture question ccm:base-8",
+      "Fixture question ccm:base-9",
+      "/effort low",
+      "/compact",
+      "Fixture question ccm:after-1"
+    ]
+  },
+  {
+    "phase": "same-twice",
+    "startedAt": 1767225600000,
+    "labels": [
+      "Fixture question ccm:base-1",
+      "Fixture question ccm:base-2",
+      "Fixture question ccm:base-3",
+      "Fixture question ccm:base-4",
+      "Fixture question ccm:base-5",
+      "Fixture question ccm:base-6",
+      "Fixture question ccm:base-7",
+      "Fixture question ccm:base-8",
+      "Fixture question ccm:base-9",
+      "/effort low",
+      "/compact",
+      "Fixture question ccm:after-1",
+      "/compact",
+      "Fixture question ccm:after-2"
+    ]
+  },
+  {
+    "phase": "resumed",
+    "startedAt": 1767225606873,
+    "labels": [
+      "/compact",
+      "Fixture question ccm:after-2"
+    ]
+  },
+  {
+    "phase": "resumed-compact",
+    "startedAt": 1767225606873,
+    "labels": [
+      "/compact",
+      "Fixture question ccm:after-2",
+      "/effort high",
+      "/compact",
+      "Fixture question ccm:after-resume-compact"
+    ]
+  },
+  {
+    "phase": "auto",
+    "startedAt": 1767225608893,
+    "labels": [
+      "Fixture question ccm:large-usage",
+      "Fixture question ccm:trigger-auto"
+    ]
+  },
+  {
+    "phase": "auto-resumed",
+    "startedAt": 1767225610581,
+    "labels": [
+      "Fixture question ccm:trigger-auto"
+    ]
+  }
+]

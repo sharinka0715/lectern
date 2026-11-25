@@ -76,12 +76,30 @@ export class MessageDisplay {
   // Only needed after the first page from another native UUID. A predecessor
   // can supply archived prompts, never entries in the current CLI rewind menu.
   private tipUsers?: Set<string>;
+  private rewindStartedAt?: number;
+  private rewindArchiveUsers = new Set<string>();
   private rememberTipUsers(rows: JsonRecord[]) {
     if (!this.tipUsers) return;
     for (const r of rows) if (r.type === 'user' && typeof r.uuid === 'string' && (!r.sessionId || r.sessionId === this.sessionId)) this.tipUsers.add(r.uuid);
   }
   private rewindable(turn: Turn) {
-    return !!turn.userUuid && !turn.archivedUser && (!this.tipUsers || this.tipUsers.has(turn.userUuid));
+    return !!turn.userUuid && (!turn.archivedUser || this.rewindArchiveUsers.has(turn.userUuid))
+      && (!this.tipUsers || this.tipUsers.has(turn.userUuid));
+  }
+
+  setRewindProcess(startedAt?: number) {
+    if (startedAt === this.rewindStartedAt) return;
+    this.rewindStartedAt = startedAt;
+    this.settledMessages = new WeakMap();
+    const active = this.transcript.activeRows();
+    this.updateRewindArchive(active, this.transcript.archivedBefore(active));
+  }
+
+  private updateRewindArchive(active: TranscriptRow[], archive: TranscriptRow[]) {
+    this.rewindArchiveUsers.clear();
+    if (!archive.length || this.rewindStartedAt === undefined) return;
+    const allowed = new Set(this.transcript.rewindRows(this.rewindStartedAt, active, archive).map(row => row.key));
+    for (const row of archive) if (allowed.has(row.key)) this.rewindArchiveUsers.add(row.key);
   }
   private olderInvalid = 0;
   private turns: Turn[] = [];
@@ -222,6 +240,7 @@ export class MessageDisplay {
     this.terminalStatus = undefined;
     this.pages = undefined;
     this.tipUsers = undefined;
+    this.rewindArchiveUsers.clear();
     this.olderInvalid = 0;
     this.nextTurnIndex = 0;
     this.usedTurnIndices.clear();
@@ -415,6 +434,7 @@ export class MessageDisplay {
       if (rewind) this.terminalStatus = undefined;
     }
     const archive = change.replace ? this.transcript.archivedBefore(change.rows) : [];
+    if (change.replace) this.updateRewindArchive(change.rows, archive);
     const rows = archive.length ? this.applyArchive(archive, change.rows) : change.rows;
     // Older pages cannot acknowledge a pending send, except the newest prompt of the
     // whole transcript: a new chat whose opening records (system prompt snapshot,
@@ -518,7 +538,7 @@ export class MessageDisplay {
     const prompts = new Map(this.turns.filter(turn => turn.user && this.rewindable(turn)).map(turn => [turn.userUuid!, turn.user!.text]));
     const turnUsers = new Set(this.turns.map(turn => turn.userUuid));
     const points: { uuid: string; text: string }[] = [];
-    for (const row of this.transcript.activeRows()) {
+    for (const row of this.transcript.rewindRows(this.rewindStartedAt)) {
       const prompt = prompts.get(row.key);
       if (prompt !== undefined) {
         points.push({ uuid: row.key, text: prompt });
@@ -546,7 +566,7 @@ export class MessageDisplay {
   confirmNativeRewind(draft: string, checkpointUuid?: string) {
     const matches = this.turns.filter(turn => turn.user?.text === draft && this.rewindable(turn));
     const uuid = checkpointUuid ?? (matches.length === 1 ? matches[0].userUuid : undefined);
-    if (!uuid) {
+    if (!uuid || !this.rewindPoints()?.some(point => point.uuid === uuid)) {
       const last = this.turns.at(-1);
       if (last?.optimistic && last.user?.text === draft) {
         this.turns.pop();

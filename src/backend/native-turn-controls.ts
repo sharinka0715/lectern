@@ -8,12 +8,18 @@ import { goalCommand } from '../shared/native-commands';
 import { keysNotSent, TranscriptChangedNoKeys } from './native-settings';
 
 interface TurnFrame { paneId: string; panePid: number; viewport: string; nativeStatus?: string }
+interface RewindObservation extends TurnFrame { earlierViewport: string }
+export const MAX_REWIND_BATCH = 50;
 export interface TurnDriver {
   frame(): Promise<TurnFrame>;
   /** `close` is Esc in the rewind menu like `cancel`, but not bound to the transcript revision
    * a rewind was chosen from: Lectern closes the menu it opened after the rewind failed. */
   keyForTurn(key: 'queue' | 'steer' | 'stop' | 'up' | 'down' | 'accept' | 'cancel' | 'close' | 'submit' | 'clear' | 'erase' | 'switchSession', footerOnly?: boolean, observeAfter?: boolean): Promise<void | TurnFrame>;
   pasteForTurn(text: string, footerOnly: boolean, observeAfter?: boolean): Promise<void | TurnFrame>;
+  rewindBatch?: {
+    move(key: 'up' | 'down', count: number): Promise<RewindObservation>;
+    observe(): Promise<RewindObservation>;
+  };
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const changed = () => new Error(t('native.screenChanged'));
@@ -130,6 +136,53 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
   const paste = (text: string, footerOnly: boolean, still: (frame: TurnFrame) => boolean, observeAfter?: boolean) =>
     sendGuarded(() => driver.pasteForTurn(text, footerOnly, observeAfter), () => waitFor(still));
   const onMenu = (menu: RewindMenu) => (frame: TurnFrame) => readRewind(frame.viewport)?.signature === menu.signature;
+  const moveTo = async (menu: RewindMenu, index: number, positionOf: (menu: RewindMenu) => number) => {
+    const batch = driver.rewindBatch;
+    let position = positionOf(menu), corrections = 0;
+    while (position !== index) {
+      const key = position > index ? 'up' : 'down';
+      const count = Math.min(Math.abs(index - position), batch ? MAX_REWIND_BATCH : 1);
+      const expected = position + (key === 'up' ? -count : count);
+      const earlier = menu;
+      const readPosition = (view: string) => {
+        const observed = readRewind(view);
+        if (!observed || observed.stage !== earlier.stage) throw mismatch();
+        return { menu: observed, position: positionOf(observed) };
+      };
+      if (batch) {
+        let pair = await sendGuarded(() => { assertCurrent?.(); return batch.move(key, count); }, () => waitFor(onMenu(earlier)));
+        // A partially processed batch never authorizes more keys. Observe only
+        // until both captures from the target agree on the verified ordinal.
+        let unexpected: string | undefined;
+        for (let attempt = 0; ; attempt++) {
+          verify(pair);
+          const first = readPosition(pair.earlierViewport);
+          const second = readPosition(pair.viewport);
+          const stable = first.menu.signature === second.menu.signature;
+          if (stable && (second.position === expected || unexpected === second.menu.signature)) {
+            menu = second.menu;
+            position = second.position;
+            break;
+          }
+          // A repaint can pause at an intermediate ordinal. An unexpected
+          // landing needs another unchanged observation before sending more.
+          unexpected = stable ? second.menu.signature : undefined;
+          if (attempt === 4) throw new NotYetConfirmed();
+          pair = await batch.observe();
+        }
+      } else {
+        assertCurrent?.();
+        const observed = await press(key, undefined, onMenu(earlier), true);
+        const frame = await waitFor(f => {
+          const next = readRewind(f.viewport);
+          return !!next && next.signature !== earlier.signature;
+        }, observed);
+        ({ menu, position } = readPosition(frame.viewport));
+      }
+      if (position !== expected && (!batch || ++corrections > 3)) throw mismatch();
+    }
+    return menu;
+  };
   const withdraw = (command: string) => withdrawCommand(driver, command, async () => (await inspect()).viewport);
   const available = (frame: TurnFrame) => frame.nativeStatus !== 'waiting' && frame.nativeStatus !== 'busy'
     && classifySessionScreen(frame.viewport).status !== 'waiting' && !readRewind(frame.viewport);
@@ -174,31 +227,16 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     } catch { return new Error(t('native.rewindMenuLeftOpen', { detail })); }
     return error instanceof TranscriptChangedNoKeys ? new RewindRecordChanged() : new Error(t('native.rewindMenuClosed', { detail }));
   };
-  if (action?.kind === 'rewindTo' || action?.kind === 'restore' && target) {
+  if (action?.kind === 'rewindTo' || (action?.kind === 'restore' || action?.kind === 'checkpoint') && target) {
     if (!target) throw mismatch();
     const text = target.prompts[target.index];
     if (!text) throw mismatch();
     const confirmation = (menu?: RewindMenu) => menu?.stage === 'confirm' && checkpointText(menu.message ?? '', text, target.prompts);
-    // From the list on `frame`, move to the target's row and open its confirmation: one row
-    // per key, the whole visible list re-aligned with the target's list after each.
+    // Verify the whole list and distinguish duplicate labels by the absolute ordinal.
     const chooseCheckpoint = async (frame: TurnFrame) => {
       let menu = readRewind(frame.viewport);
       if (!menu) throw mismatch();
-      let position = checkpointPosition(menu, target);
-      if (action.kind === 'restore' && position !== target.index) throw mismatch();
-      while (position !== target.index) {
-        assertCurrent?.();
-        const delta = Math.sign(target.index - position);
-        const old = menu;
-        const observed = await press(delta < 0 ? 'up' : 'down', undefined, onMenu(old), true);
-        frame = await waitFor(f => {
-          const next = readRewind(f.viewport);
-          return !!next && next.signature !== old.signature;
-        }, observed);
-        menu = readRewind(frame.viewport);
-        if (!menu || checkpointPosition(menu, target) !== position + delta) throw mismatch();
-        position += delta;
-      }
+      menu = await moveTo(menu, target.index, candidate => checkpointPosition(candidate, target));
       assertCurrent?.();
       const observed = await press('accept', undefined, onMenu(menu), true);
       frame = await waitFor(f => readRewind(f.viewport)?.stage === 'confirm', observed);
@@ -215,12 +253,22 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
       catch (error) { throw await closeOpenedMenu(error); }
       return;
     }
+    if (action.kind === 'checkpoint') {
+      const frame = await inspect();
+      if (readRewind(frame.viewport)?.signature !== action.signature) throw mismatch();
+      try { await chooseCheckpoint(frame); }
+      catch (error) { throw await closeOpenedMenu(error); }
+      return;
+    }
     const opened = readRewind((await inspect()).viewport);
     if (!confirmation(opened) || opened!.signature !== action.signature) throw mismatch();
     // Even identical prompts produce identical confirmation pages. Return to
     // the list and verify the actual focused ordinal before any restore.
     const observed = await press('cancel', undefined, onMenu(opened!), true);
-    const menu = await chooseCheckpoint(await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint', observed));
+    const frame = await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint', observed);
+    const list = readRewind(frame.viewport)!;
+    if (checkpointPosition(list, target) !== target.index) throw mismatch();
+    const menu = await chooseCheckpoint(frame);
     assertCurrent?.();
     return performTurnAction(driver, pane, pid, {kind:'restore',signature:menu.signature}, undefined, assertCurrent);
   }
@@ -311,27 +359,16 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
   if (action.kind === 'checkpoint' && menu.stage !== 'checkpoint' || action.kind === 'restore' && menu.stage !== 'confirm') throw changed();
   const index = action.kind === 'restore' ? menu.rows.findIndex(r => r.label === 'Restore conversation') : action.index;
   if (index === undefined || !Number.isInteger(index) || !menu.rows[index] || menu.rows[index].label === '(current)') throw changed();
-  // Where reaching an edge scrolls the native list, keep following the exact
-  // message, rejecting ambiguities introduced by a redraw or duplicate label.
-  const rows = JSON.stringify(menu.rows);
-  const choice = menu.rows[index];
-  const delta = index - menu.focused;
-  for (let step = 0; step < Math.abs(delta); step++) {
-    const prev = menu!;
-    const observed = await press(delta < 0 ? 'up' : 'down', undefined, onMenu(prev), true);
-    const frame = await waitFor(f => {
-      const next = readRewind(f.viewport);
-      return !!next && next.signature !== prev.signature;
-    }, observed);
-    menu = readRewind(frame.viewport);
-    if (!menu || menu.stage !== prev.stage || menu.message !== prev.message) throw changed();
-    if (JSON.stringify(menu.rows) !== rows) {
-      if (JSON.stringify(menu.rows[menu.focused]) === JSON.stringify(choice) && menu.rows.filter(r => r.label === choice.label).length === 1) break;
-      throw new Error(t('native.listScrolled'));
-    }
-    if (menu.focused !== prev.focused + Math.sign(delta)) throw changed();
-  }
-  if (JSON.stringify(menu.rows[menu.focused]) !== JSON.stringify(choice)) throw changed();
+  // Confirmation options fit on one page. Without a transcript target, an
+  // unchanged list and offsets are also required before using a visible index.
+  const layout = (candidate: RewindMenu) => JSON.stringify([candidate.rows, candidate.message, candidate.before, candidate.after]);
+  const original = layout(menu);
+  try {
+    menu = await moveTo(menu, index, candidate => {
+      if (layout(candidate) !== original) throw new Error(t('native.listScrolled'));
+      return candidate.focused;
+    });
+  } catch (error) { throw await closeOpenedMenu(error); }
   const message = menu.message, chosen = menu;
   assertCurrent?.();
   const observed = await press('accept', undefined, onMenu(chosen), true);

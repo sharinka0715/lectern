@@ -46,7 +46,7 @@ import type { DialogHookObservation } from '../shared/dialog-hooks';
 import { DialogHookStore, dialogHookDir, dialogHookOption, dialogHookPrefix, dialogHookSettings, readDialogHooks, removeDialogHookDir } from './dialog-hooks';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
 import { composerFrameGuard, animatedLabelText, goalRowText, guardWindow } from './composer-frame-guard';
-import { notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
+import { MAX_REWIND_BATCH, notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
 import type { NativePermissionScreen, PermissionAction } from '../shared/native-permission';
@@ -100,6 +100,8 @@ export interface ReadResult { /** Asked for with `listSubagents`: every subagent
   dialogHooks?: DialogHookObservation;
   /** Asked for with `findSessionProcess`: whether a Claude Code process runs the session anywhere (its native record). */
   sessionProcess?: { alive: boolean; startedAt?: number; uncertain?: boolean };
+  /** The verified registration time of a process launched for this transcript. */
+  rewindStartedAt?: number;
   /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
   folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; styledScreen?: string; viewport?: string; questionViewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
@@ -254,13 +256,16 @@ export class Backend {
     diagnostic.event('backend.workspace.located', { workspaceId: workspace.id, kind: workspace.kind, host: workspace.host, cwd, cwdAliases, claudeDir, tmuxVersion, os });
     return location;
   }
-  private probeScript(location: Location): string {
+  private probePanes(): string {
     const paneList = this.tmux('list-panes', '-a', '-F', PANE_FORMAT);
     // Only panes Lectern started (tmux sessions named lectern-…) and panes the user
     // explicitly bound are considered. Windows the user opened are never read.
+    return `{ ${paneList} 2>/dev/null || true; } | awk -F '[|]~lectern~[|]' '$4 ~ /^lectern-/ || $8 == "manual"'`;
+  }
+  private probeScript(location: Location): string {
     // Keep unrelated process arguments on the target. One remote command
     // returns panes, only their descendant processes, and bounded PID records.
-    return `lectern_panes=$({ ${paneList} 2>/dev/null || true; } | awk -F '[|]~lectern~[|]' '$4 ~ /^lectern-/ || $8 == "manual"')
+    return `lectern_panes=$(${this.probePanes()})
 printf '%s\\0' "$lectern_panes"
 [ -n "$lectern_panes" ] || exit 0
 lectern_roots=$(printf '%s\\n' "$lectern_panes" | awk -F '[|]~lectern~[|]' '$2 ~ /^[1-9][0-9]*$/ {printf "%s ",$2}')
@@ -1421,7 +1426,11 @@ ${after}`;
     const registration = pane && statusLineRegistration(pane, session.paneId === pane.id ? statusFrame.split(',', 1)[0] : undefined);
     const statusLine = registration && session.paneId === pane?.id ? decodeStatusLineSample(statusFrame, registration, sessionId) : undefined;
     const dialogHooks = hookDir ? this.dialogHooks.observe(key) : undefined;
-    return { dialogHooks, subagents, sessionProcess: elsewhere, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir, Date.now(), pane?.processSettings ? pane.processSettings.settingsFile : this.conversationSettings(workspace, sessionId)?.settingsFile), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, questionViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    // A native /resume can switch UUID without starting a new process. Only
+    // trust the launch time for the UUID this pane was started for.
+    const rewindStartedAt = runtimeInstanceId && pane?.managed && pane.boundSessionId === sessionId && !pane.forkOrigin
+      ? pane.native?.startedAt : undefined;
+    return { dialogHooks, subagents, sessionProcess: elsewhere, rewindStartedAt, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir, Date.now(), pane?.processSettings ? pane.processSettings.settingsFile : this.conversationSettings(workspace, sessionId)?.settingsFile), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, questionViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {
@@ -1618,7 +1627,7 @@ ${after}`;
       });
     });
   }
-  async turnAction(workspace: Workspace, sessionId: string, paneId: string, panePid: number, action: TurnAction, target?: RewindTarget, assertCurrent?: () => void, position?: TranscriptPosition) {
+  async turnAction(workspace: Workspace, sessionId: string, paneId: string, panePid: number, action: TurnAction, target?: RewindTarget, assertCurrent?: () => void, position?: TranscriptPosition, instanceId?: string) {
     assertPaneId(paneId);
     if (!Number.isSafeInteger(panePid) || panePid < 2) throw new Error(t('backend.invalidPanePid'));
     return this.withInput(workspace, sessionId, async () => {
@@ -1630,7 +1639,7 @@ ${after}`;
         if (cursor?.inode !== position.inode || cursor?.offset !== position.offset) throw new RewindRecordChanged();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
-      return performTurnAction(this.settingDriver(workspace, sessionId, {historyGuard}), paneId, panePid, action, target, assertCurrent);
+      return performTurnAction(this.settingDriver(workspace, sessionId, {historyGuard, expected: {panePid, instanceId}}), paneId, panePid, action, target, assertCurrent);
     });
   }
   async answerQuestion(workspace: Workspace, sessionId: string, paneId: string, panePid: number, screen: NativeQuestionScreen,
@@ -1684,7 +1693,8 @@ ${after}`;
     let resolved: ReturnType<typeof resolve> | undefined;
     const bindings = new NativeKeybindings(this.transport, workspace);
     let kind: SessionSettingKind = 'model';
-    let last: { pane: InternalPane; viewport: string; location: Location } | undefined;
+    let last: { pane: InternalPane; viewport: string; location: Location; singleClaudePane: boolean } | undefined;
+    let inlineRewindProbe = !this.options.claudeCommand;
     let pending: Awaited<ReturnType<SettingDriver['inspect']>> | undefined;
     // The highlight is part of the guarded frame when it identifies a question tab.
     const capture = (id: string) => this.tmux('capture-pane', '-p', '-J', ...(!options.assertCurrent || options.questionTabs ? ['-e'] : []), '-t', id);
@@ -1693,7 +1703,7 @@ ${after}`;
     // mapping in the same round trip. A changed or ambiguous binding discards
     // both captures. Two equal frames separated by a probe and a settle interval
     // can satisfy the native menu's stability check without another SSH call.
-    const read = async (settle: boolean, input = '', rejectedNavigation?: string, switchSession = false, torn = 0): Promise<{ paneId: string; viewport: string; stable: boolean }> => {
+    const read = async (settle: boolean, input = '', rejectedNavigation?: string, switchSession = false, torn = 0): Promise<{ paneId: string; viewport: string; stable: boolean; earlierViewport?: string }> => {
       const { session, location, revision } = await (resolved ??= resolve());
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
       const paneId = last?.pane.id ?? session.paneId ?? this.currentPane(await this.probe(workspace), session, location)?.id;
@@ -1744,9 +1754,10 @@ lectern_frame`;
       };
       const viewport = decode(stdout.subarray(end + boundary.length));
       // The goal indicator's timer may tick between the two reads (composer-frame-guard.ts).
-      const stable = settle && goalRowText(animatedLabelText(decode(stdout.subarray(0, split)))) === goalRowText(animatedLabelText(viewport));
-      last = { pane, viewport, location };
-      return { paneId, viewport, stable };
+      const earlierViewport = settle ? decode(stdout.subarray(0, split)) : undefined;
+      const stable = earlierViewport !== undefined && goalRowText(animatedLabelText(earlierViewport)) === goalRowText(animatedLabelText(viewport));
+      last = { pane, viewport, location, singleClaudePane: panes.length === 1 && !!pane.native };
+      return { paneId, viewport, stable, earlierViewport };
     };
 
     // Bind a key to the locally parsed frame at the instant of dispatch, even
@@ -1770,18 +1781,21 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
     // Foreground discovery also rejects a second active pane claiming this
     // UUID. Check all panes before each input, then bind the dispatch itself to
     // both the observed target and the last parsed viewport on the target.
-    const input = async (paneId: string, key: string, contexts: Parameters<NativeKeybindings['guard']>[2], command: string, settle: boolean, tailLines?: number, settingPaste = false, switchSession = false, recordBound = true) => {
+    const input = async (paneId: string, key: string, contexts: Parameters<NativeKeybindings['guard']>[2], command: string, settle: boolean, tailLines?: number, settingPaste = false, switchSession = false, recordBound = true, rewindBatch = false) => {
       const { session, location, revision } = await (resolved ??= resolve());
       this.assertCurrentWorkspaceConfiguration(workspace, revision);
-      const [keymap, panes] = await Promise.all([bindings.guard(location.claudeDir, key, contexts), this.probe(workspace)]);
-      const pane = select(panes, session, location);
+      // A single pane with a verified native Claude can check uniqueness on
+      // the target before sending. Other layouts use full discovery.
+      const singlePane = rewindBatch && inlineRewindProbe && last?.singleClaudePane;
+      const [keymap, pane] = await Promise.all([bindings.guard(location.claudeDir, key, contexts),
+        singlePane ? last?.pane : this.probe(workspace).then(panes => select(panes, session, location))]);
       if (!pane?.active || pane.id !== paneId || pane.claudePid !== last?.pane.claudePid) throw new SessionSettingError(t('backend.settingBindingChanged'));
       // This one-use receipt can only be printed on the guard branch before
       // send-keys. A transport error after dispatch never authorizes a retry.
       const guardedNavigation = (contexts.includes('ModelPicker') && ['Up', 'Down', 'Home', 'End', 'PageUp', 'PageDown', 'Escape'].includes(key))
         || (contexts.includes('EffortSlider') && ['Left', 'Right', 'Escape'].includes(key));
       const recordChecked = !!options.historyGuard && recordBound;
-      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent || recordChecked
+      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent || recordChecked || singlePane
         ? 'LECTERN_MENU_KEY_NOT_SENT_' + randomUUID() : undefined;
       const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort' : 'exact';
       // The transcript revision guard runs first: its failure is printed as a receipt that
@@ -1791,8 +1805,31 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
       // rewind menu Lectern opened (`close`): both are bound to the frame they act on, not to
       // the transcript revision a rewind was chosen from.
       const recordGuard = recordChecked ? receiptOnFailure(options.historyGuard!, rejectedNavigation + RECORD_CHANGED) : '';
+      const topologyGuard = singlePane ? `lectern_single_pane="$(${this.probePanes()} | awk -F '[|]~lectern~[|]' '{print $1}')"
+if [ "$lectern_single_pane" != ${q(paneId)} ] || ! ps -eo pid=,ppid=,pgid=,tpgid=,args= | awk -v root=${pane.pid} -v claude=${pane.claudePid} '
+function descends(pid, ancestor, depth) {
+  for (depth=0; pid>0 && depth<256; depth++) {
+    if (pid==ancestor) return 1
+    pid=parent[pid]
+  }
+  return 0
+}
+$1 ~ /^[0-9]+$/ { parent[$1]=$2; foreground[$1]=$3==$4 && $4>0; command[$1]=$5 }
+END {
+  if (!foreground[claude] || !descends(claude,root) || command[claude] !~ /(^|[/])claude$/) exit 1
+  for (pid in foreground) if (foreground[pid] && descends(pid,root) && !descends(pid,claude)) {
+    if (!descends(claude,pid) || command[pid] !~ /^(-|[^[:space:]]*[/])?(sh|bash|dash|zsh|ksh)$/) exit 1
+  }
+}'; then printf '%s' ${q(rejectedNavigation!)}; exit 0; fi
+` : '';
       options.assertCurrent?.();
-      return read(settle, recordGuard + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
+      try {
+        return await read(settle, topologyGuard + recordGuard + keymap + guard(paneId, frameKind, rejectedNavigation, tailLines) + command, rejectedNavigation, switchSession);
+      } catch (error) {
+        // Only a pre-send refusal can try again with full discovery.
+        if (singlePane && error instanceof NavigationKeyNotSent) inlineRewindProbe = false;
+        throw error;
+      }
     };
     const submitCommand = async (command: string, paneId: string) => {
       kind = command.startsWith('/effort') ? 'effort' : 'model';
@@ -1800,11 +1837,30 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
     };
     const turnFrame = (frame: Awaited<ReturnType<typeof read>>) =>
       ({ ...frame, panePid: last!.pane.pid, nativeStatus: last!.pane.native?.status, nativeWaitingFor: last!.pane.native?.waitingFor });
+    const rewindObservation = (frame: Awaited<ReturnType<typeof read>>) => {
+      if (frame.earlierViewport === undefined) throw new SessionSettingError(t('backend.settingScreenIncomplete'));
+      return { ...turnFrame(frame), earlierViewport: frame.earlierViewport };
+    };
     // Give the TUI time to repaint before the capture already carried by the
     // guarded command. A caller still polls if it cannot verify the transition.
     const afterTurnInput = (command: string, observeAfter?: boolean) => command + (observeAfter ? '\nsleep 0.015' : '');
     return {
       frame: async () => turnFrame(await read(false)),
+      rewindBatch: {
+        move: async (key, count) => {
+          if (!last || !Number.isInteger(count) || count < 1 || count > MAX_REWIND_BATCH)
+            throw new Error(t('backend.nativeScreenUnchecked'));
+          const { pane, viewport } = last;
+          const lines = rewindGuardLines(viewport);
+          if (lines === undefined) throw new Error(t('backend.nativeScreenUnchecked'));
+          const binding = key === 'up' ? 'Up' : 'Down';
+          const command = this.tmux('send-keys', '-t', pane.id, ...Array<string>(count).fill(binding));
+          // Let the buffered keys reach the TUI before the first capture. The
+          // second capture on the target is at least another 60 ms later.
+          return rewindObservation(await input(pane.id, binding, ['Select', 'Confirmation'], command + '\nsleep 0.06', true, lines, false, false, true, true));
+        },
+        observe: async () => rewindObservation(await read(true)),
+      },
       questionKey: async (key, tailLines) => {
         if (!last) throw new Error(t('backend.questionScreenUnchecked'));
         const binding = key === 'BTab' ? 'shift+tab' : key.replace(/^C-/, 'ctrl+');

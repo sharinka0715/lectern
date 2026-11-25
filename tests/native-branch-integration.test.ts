@@ -53,6 +53,7 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     // (e.g. Claude Code appended its auto mode notice just then): pass it on.
     const transport = (backend as any).transport, run = transport.run.bind(transport);
     let submissions = 0;
+    const rewindBatches: string[] = [];
     // Claude Code rewrites its PID record (status, updatedAt) as it settles. Do the same,
     // once, right before the fork's retag and the first rewind key: either guard then
     // refuses without changing anything, and the step must read again and go on.
@@ -64,6 +65,7 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     } };
     transport.run = async (...args: any[]) => {
       const point = args[2]?.tag === 'session.fork.rebind' ? 'rebind' : args[2]?.tag === 'settings.input_observe' && args[1].includes("'Up'") ? 'rewind' : '';
+      if (point === 'rewind') rewindBatches.push(args[1]);
       if (point && !rewritten.has(point)) { rewritten.add(point); rewriteRecords(); }
       const result = await run(...args);
       if (args[2]?.tag !== 'session.branch.submit' || String(result.stdout).startsWith('LECTERN_MENU_KEY_NOT_SENT_')) return result;
@@ -93,6 +95,11 @@ test('installed CLI: paged duplicate rewind, fork recovery and two independently
     const position = (await backend.readSession(ws,pair.fork.id,true)).transcriptPosition;
     await backend.turnAction(ws,pair.fork.id,pane,pid,{kind:'rewindTo',uuid:ids[1]}, {index:1,prompts}, undefined, position);
     const confirm=readRewind(frame(pane)); assert.equal(confirm?.message,'Repeated prompt');
+    const directionLine = rewindBatches.at(-1)!.split('\n').filter(line => line.includes("'send-keys'"));
+    assert.equal(directionLine.length, 1, 'one guarded command dispatches the move');
+    assert.equal(directionLine[0].match(/'Up'/g)?.length, prompts.length - 1);
+    assert.match(rewindBatches.at(-1)!, /sleep 0\.06\nlectern_frame\(\)/, 'the first capture waits for the buffered keys');
+    assert.match(rewindBatches.at(-1)!, /lectern_frame\nsleep 0\.06 &/, 'captures are spaced on the target');
     const restored=await backend.turnAction(ws,pair.fork.id,pane,pid,{kind:'restore',signature:confirm!.signature},{index:1,prompts}, undefined, (await backend.readSession(ws,pair.fork.id,true)).transcriptPosition);
     assert.equal(restored?.restoredDraft,'Repeated prompt');
     assert.deepEqual([...rewritten].sort(), ['rebind','rewind'], 'both native record rewrites happened');

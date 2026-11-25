@@ -78,6 +78,7 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   /** Whether the latest read found the process that runs the session, and when that process started:
    * from a Lectern pane (`paneLive`), else from the native record of a process elsewhere. */
   live?: SessionLiveness; nativeStartedAt?: number; paneLive?: boolean;
+  rewindInstance?: string;
   /** The last goal record before the first page, read once per opening (Backend.readGoalBefore). */
   goalProbe?: { record?: JsonRecord };
   /** Reads in a row with the goal indicator above the input box, and with the input box but no indicator. */
@@ -709,6 +710,8 @@ export class Controller extends EventEmitter {
       const compactRecordsBefore = watch.display.activity.compactRecords;
       let repair = false;
       if (applied) {
+        watch.rewindInstance = result.runtimeInstanceId;
+        watch.display.setRewindProcess(result.rewindStartedAt);
         if (result.reset) {
           watch.older = result.olderCursor ? { cursor: result.olderCursor, ticket: randomUUID() } : undefined;
           watch.goalProbe = undefined;
@@ -835,7 +838,7 @@ export class Controller extends EventEmitter {
         viewportApplied: applyScreen && result.viewport !== undefined,
         screen: screenDigest, screenApplied: applyScreen, reset: result.reset, hasOlder: result.reset ? !!result.olderCursor : undefined,
         hasMore: result.hasMore, skippedHistoryRecords: result.skippedHistoryRecords,
-        active: result.active, paneId: result.session.paneId, panePid: result.panePid });
+        active: result.active, paneId: result.session.paneId, panePid: result.panePid, rewindStartedAt: result.rewindStartedAt });
       if (!applyScreen) diagnostic.event('controller.screen.skipped', { reason: settingsOverlap ? 'native-input-transaction' : 'history-draining', screenCaptureId: watch.screenCaptureId });
       watch.display.activity.samples(result.activitySamples ?? []);
       // A viewport belongs to the latest turn. Do not attach it to an older history page.
@@ -1201,6 +1204,7 @@ export class Controller extends EventEmitter {
       let selectedUuid: string | undefined, target: RewindTarget | undefined, result: Awaited<ReturnType<Backend['turnAction']>>;
       for (let attempt = 1; ; attempt++) {
         let assertCurrent: (() => void) | undefined;
+        const instance = watch.rewindInstance;
         if (action.kind === 'rewindTo' || action.kind === 'checkpoint' || action.kind === 'restore') {
           // The native index counts the entire rewind list, including when the
           // selected prompt is a recent duplicate.
@@ -1215,7 +1219,7 @@ export class Controller extends EventEmitter {
           const chosen = target = { index, prompts: branch.map(point => point.text) };
           const position = watch.snapshot.transcriptPosition;
           assertCurrent = () => {
-            if (this.watch !== watch || watch.failures || watch.snapshot.paneId !== pane || watch.snapshot.panePid !== pid ||
+            if (this.watch !== watch || watch.failures || watch.rewindInstance !== instance || watch.snapshot.paneId !== pane || watch.snapshot.panePid !== pid ||
                 (position && (position.inode !== watch.snapshot.transcriptPosition?.inode || position.offset !== watch.snapshot.transcriptPosition?.offset) &&
                   JSON.stringify(watch.display.rewindPoints()) !== JSON.stringify(branch)))
               throw new Error(t('controller.rewindBranchChanged'));
@@ -1225,7 +1229,7 @@ export class Controller extends EventEmitter {
         }
         if (action.kind === 'openRewind' || action.kind === 'rewindTo') { memory.pickerOpen = true; memory.checkpointUuid = undefined; this.turnMemory.set(turnKey,memory); }
         try {
-          result = await this.backend.turnAction(watch.workspace,sessionId,pane,pid,action,target,assertCurrent,watch.snapshot.transcriptPosition);
+          result = await this.backend.turnAction(watch.workspace,sessionId,pane,pid,action,target,assertCurrent,watch.snapshot.transcriptPosition, target ? instance : undefined);
           break;
         } catch (error) {
           // Claude Code wrote to the transcript after the message was chosen (a rename's records

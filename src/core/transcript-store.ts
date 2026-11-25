@@ -362,8 +362,7 @@ export class TranscriptStore {
     return [...this.nodes.values()].filter(row => !shown.has(row.key));
   }
 
-  /** The selected branch since the compaction that holds it, oldest first: the rows
-   * Claude Code draws its /rewind list from. Only reads: the projection state stays as the
+  /** The selected context branch. Only reads: the projection state stays as the
    * last change left it. */
   activeRows(): TranscriptRow[] {
     const { preserved, anchor, incomplete } = this;
@@ -371,10 +370,29 @@ export class TranscriptStore {
     finally { this.preserved = preserved; this.anchor = anchor; this.incomplete = incomplete; }
   }
 
+  /** A resumed process starts with the latest compacted context it loaded.
+   * Subsequent compactions in that process leave the native rewind list intact. */
+  rewindRows(startedAt?: number, active = this.activeRows(), archive = this.archivedBefore(active)): TranscriptRow[] {
+    if (startedAt === undefined || !archive.length) return active;
+    const rows = [...new Map([...archive, ...active].map(row => [row.key, row])).values()].sort((a, b) => a.order - b.order);
+    let last = 0, floor: TranscriptRow | undefined;
+    for (const row of rows) if (row.kind === 'compact') {
+      const at = Date.parse(row.timestamp ?? '');
+      if (!Number.isFinite(at) || at <= last || at === startedAt) return active;
+      if (at < startedAt) floor = row;
+      last = at;
+    }
+    if (!floor) return rows;
+    if (last < startedAt) return active;
+    const retained = new Set(this.preservedIds(floor.preservation));
+    return rows.filter(row => row.order >= floor!.order || retained.has(row.key));
+  }
+
   /** A native restore can redraw immediately and persist its new branch on the next send. */
   rewindBefore(key: string): TranscriptChange | undefined {
     const row = this.nodes.get(key);
-    if (!row || !this.branch().some(item => item.key === key)) return;
+    const active = this.branch();
+    if (!row || !active.some(item => item.key === key) && !this.archivedBefore(active).some(item => item.key === key)) return;
     this.leaf = row.parent;
     this.cut = key;
     this.rememberCompaction(this.latestBoundary(this.leaf ? this.nodes.get(this.leaf) : undefined));
@@ -530,21 +548,24 @@ export class TranscriptStore {
     }
   }
 
+  private preservedIds(data?: Preservation): string[] | undefined {
+    if (data?.ids) return data.ids;
+    if (data?.tail && data.head) {
+      const backwards: string[] = [];
+      for (const row of this.walk(data.tail)) {
+        backwards.push(row.key);
+        if (row.key === data.head) return backwards.reverse();
+      }
+    }
+  }
+
   private branch(tip = this.leaf, boundary = this.boundary): TranscriptRow[] {
     const leaf = tip && this.nodes.get(tip);
     this.preserved = new Set();
     this.anchor = undefined;
     this.incomplete = false;
     if (!leaf) return [];
-    const data = boundary?.preservation;
-    let ids = data?.ids;
-    if (!ids && data?.tail && data.head) {
-      const backwards: string[] = [];
-      for (const row of this.walk(data.tail)) {
-        backwards.push(row.key);
-        if (row.key === data.head) { ids = backwards.reverse(); break; }
-      }
-    }
+    const data = boundary?.preservation, ids = this.preservedIds(data);
     this.preserved = new Set([...(data?.all ?? []), ...(ids ?? [])]);
     const parents = new Map<string, string>();
     // A valid empty preservation list explicitly drops all earlier rows.

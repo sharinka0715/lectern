@@ -142,6 +142,7 @@ export function replayEntries(input: DiagnosticEntry[], options: ReplayOptions =
       if (bytes) state.display.ingestJsonl(bytes, true, true);
       if (typeof entry.data.skippedHistoryRecords === 'number') state.display.noteSkippedHistoryRecords(entry.data.skippedHistoryRecords);
     } else if (entry.event === 'controller.poll.apply') {
+      state.display.setRewindProcess(typeof entry.data.rewindStartedAt === 'number' ? entry.data.rewindStartedAt : undefined);
       const incoming = isDigest(entry.data.jsonl) ? entry.data.jsonl : undefined;
       let chunk: Buffer | undefined;
       if (entry.data.jsonlCaptureId) chunk = capture(state, entry, entry.data.jsonlCaptureId, 'jsonl', entry.data.jsonl);
