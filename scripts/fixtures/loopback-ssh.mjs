@@ -17,7 +17,7 @@ export async function waitUntil(predicate, message, timeout = 18000) {
   throw new Error(message);
 }
 
-export async function startLoopback({ root, env, alias, aliases = [] }) {
+export async function startLoopback({ root, env, alias, aliases = [], ssh = 'ssh' }) {
   const account = userInfo().username;
   for (const name of ['host', 'client']) {
     await exec('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path.join(root, name)]);
@@ -45,7 +45,7 @@ export async function startLoopback({ root, env, alias, aliases = [] }) {
     await waitUntil(async () => {
       if (daemon.exitCode !== null) throw new Error('Fixture sshd stopped. ' + errors);
       try {
-        await exec('ssh', ['-F', client, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', alias, 'true']);
+        await exec(ssh, ['-F', client, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', alias, 'true']);
         return true;
       } catch { return false; }
     }, 'Could not authenticate to the disposable loopback sshd');

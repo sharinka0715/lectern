@@ -23,9 +23,14 @@ test('menus drop empty entries and leading, doubled or trailing separators', () 
   assert.deepEqual(normalizeMenu(['separator', false]), []);
 });
 
-test('machine menus: SSH machines can be logged in, renamed, copied and removed; this computer cannot be removed', () => {
+test('machine menus offer disconnect and reconnect according to the SSH master state', () => {
   const ssh: WorkspaceMachine = { key: 'k', name: 'gpu-box', endpoint: { kind: 'ssh', host: 'gpu-box' }, folders: [] };
-  assert.deepEqual(labels(machineMenu(ssh, actions())), ['添加项目文件夹', '登录这台机器', '—', '重命名…', '复制主机地址', '编辑 SSH 连接…', '—', '移除这台机器…']);
+  assert.deepEqual(labels(machineMenu(ssh, actions(), 'private')), ['添加项目文件夹', '登录这台机器', '断开 SSH 连接', '—', '重命名…', '复制主机地址', '编辑 SSH 连接…', '—', '移除这台机器…']);
+  assert.equal(item(machineMenu(ssh, actions(), 'private'), '断开 SSH 连接').disabled, false);
+  assert.equal(item(machineMenu(ssh, actions(), 'user'), '断开 SSH 连接').disabled, true);
+  assert.match(item(machineMenu(ssh, actions(), 'user'), '断开 SSH 连接').hint!, /自己的 SSH 连接/);
+  assert.equal(item(machineMenu(ssh, actions(), 'none'), '断开 SSH 连接').disabled, true);
+  assert.ok(labels(machineMenu(ssh, actions(), 'disconnected')).includes('连接'));
   const local: WorkspaceMachine = { key: 'local', name: '本地', endpoint: { kind: 'local' }, folders: [] };
   assert.deepEqual(labels(machineMenu(local, actions())), ['添加项目文件夹', '发现本机会话']);
   assert.equal(item(machineMenu(ssh, actions({ demo: true })), '移除这台机器…').disabled, true);

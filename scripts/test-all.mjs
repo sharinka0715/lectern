@@ -30,7 +30,7 @@ process.chdir(root);
 /** Offline desktop e2e scripts (scripts/<name>.mjs). None reaches a real model or SSH host. */
 export const e2eScripts = [
   'e2e', 'conversation-settings-e2e', 'workbench-ui-e2e', 'history-pagination-e2e', 'history-resume-bar-e2e', 'history-e2e',
-  'history-images-e2e', 'handoff-history-ui-e2e', 'ssh-ui-e2e', 'ssh-status-ui-e2e', 'ssh-login-ui-e2e', 'host-check-e2e',
+  'history-images-e2e', 'handoff-history-ui-e2e', 'ssh-ui-e2e', 'ssh-status-ui-e2e', 'ssh-login-ui-e2e', 'ssh-persistence-ui-e2e', 'host-check-e2e',
   'ssh-config-import-e2e', 'sidebar-notifications-e2e', 'sidebar-paging-e2e', 'sidebar-layout-e2e', 'sidebar-split-e2e', 'sidebar-folds-e2e',
   'titlebar-ui-e2e', 'manual-ui-e2e', 'artifacts-ui-e2e', 'chat-image-thumbnail-e2e', 'settings-e2e',
   'question-ui-e2e', 'permission-early-e2e', 'trust-ui-e2e', 'session-rename-ui-e2e', 'saved-history-ui-e2e', 'release-notes-ui-e2e',

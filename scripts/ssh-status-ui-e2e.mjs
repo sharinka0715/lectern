@@ -31,6 +31,7 @@ try {
     const replace = (method, handler) => { ipcMain.removeHandler(`lectern:${method}`); ipcMain.handle(`lectern:${method}`, handler); };
     const workspaces = event => event.sender.executeJavaScript('window.desktop.listWorkspaces()');
     const folder = async (event, id) => (await workspaces(event)).find(item => item.id === id);
+    replace('sshMasterState', async (_event, target) => fixture.loggedIn.has(target.host) ? 'private' : 'none');
     replace('checkSshConnection', async (_event, target) => {
       fixture.checks.push(target.host);
       return fixture.loggedIn.has(target.host) ? { ok: true } : { ok: false, message: denied(target.host).message };

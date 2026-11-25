@@ -197,6 +197,11 @@ export class SessionViews {
   liveSnapshots(): SessionSnapshot[] {
     return [...this.readers.values()].map(reader => reader.controller.currentSnapshot).filter((snapshot): snapshot is SessionSnapshot => !!snapshot?.paneId);
   }
+  setSshDisconnected(workspaces: Set<string>, disconnected: boolean) {
+    for (const { controller } of this.readers.values()) {
+      if (workspaces.has(controller.currentSnapshot?.workspaceId ?? '')) controller.setSshDisconnected(disconnected);
+    }
+  }
   /** Language switched: shown conversations republish their texts. */
   relocalize() {
     for (const reader of this.readers.values()) if (reader.views.size) reader.controller.relocalize();

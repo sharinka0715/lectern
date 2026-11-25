@@ -37,8 +37,15 @@ export function isLaterVersion(a: string, b: string): boolean {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.4',
-    features: [],
+    features: [
+      ['Lectern 自己的 SSH 连接可以在退出后保留，默认 1 小时，可调整时长或选择退出时断开。',
+        "Keep Lectern's own SSH connections after quitting for one hour by default, choose a different duration, or disconnect on quit."],
+      ['在侧栏机器右键菜单或 SSH 设置里手动断开连接，之后可以重新连接。',
+        'Disconnect a machine from its sidebar context menu or SSH settings, then reconnect when needed.'],
+    ],
     changes: [
+      ['Lectern 自己的 SSH 连接默认由退出时断开改为退出后保留 1 小时。',
+        "The default for Lectern's own SSH connections changes from disconnecting on quit to keeping them for one hour."],
       ['回退更快：长对话只读一遍完整历史，在回退菜单里一次移动到目标再核对位置。',
         'Rewinding is faster: a long conversation\'s history is read once, and the rewind menu moves to the target in one go before its position is checked.'],
     ],

@@ -412,6 +412,7 @@
 /* SSH config import */
 .pref-connection-actions { justify-content: flex-start; flex-wrap: wrap; }
 .pref-ssh-connection { margin-top: calc(18 * var(--ui-px)); border-top: 1px solid var(--line); }
+.pref-ssh-machine-button { flex-shrink: 0; }
 .pref-actions .pref-import-link { margin-right: auto; }
 .ssh-import-modal .history-scan-summary { gap: 12px; }
 .ssh-import-filter { flex: 1; min-width: 0; padding: calc(6 * var(--ui-px)) 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--text-label); }

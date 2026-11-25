@@ -114,6 +114,10 @@ Host devbox
   IdentityFile ~/.ssh/id_ed25519
 ```
 
+在 macOS 和 Linux 上，Lectern 自己建立的 SSH 连接默认在最后一个 SSH 会话结束后空闲保留 1 小时，重新打开 Lectern 时可以复用。可以在「设置 → SSH 连接」选择时长或改成退出时断开。新时长适用于之后建立的连接，选择退出时断开会在退出时关闭 Lectern 的所有连接。
+
+在侧栏机器的右键菜单或「设置 → SSH 连接」可手动断开 Lectern 自己的连接。断开后本次运行会暂停该机器的后台读取，可以点「连接」，或打开对话、发送消息来恢复。远端 tmux 和 Claude Code 会继续运行，你自己的 SSH 连接仍由 SSH 配置管理。
+
 退出 Lectern 后，对话仍在 tmux 中运行。「关闭对话」会结束 Claude Code 进程；关闭分屏只是关掉这个视图。
 
 Lectern 只管理名称以 `lectern-` 开头的 tmux 会话，不会碰你自己开的其他 tmux 窗口。想把自己启动的 Claude Code 交给 Lectern，可以在 `tmux new -s lectern-<名称>` 里运行它。

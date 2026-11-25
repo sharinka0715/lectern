@@ -53,7 +53,7 @@ import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import { checkForUpdatesFromMenu, UpdatePrompt } from "./UpdatePrompt";
 import { QuitPromptHost } from "./QuitDialog";
 import { needsSshLogin, openSshLogin } from "./ssh-login";
-import { checkSshMachines, markNavigated, setMachineConnection, sshConnectionError, sshMachineKey, sshMachines, useMachineConnections, useNavigated } from "./ssh-machines";
+import { checkSshMachines, connectSshMachine, machineDisconnected, markNavigated, setMachineConnection, sshConnectionError, sshMachineKey, sshMachines, useMachineConnections, useNavigated } from "./ssh-machines";
 import { commandPolicy, goalCommand } from "../shared/native-commands";
 import "./artifacts.css";
 import "./context-menu.css";
@@ -329,6 +329,7 @@ function ChatPane({ view, resumes, setResume }: {
   const selectionGeneration = sessionRequest.current;
   const snapshotRevision = useRef(0);
   const workspace = workspaces.find((item) => item.id === workspaceId);
+  const disconnected = workspace?.kind === "ssh" && machineDisconnected(workspace);
   const primaryWorkspace = workspaces.find(item => item.id === prefs.panes.primary?.workspaceId);
   const session = discovery?.sessions.find((item) => item.id === sessionId);
   const hasHandoff = !!session?.historySourceIds?.length;
@@ -446,6 +447,7 @@ function ChatPane({ view, resumes, setResume }: {
   }, [snapshot?.messages, outgoingScope, outgoing]);
   const canSend =
     !!snapshot &&
+    !disconnected &&
     !busy &&
     !!paneId &&
     !snapshot.settingBusy &&
@@ -487,7 +489,15 @@ function ChatPane({ view, resumes, setResume }: {
   const hostLacks = hostMissing(hostStatus);
   const hostName = workspace?.kind === "ssh" ? machineLabel(workspace) : undefined;
   const hostBlocked = !!workspace && hostLacks.length > 0 && !paneId;
-  const canType = canSend || (isDraft && !launch && !busy && !hostBlocked);
+  const canType = canSend || (isDraft && !launch && !busy && (!hostBlocked || disconnected)) || !!(disconnected && paneId && !busy);
+  const [reconnectSend, setReconnectSend] = useState<{ request: number; revision: number; text: string; mode: "queue" | "steer" }>();
+  const reconnectSubmitting = useRef(false);
+  async function reconnectToSend(target: Workspace) {
+    if (!target.host || reconnectSubmitting.current) return false;
+    reconnectSubmitting.current = true;
+    try { return await connectSshMachine({ host: target.host, port: target.port }, machineLabel(target)); }
+    finally { reconnectSubmitting.current = false; }
+  }
   // Sending, a reply starting or ending, a card or a setting switch must not cost the input box its focus:
   // the box the user is in takes typing on (pastes and the @ list too); only sending waits for canType.
   const composerFocus = useComposerFocus({ inputRef, area: composerDock, canType, scope: `${workspaceId}:${sessionId}`,
@@ -576,7 +586,7 @@ function ChatPane({ view, resumes, setResume }: {
   }, [workspaceId,sessionId,draft]);
   // `reveal`: open its folder in the sidebar's tree (see useWorkspaceTree's expand).
   const openSession = useCallback(
-    async (wsId: string, id: string, { reveal = true, workspaceChanged = false } = {}) => {
+    async (wsId: string, id: string, { reveal = true, workspaceChanged = false, reconnect = false } = {}) => {
       const request = ++sessionRequest.current;
       const revision = snapshotRevision.current;
       selected.current = { workspaceId: wsId, sessionId: id };
@@ -598,6 +608,11 @@ function ChatPane({ view, resumes, setResume }: {
       setError("");
       setDraft(unsentDrafts.get(draftKey(wsId,id)) || "");
       try {
+        if (reconnect && targetWorkspace?.kind === "ssh" && targetWorkspace.host && machineDisconnected(targetWorkspace)) {
+          await connectSshMachine({ host: targetWorkspace.host, port: targetWorkspace.port },
+            machineName(targetWorkspace, "", desktopState().connections));
+          if (sessionRequest.current !== request) return;
+        }
         const next = await window.desktop.watchSession(wsId, id, view);
         if (
           sessionRequest.current === request &&
@@ -744,7 +759,7 @@ function ChatPane({ view, resumes, setResume }: {
       const ws = workspacesRef.current.find(w => w.id === target.workspaceId);
       if (ws && (selected.current.workspaceId !== target.workspaceId || selected.current.sessionId !== target.sessionId
         || !!selected.current.draft !== !!target.draft)) {
-        if (target.sessionId) void openSession(target.workspaceId,target.sessionId);
+        if (target.sessionId) void openSession(target.workspaceId, target.sessionId, { reconnect: true });
         else if (target.draft) enterDraft(ws);
         else selectWorkspace(ws);
       }
@@ -870,7 +885,7 @@ function ChatPane({ view, resumes, setResume }: {
     if (target?.kind !== "ssh" || !target.host) { setMachinePrompt(undefined); return; }
     const key = sshMachineKey(target.host, target.port), status = connectionOf(key);
     // Switching to a machine checks its tools (unless it cannot be reached at all).
-    if (status?.state !== "login" && status?.state !== "unreachable" && status?.state !== "unsupported") ensureHostTools({ kind: "ssh", host: target.host, port: target.port });
+    if (status?.state !== "disconnected" && status?.state !== "login" && status?.state !== "unreachable" && status?.state !== "unsupported") ensureHostTools({ kind: "ssh", host: target.host, port: target.port });
     setMachinePrompt(status?.state === "login" || status?.state === "unreachable" || status?.state === "unsupported"
       ? { key, host: target.host, port: target.port, label: machineLabel(target) } : undefined);
   }
@@ -1039,7 +1054,7 @@ function ChatPane({ view, resumes, setResume }: {
    * once its input box is ready (the effect below). Nothing runs before this. */
   async function sendFromDraft() {
     const target = workspace;
-    if (!target || sessionId || launch || busy || hostBlocked || !draft.trim()) return;
+    if (!target || sessionId || launch || busy || (hostBlocked && !disconnected) || !draft.trim()) return;
     const text = draft, command = text.trim(), policy = commandPolicy(command);
     if (policy.kind === 'block') { setError(policy.message, target); return; }
     if (policy.kind === 'route' && (policy.target === 'model' || policy.target === 'effort')) {
@@ -1049,6 +1064,10 @@ function ChatPane({ view, resumes, setResume }: {
     if (policy.kind === 'route' && policy.target === 'goal') { setDraft(''); showToast(t('app.goalNone')); return; }
     if (policy.kind === 'route') { setError(t('app.draftNoRewind'), target); return; }
     const id = `outgoing:${Date.now()}`, choices = draftChoices, request = sessionRequest.current;
+    if (disconnected && target.host) {
+      if (!await reconnectToSend(target) ||
+          sessionRequest.current !== request || unsentDrafts.get(draftKey(target.id, "")) !== text) return;
+    }
     const newLaunch = { id: crypto.randomUUID(), nonce: launchNonce() };
     // The message leaves the box at Enter, before the settings check on the target (a round
     // trip, longer over SSH): what is typed meanwhile stays in the box. Cancelling the override
@@ -1129,6 +1148,11 @@ function ChatPane({ view, resumes, setResume }: {
 
   async function send(mode: "queue" | "steer" = "queue") {
     if (isDraft && !sessionId) { await sendFromDraft(); return; }
+    if (disconnected && workspace?.host && sessionId && draft.trim() && !sending) {
+      const pending = { request: sessionRequest.current, revision: snapshotRevision.current, text: draft, mode };
+      if (await reconnectToSend(workspace)) setReconnectSend(pending);
+      return;
+    }
     if (!workspace || !sessionId || !draft.trim() || sending || !canSend)
       return;
     const text = draft;
@@ -1192,6 +1216,13 @@ function ChatPane({ view, resumes, setResume }: {
       setSending(false);
     }
   }
+  useEffect(() => {
+    if (!reconnectSend) return;
+    if (reconnectSend.request !== sessionRequest.current || reconnectSend.text !== draft) { setReconnectSend(undefined); return; }
+    if (disconnected || reconnectSend.revision === snapshotRevision.current) return;
+    setReconnectSend(undefined);
+    if (canSend) void send(reconnectSend.mode);
+  }, [reconnectSend, disconnected, snapshot, canSend, draft, workspaceId, sessionId]);
 
   /** The goal pill's "Clear goal": `/goal clear`, confirmed first; during a reply Claude Code runs it at once. */
   async function clearGoal() {
@@ -1303,8 +1334,12 @@ function ChatPane({ view, resumes, setResume }: {
     editWorkspace: target => setWorkspaceModal(target),
     saveWorkspace: renameWorkspace,
     removeWorkspace,
-    open: (target, id) => selectFromTree(target, id),
-    openBeside: (target, chat) => splitChat({ workspaceId: target.id, sessionId: chat.id, title: chat.title || t('app.chat') }, "right"),
+    open: (target, id) => void selectFromTree(target, id),
+    openBeside: async (target, chat) => {
+      if (target.kind === "ssh" && target.host && machineDisconnected(target) &&
+          !await connectSshMachine({ host: target.host, port: target.port }, machineLabel(target))) return;
+      splitChat({ workspaceId: target.id, sessionId: chat.id, title: chat.title || t('app.chat') }, "right");
+    },
     archiveSession: archiveTreeSession,
     editConversationSettings: (target, chat) => void editConversationSettings(target, chat),
   };
@@ -1380,7 +1415,9 @@ function ChatPane({ view, resumes, setResume }: {
     .filter(chat => chat.paneId || !archivedKeys.has(archiveKey(entry.data!.workspace.id, chat.id))).map(chat => ({
     workspaceId:entry.data!.workspace.id,sessionId:chat.id,title:chat.title || t('app.chat'),
   }))).find(chat=>!sameChat(chat,prefs.panes[view])) || null;
-  function selectFromTree(w:Workspace,id:string) {
+  async function selectFromTree(w:Workspace,id:string) {
+    if (w.kind === "ssh" && w.host && machineDisconnected(w) &&
+        !await connectSshMachine({ host: w.host, port: w.port }, machineLabel(w))) return;
     navigateTo(w);
     expandWorkspace(w);
     const chat:ChatTarget={workspaceId:w.id,sessionId:id,title:workspaceStates[w.id]?.data?.sessions.find(c=>c.id===id)?.title || t('app.chat')};
@@ -1523,7 +1560,11 @@ function ChatPane({ view, resumes, setResume }: {
             {info.demo && <span className="demo-badge">{t('app.demoBadge')}</span>}
           </div>
           <div className="topbar-actions">
-            <SplitButtons view={view} alternative={alternativeSession}/>
+            <SplitButtons view={view} alternative={alternativeSession} connect={target => {
+              const toOpen = workspacesRef.current.find(item => item.id === target.workspaceId);
+              return toOpen?.kind === "ssh" && toOpen.host && machineDisconnected(toOpen)
+                ? connectSshMachine({ host: toOpen.host, port: toOpen.port }, machineLabel(toOpen)) : true;
+            }}/>
             {hasHandoff && <button type="button" className="toolbar-button" aria-label={t('app.handoff')} title={t('app.handoffTitle')} aria-haspopup="dialog"
               onClick={() => setHandoffScope(activityScope)}><History size={16} /><span>{t('app.handoff')}</span></button>}
             {sessionId && <button className={`toolbar-button${activityShown ? " selected" : ""}`} title={t('app.activityTitle')} aria-label={t('app.activityTitle')} aria-expanded={activityShown}
@@ -1601,7 +1642,7 @@ function ChatPane({ view, resumes, setResume }: {
             </span>
           </div>
         )}
-        {bannerText && !quietBanner && (
+        {!disconnected && bannerText && !quietBanner && (
           <div className="error-banner" role="alert">
             <Unplug size={17} />
             <span>{bannerText}</span>
@@ -1651,9 +1692,9 @@ function ChatPane({ view, resumes, setResume }: {
             </button>
           </div>
         )}
-        {workspace && hostStatus && <HostToolsNotice machineKey={machineKey(workspace)} machine={hostName} status={hostStatus} onRecheck={() => recheckHost(workspace)}/>}
+        {!disconnected && workspace && hostStatus && <HostToolsNotice machineKey={machineKey(workspace)} machine={hostName} status={hostStatus} onRecheck={() => recheckHost(workspace)}/>}
         {/* A connection problem shows as the machine's own prompt; anything else that stopped the check is said here. */}
-        {workspace && hostStatus?.state === "failed" && hostConnection !== "login" && hostConnection !== "unreachable" && hostConnection !== "unsupported" &&
+        {!disconnected && workspace && hostStatus?.state === "failed" && hostConnection !== "login" && hostConnection !== "unreachable" && hostConnection !== "unsupported" &&
           <HostCheckFailed machine={hostName} message={hostStatus.message} onRecheck={() => recheckHost(workspace)}/>}
         {workspace && hostStatus?.state === "ok" && <OutdatedClaude machineKey={machineKey(workspace)} machine={hostName} tools={hostStatus.tools}/>}
         {discovery?.diagnostic && (
@@ -1908,7 +1949,7 @@ function ChatPane({ view, resumes, setResume }: {
             <div className="composer-settings" ref={composerContext}>
               {isDraft ? <DraftSettings key={workspaceId + ":" + draftVersion} workspaceId={workspaceId} choices={draftChoices} onChange={setDraftChoices}
                 file={draftFile} onFile={setDraftFile}
-                disabled={!!launch || busy} /> : <SessionSettings key={settingScope} workspaceId={workspaceId} sessionId={sessionId} paneId={paneId} status={activeStatus}
+                disabled={!!launch || busy || !!disconnected} /> : <SessionSettings key={settingScope} workspaceId={workspaceId} sessionId={sessionId} paneId={paneId} status={activeStatus}
                 navigationStatus={snapshot?.navigationStatus} nativeInputReady={snapshot?.settingsInputReady}
                 pendingSettingCommand={snapshot?.pendingSettingCommand} settings={snapshot?.settings}
                 statusLineManaged={statusLineManaged} statusLine={statusLine}
@@ -2022,7 +2063,7 @@ function ChatPane({ view, resumes, setResume }: {
       )}
       {settingsEditor && <SettingsFileEditor {...settingsEditor} />}
       {overrides && <SettingsOverrideDialog {...overrides} />}
-      {preferencesOpen && <PreferencesDialog workspaces={workspaces} platform={info.platform} newMachine={preferencesOpen === "new-machine"} onClose={()=>setPreferencesOpen(false)}
+      {preferencesOpen && <PreferencesDialog workspaces={workspaces} platform={info.platform} demo={info.demo} newMachine={preferencesOpen === "new-machine"} onClose={()=>setPreferencesOpen(false)}
         hookStatus={snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId ? snapshot.dialogHooks : undefined}/>}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {releaseNotesOpen && <ReleaseNotesDialog current={info.version} onClose={() => setReleaseNotesOpen(false)} />}

@@ -90,10 +90,13 @@ npm run test:native
 
 目标 sshd 每条连接最多同时开 `MaxSessions` 个会话（默认 10），超出时跳板报「open failed」。Lectern 按主机计数自己开着的会话：常驻命令通道、终端接管的常驻流和一次性会话（可取消的扫描、上传下载、通道全忙时的命令），一个会话从启动 ssh 客户端算到客户端退出。复用用户自己的 master 时（`mode: "shared"`）每台主机最多 4 个、其中通道最多 2 条；走 Lectern 自己的连接时（`mode: "exclusive"`，设置里关掉「复用已有的 SSH 连接」，或这台机器没有用户的 master）最多 8 个、通道最多 3 条。
 
+Lectern 自己的 master 使用 OpenSSH 的 `ControlPersist`，最后一个 SSH 会话结束后才开始计时，默认 1 小时。可保留的套接字目录按应用资料目录区分，启动时用 `ssh -O check` 检查仍存活的 master。手动断开后，本次运行暂停该机器的后台请求，显式连接后恢复。
+
 - `transport.session.queued`：一次排队超过 1 秒时在排到时记一条（超过 10 秒为 warn）。`host`、`port`、`mode`、`limit`、排队的用途 `use`（`command` / `terminal`）、结果 `outcome`（`place` 拿到名额，`channel` 改走变空闲的通道，`aborted` 被取消）、`waitedMs`，以及当时的占用 `channels`、`terminals`、`commands` 和仍在排队的 `waiting`。
 - `transport.session.channel_yielded`：名额已满且有请求在排队，一条空闲通道被关掉把名额让出来（随后在有空余时重开）。
 - `transport.session.unconfirmed`：超时或取消后，ssh 客户端在关闭输入 5 秒后仍未退出、只能杀掉，远端会话可能还在；这个名额再多占 `holdMs`（30 秒）才归还。正常情况下关闭输入后远端包装立即结束整个进程组，客户端随即退出，不会出现这一条。
 - `transport.ssh.connection_setting`：切换了「复用已有的 SSH 连接」（`reuseUserMasters`）；`transport.ssh.private_master_stopped` 是重新开启复用时，对已有用户 master 的主机，Lectern 自己的 master 收到 `-O stop`（不再接新会话，现有终端接管结束后退出）。`transport.ssh.connection`（debug）逐条记录走用户 master 还是私有 master，`transport.channel.opened` 带当时的 `mode`。
+- `transport.ssh.persistence_unavailable`：固定套接字目录不可用，例如属主或权限校验失败。该实例改用临时私有目录，退出时关闭其中的 master。
 
 ## 模型与 effort 操作
 

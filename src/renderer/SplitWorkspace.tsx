@@ -20,12 +20,18 @@ import { t } from '../shared/i18n';
 export function SplitButtons({
   view,
   alternative,
+  connect,
 }: {
   view: ChatView;
   alternative: ChatTarget | null;
+  connect(target: ChatTarget): boolean | Promise<boolean>;
 }) {
   const state = useDesktopState();
-  const open = (edge: SplitEdge) => splitChat(alternative, edge, view);
+  const open = (edge: SplitEdge) => {
+    const ready = alternative ? connect(alternative) : true;
+    if (ready === true) splitChat(alternative, edge, view);
+    else if (ready) void ready.then(connected => { if (connected) splitChat(alternative, edge, view); });
+  };
   return state.split ? (
     <>
       <button

@@ -24,7 +24,7 @@ import { MIN_HISTORY_PAGE_MIB, MAX_HISTORY_PAGE_MIB } from '../shared/history-pa
 import { workspaceMachines } from "./workspace-machines";
 import { CodePreview } from "./CodePreview";
 import { openSshLogin } from "./ssh-login";
-import { setMachineConnection, sshMachines, useMachineConnections } from "./ssh-machines";
+import { connectSshMachine, disconnectSshMachine, setMachineConnection, sshDisconnectHint, sshMachines, useMachineConnections, type SshMachine } from "./ssh-machines";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
 import { UpdateSettings } from "./UpdatePrompt";
 import { QuitPreferenceSetting } from "./QuitDialog";
@@ -56,6 +56,9 @@ import { dateTimeText, t, type LocalePreference, type MessageKey } from '../shar
 import { promptCacheTtlPreset, promptCacheTtlPresets, type PromptCacheTtlPreset } from '../shared/prompt-cache';
 import type { DialogHookStatus } from '../shared/dialog-hooks';
 import type { LocaleState } from '../shared/types';
+import type { SshMasterState } from '../shared/ssh-connections';
+import { reportActionError } from './diagnostics';
+import { showToast } from './ContextMenu';
 
 const cacheTtlLabels: Record<PromptCacheTtlPreset, MessageKey> = {
   default: 'prefs.cacheTtlDefault', 'both-5m': 'prefs.cacheTtlBoth5m', 'both-1h': 'prefs.cacheTtlBoth1h',
@@ -79,12 +82,14 @@ function hookStatusText(status: DialogHookStatus) {
 export function PreferencesDialog({
   workspaces,
   platform,
+  demo,
   newMachine = false,
   onClose,
   hookStatus,
 }: {
   workspaces: Workspace[];
   platform: string;
+  demo?: boolean;
   newMachine?: boolean;
   onClose(): void;
   /** The open chat's recording hooks (Settings → Session). */
@@ -451,7 +456,8 @@ export function PreferencesDialog({
               </p>
               {sshMachines(settings.connections, workspaces).map((machine) => {
                 const c = machine.profile, status = connectionOf(machine.key);
-                const problem = status?.state === "login" ? t('prefs.stateLogin') : status?.state === "unreachable" ? t('prefs.stateOffline') : status?.state === "unsupported" ? t('prefs.stateUnsupported') : "";
+                const disconnected = status?.state === "disconnected";
+                const problem = disconnected ? t('prefs.sshDisconnected') : status?.state === "login" ? t('prefs.stateLogin') : status?.state === "unreachable" ? t('prefs.stateOffline') : status?.state === "unsupported" ? t('prefs.stateUnsupported') : "";
                 return (
                 <div key={machine.key} className="pref-project" data-ssh-machine={machine.host}>
                   <div>
@@ -463,7 +469,8 @@ export function PreferencesDialog({
                       {!c && t('prefs.addedByFolder')}
                     </small>
                   </div>
-                  <button
+                  <SshMachineButton machine={machine} disconnected={disconnected} available={!demo && platform !== "win32"} />
+                  {!disconnected && <button
                     className="icon-button"
                     aria-label={t('prefs.loginMachine', { name: machine.name })}
                     title={t('prefs.loginThisMachine')}
@@ -471,7 +478,7 @@ export function PreferencesDialog({
                       onDone: () => setMachineConnection(machine.key, { state: "ok" }) })}
                   >
                     <LogIn size={14} />
-                  </button>
+                  </button>}
                   <button
                     className="icon-button"
                     aria-label={t('prefs.editConnectionOf', { name: machine.name })}
@@ -575,7 +582,7 @@ export function PreferencesDialog({
                   </button>
                 </div>
               )}
-              <SshConnectionSetting />
+              <SshConnectionSetting platform={platform} />
             </>
           )}
         </section>
@@ -593,6 +600,40 @@ export function PreferencesDialog({
       )}
     </dialog>
   );
+}
+
+function SshMachineButton({ machine, disconnected, available }: { machine: SshMachine; disconnected: boolean; available: boolean }) {
+  const { host, port, name } = machine;
+  const [master, setMaster] = useState<SshMasterState>("none");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setMaster("none");
+    if (disconnected || !available) return;
+    let live = true;
+    const check = () => { void window.desktop.sshMasterState({ host, port }).then(state => { if (live) setMaster(state); }).catch(() => {}); };
+    check();
+    const timer = setInterval(check, 3000);
+    return () => { live = false; clearInterval(timer); };
+  }, [host, port, disconnected, available]);
+  const connect = disconnected || master === "disconnected";
+  return <button className="secondary-button pref-ssh-machine-button" type="button"
+    disabled={busy || !available || (!connect && master !== "private")}
+    title={connect ? undefined : sshDisconnectHint(master)}
+    aria-label={t(connect ? 'prefs.sshConnectMachine' : 'prefs.sshDisconnectMachine', { name })}
+    onClick={async () => {
+      setBusy(true);
+      try {
+        if (connect) await connectSshMachine({ host, port }, name);
+        else {
+          await disconnectSshMachine({ host, port }, name);
+          setMaster(await window.desktop.sshMasterState({ host, port }));
+        }
+      } catch (error) {
+        reportActionError(error, 'SSH connection action');
+        showToast(error instanceof Error ? error.message : String(error));
+      }
+      finally { setBusy(false); }
+    }}>{t(connect ? 'prefs.sshConnect' : 'prefs.sshDisconnect')}</button>;
 }
 
 /** Conversations archived from the sidebar, grouped by folder. Their files on the

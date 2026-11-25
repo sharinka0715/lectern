@@ -179,23 +179,35 @@ export async function runInteractiveLogin({ command, answer, node = askpassNode(
     await new Promise<void>((resolve, reject) => {
       const child = spawn(command.file, command.args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, env });
       let settled = false;
+      let interrupted: Error | undefined;
+      let force: ReturnType<typeof setTimeout> | undefined;
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        clearTimeout(force);
         signal?.removeEventListener('abort', abort);
         // The backgrounded master may inherit stderr; stop reading it either way.
         child.stderr.destroy();
         if (error) reject(error); else resolve();
       };
-      const abort = () => { cancelled = true; child.kill(); finish(new Error(t('backend.loginCancelled'))); };
-      const timer = setTimeout(() => { child.kill(); finish(new Error(t('backend.loginTimeout'))); }, timeoutMs);
+      const interrupt = (error: Error) => {
+        if (interrupted) return;
+        interrupted = error;
+        // Wait for the SSH launcher to exit before its caller checks or closes any master it created.
+        child.kill();
+        force = setTimeout(() => child.kill('SIGKILL'), 1000);
+        force.unref();
+      };
+      const abort = () => { cancelled = true; interrupt(new Error(t('backend.loginCancelled'))); };
+      const timer = setTimeout(() => interrupt(new Error(t('backend.loginTimeout'))), timeoutMs);
       signal?.addEventListener('abort', abort, { once: true });
       child.stderr.setEncoding('utf8');
       child.stderr.on('data', (chunk: string) => { if (stderr.length < 32_768) stderr += chunk; });
       child.on('error', error => finish(error));
       child.on('exit', code => {
-        if (code === 0) finish();
+        if (interrupted) finish(interrupted);
+        else if (code === 0) finish();
         else finish(new Error(cancelled ? t('backend.loginCancelled') : context()?.split('\n').at(-1) || t('backend.loginFailed', { code: String(code) })));
       });
     });

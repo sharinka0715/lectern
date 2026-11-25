@@ -27,7 +27,7 @@ import { knownUnreachable, QuitFlow, summarizeRunning, quitPromptEnabled, withDe
 import { QuitSettings } from './quit-settings';
 import { SshSettings } from './ssh-settings';
 import { quitActivityText, quitAnswers, quitGroups, quitTitle, type QuitAnswer, type QuitPrompt } from '../shared/quit';
-import type { MenuAction, RendererDiagnostic, SessionSnapshot, Workspace } from '../shared/types';
+import type { MenuAction, RendererDiagnostic, SessionSnapshot, SshLoginTarget, Workspace } from '../shared/types';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import { maxAttachmentBytes } from '../shared/attachments';
 import { sshOnly, sshOnlyMessage } from '../shared/supported-targets';
@@ -262,6 +262,10 @@ async function runningConversations() {
   const known = new Map(workspaces.map(workspace => [workspace.id, backend.knownRunning(workspace.id)]));
   const checks = new Map<string, FolderCheck>();
   await Promise.all(workspaces.filter(workspace => !knownUnreachable(known.get(workspace.id))).map(async workspace => {
+    if (backend.isSshDisconnected(workspace)) {
+      checks.set(workspace.id, { error: t('backend.sshDisconnected') });
+      return;
+    }
     try {
       const sessions = await withDeadline(backend.runningSessions(workspace), quitCheckMs, () => t('quit.checkTimeout', { seconds: quitCheckMs / 1000 }));
       checks.set(workspace.id, { sessions });
@@ -329,7 +333,11 @@ async function boot() {
     const conversationSettings = new ConversationSettingsStore(app.getPath('userData'));
     await conversationSettings.load();
     const cache = new SessionSettingsCache(new SessionSettingsDiskStore(app.getPath('userData')));
-    controller = new Controller(store, new Backend({ conversationSettings, historyIndexStore: new HistoryIndexDiskStore(app.getPath('userData')), reuseSshConnections: sshPreferences.reuseConnections }), cache);
+    const userData = app.getPath('userData');
+    controller = new Controller(store, new Backend({ conversationSettings, historyIndexStore: new HistoryIndexDiskStore(userData),
+      reuseSshConnections: sshPreferences.reuseConnections, sshUserData: userData, sshKeepAliveSeconds: sshPreferences.keepAliveSeconds,
+      sshControlRoot: !app.isPackaged && app.commandLine.hasSwitch('remote-debugging-port') ? process.env.LECTERN_TEST_SSH_CONTROL_ROOT : undefined }), cache);
+    await controller.backend.initializeSsh();
   }
   controller.warmModelCatalogs();
   // An open `@` list asks again when a background scan of its folder lands.
@@ -356,6 +364,15 @@ async function boot() {
     return { attachment, check };
   }
   const sshLogins = new Map<string, { abort: AbortController; prompts: Map<string, (answer: string | null) => void> }>();
+  const activeSshInputs = new Set<{ workspace: Workspace }>();
+  const matchesSsh = (workspace: Workspace, target: SshLoginTarget) =>
+    workspace.kind === 'ssh' && workspace.host === target.host && workspace.port === target.port;
+  const sshFolders = (target: SshLoginTarget) => new Set(controller.store.list().filter(workspace => matchesSsh(workspace, target)).map(workspace => workspace.id));
+  const sshWorkspace = (target: SshLoginTarget) => {
+    if (demo) throw new Error(t('main.demoNoSsh'));
+    if (!target || typeof target !== 'object') throw new Error(t('main.invalidSshMachine'));
+    return validateWorkspace({ id: 'ssh-machine', name: 'SSH machine', kind: 'ssh', cwd: '/', host: target.host, port: target.port });
+  };
   const updates = createUpdates({ window: () => window, automated: silentWindows, demo });
   stopUpdates = updates.stop;
   quitSettings = new QuitSettings(path.join(app.getPath('userData'), 'quit-settings.json'));
@@ -499,7 +516,7 @@ async function boot() {
       const login = { abort: new AbortController(), prompts: new Map<string, (answer: string | null) => void>() };
       sshLogins.set(loginId, login);
       try {
-        return await controller.backend.sshLogin({ host: target.host, port: target.port }, prompt => new Promise(resolve => {
+        const result = await controller.backend.sshLogin({ host: target.host, port: target.port }, prompt => new Promise(resolve => {
           if (login.abort.signal.aborted) return resolve(null);
           const promptId = randomUUID();
           // Notices need no reply; OpenSSH continues while the dialog shows them.
@@ -507,6 +524,8 @@ async function boot() {
           else login.prompts.set(promptId, resolve);
           window?.webContents.send('lectern:ssh-login-prompt', { loginId, promptId, ...prompt });
         }), login.abort.signal);
+        controllers.setSshDisconnected(sshFolders(target), false);
+        return result;
       } finally {
         sshLogins.delete(loginId);
         for (const resolve of login.prompts.values()) resolve(null);
@@ -525,6 +544,27 @@ async function boot() {
       if (demo) throw new Error(t('main.demoNoSsh'));
       if (!target || typeof target !== 'object') throw new Error(t('main.invalidSshMachine'));
       return controller.backend.checkSshConnection({ host: target.host, port: target.port });
+    },
+    connectSsh: async target => {
+      sshWorkspace(target);
+      const result = await controller.backend.checkSshConnection(target, true);
+      if (result.ok) controllers.setSshDisconnected(sshFolders(target), false);
+      return result;
+    },
+    sshMasterState: target => controller.backend.sshMasterState(sshWorkspace(target)),
+    disconnectSsh: (target, confirmed) => {
+      const workspace = sshWorkspace(target), folders = sshFolders(target);
+      return controller.backend.disconnectSsh(workspace, () => {
+        if (confirmed !== true) {
+          const terminal = controllers.liveSnapshots().some(snapshot => folders.has(snapshot.workspaceId) && !!snapshot.terminalControl);
+          const input = [...activeSshInputs].some(operation => matchesSsh(operation.workspace, target));
+          if (terminal || input) return { terminal, input };
+        }
+        controllers.setSshDisconnected(folders, true);
+      }).catch(error => {
+        if (!controller.backend.isSshDisconnected(workspace)) controllers.setSshDisconnected(folders, false);
+        throw error;
+      });
     },
     checkHost: (target, force) => {
       if (!target || typeof target !== 'object') throw new Error(t('main.invalidSshMachine'));
@@ -559,11 +599,13 @@ async function boot() {
       return controller.backend.createWorkspaceDirectory(target, parentPath, name);
     },
     discover: async (id, baselines) => {
+      const workspace = controller.store.get(id);
+      if (controller.backend.isSshDisconnected(workspace)) return undefined;
       const discovery = await controller.discover(id, baselines).catch(error => {
         if (error instanceof WorkspaceChangedError) return undefined;
         throw error;
       });
-      if (!discovery) return undefined;
+      if (!discovery || controller.backend.isSshDisconnected(workspace)) return undefined;
       // Running conversations start reading in the background, so opening one
       // shows its current turn instead of a loading state.
       for (const session of discovery.sessions.filter(s => s.paneId).slice(0, 6)) controllers.prefetch(id, session.id);
@@ -578,7 +620,11 @@ async function boot() {
     forkSession: (id, sid, pane, pid) => controllers.forSession(id, sid).forkSession(id, sid, pane, pid),
     bindSession: (id, sid, pane) => controller.bindSession(id, sid, pane),
     watchSession: (id, sid, view) => controllers.watch(id, sid, view),
-    prefetchSession: async (id, sid) => { if (typeof id === 'string' && typeof sid === 'string') controllers.prefetch(id, sid, true); },
+    prefetchSession: async (id, sid) => {
+      if (typeof id !== 'string' || typeof sid !== 'string') return;
+      const workspace = controller.store.list().find(item => item.id === id);
+      if (workspace && !controller.backend.isSshDisconnected(workspace)) controllers.prefetch(id, sid, true);
+    },
     loadEarlierMessages: (id, sid, cursor, sizeMiB) => controllers.forSession(id, sid).loadEarlierMessages(id, sid, cursor, sizeMiB),
     readHandoffHistory: (ws, tip, source, cursor, size, view) => controllers.forSession(ws, tip).readHandoffHistory(ws, tip, source, cursor, size, view),
     releaseHandoffHistory: (ws, tip, view) => controllers.forSession(ws, tip).releaseHandoffHistory(view),
@@ -618,6 +664,9 @@ async function boot() {
       return saved;
     },
   };
+  const sshInputMethods = new Set(['createSession', 'closeSession', 'resumeSession', 'forkSession', 'renameSession', 'bindSession',
+    'sendMessage', 'sendKey', 'answerQuestion', 'answerPermission', 'turnAction', 'setTerminalControl', 'sendTerminalInput',
+    'setSessionSetting', 'respondDirectoryTrust', 'setUltracode']);
   for (const [name, handler] of Object.entries(methods)) {
     ipcMain.handle(`lectern:${name}`, (event, ...args) => {
       if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Untrusted IPC sender');
@@ -627,7 +676,14 @@ async function boot() {
       return diagnostic.operation(`ipc.${name}`, {
         workspaceId: typeof args[0] === 'string' && ['discover', 'createSession', 'removeWorkspace', ...sessionMethods].includes(name) ? args[0] : undefined,
         sessionId: sessionMethods.has(name) && typeof args[1] === 'string' ? args[1] : undefined,
-      }, async () => handler(...args));
+      }, async () => {
+        const workspace = sshInputMethods.has(name) ? controller.store.list().find(item => item.id === args[0] && item.kind === 'ssh') : undefined;
+        if (!workspace) return handler(...args);
+        const operation = { workspace };
+        activeSshInputs.add(operation);
+        try { return await controller.backend.withSshInput(workspace, async () => handler(...args)); }
+        finally { activeSshInputs.delete(operation); }
+      });
     });
   }
   controllers = new SessionViews(controller, (snapshot: SessionSnapshot) => window?.webContents.send('lectern:snapshot', snapshot),

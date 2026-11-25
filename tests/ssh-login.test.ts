@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Transport } from '../src/backend/transport';
+import { Transport, type TransportOptions } from '../src/backend/transport';
 import { askpassNeedsDisplay, askpassNode, classifyPrompt, runInteractiveLogin, type SshPrompt } from '../src/backend/ssh-login';
 import type { Workspace } from '../src/shared/types';
 
@@ -38,13 +39,13 @@ esac
 
 // Every fixture starts from, and restores, the environment the file started with.
 const originalEnv = { PATH: process.env.PATH, FAKE_SSH_STATE: process.env.FAKE_SSH_STATE, FAKE_CONTROL_PATH: process.env.FAKE_CONTROL_PATH, FAKE_CONTROL_PERSIST: process.env.FAKE_CONTROL_PERSIST, FAKE_HOSTKEY: process.env.FAKE_HOSTKEY };
-async function fixture(t: import('node:test').TestContext, env: Record<string, string> = {}) {
+async function fixture(t: import('node:test').TestContext, env: Record<string, string> = {}, options?: (state: string) => TransportOptions) {
   const state = await mkdtemp(join(tmpdir(), 'lectern-login-test-'));
   await writeFile(join(state, 'ssh'), fakeSsh, { mode: 0o700 });
   const previous = originalEnv;
   for (const key of Object.keys(previous)) if (key !== 'PATH') delete process.env[key];
   Object.assign(process.env, { PATH: `${state}:${originalEnv.PATH}`, FAKE_SSH_STATE: state }, env);
-  const transport = new Transport();
+  const transport = new Transport(undefined, options?.(state));
   t.after(async () => {
     await transport.dispose();
     for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -192,11 +193,11 @@ test('without ControlPersist in ssh_config Lectern keeps its own master until it
   const { transport, calls } = await fixture(t, env);
   assert.equal(await transport.login(target, async prompt => prompt.kind === 'secret' ? 'pa ss"word' : '123456'), 'connected');
   const login = (await calls()).find(line => line.includes('BatchMode=no'))!;
-  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=yes /, 'a background master with no idle timeout, whatever ssh_config says');
+  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=0 /, 'an ephemeral background master with no idle timeout');
   const path = login.match(/ControlPath=(\S+)/)?.[1];
   assert.ok(path?.startsWith('/tmp/lectern-ssh-') && path.endsWith('/%C'), login);
   await transport.run(workspace, 'printf ok');
-  assert.match((await calls()).at(-1)!, new RegExp(`ControlMaster=auto -o ControlPersist=yes -o ControlPath=${path!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match((await calls()).at(-1)!, new RegExp(`ControlMaster=auto -o ControlPersist=0 -o ControlPath=${path!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   await transport.dispose();
   assert.match((await calls()).at(-1)!, /-O exit/, 'quitting closes the private master');
   }
@@ -211,11 +212,11 @@ test('using only its own connections, Lectern logs in to its own master even bes
     'the user\'s master does not count as an existing connection');
   assert.deepEqual(seen, ['secret', 'text'], 'the same login dialog asks');
   const all = await calls(), login = all.find(line => line.includes('BatchMode=no'))!;
-  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-[^ ]+\/%C lab$/,
-    'a private master; ControlPersist=yes overrides the 600 s from ssh_config');
+  assert.match(login, /^-f -N .*ControlMaster=yes -o ControlPersist=0 -o ControlPath=\/tmp\/lectern-ssh-[^ ]+\/%C lab$/,
+    'a private master; its persistence overrides the 600 s from ssh_config');
   assert.ok(!all.some(line => line.startsWith('-G ') || (line.includes('-O check') && !line.includes('ControlPath='))), 'ssh_config\'s master is not even looked for');
   await transport.run(workspace, 'printf ok');
-  assert.match((await calls()).at(-1)!, /ControlMaster=auto -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-/, 'commands use it');
+  assert.match((await calls()).at(-1)!, /ControlMaster=auto -o ControlPersist=0 -o ControlPath=\/tmp\/lectern-ssh-/, 'commands use it');
   assert.equal(await transport.login(target, async () => { throw new Error('must not prompt'); }), 'existing');
   await transport.dispose();
   assert.match((await calls()).at(-1)!, /ControlPath=\/tmp\/lectern-ssh-.* -O exit lab$/, 'quitting closes only the private master');
@@ -297,20 +298,37 @@ test('real OpenSSH: new host key and key passphrase are asked through the relay,
   assert.equal((await transport.run(remote, 'printf reused', { timeoutMs: 5000 })).stdout.toString(), 'reused');
 });
 
-test('masters left by a crashed app are closed at the next start; a running owner keeps its own', posix, async t => {
-  const { closeStaleMasters } = await import('../src/backend/transport');
-  const { state, calls } = await fixture(t);
-  const root = await mkdtemp(join(tmpdir(), 'lectern-stale-root-'));
+test('both SSH creation paths use the selected persistence duration', posix, async t => {
+  const root = await mkdtemp(join('/tmp', 'lssh-f-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const { mkdir } = await import('node:fs/promises');
-  for (const [name, owner] of [['lectern-ssh-dead', '2147483646'], ['lectern-ssh-live', String(process.pid)], ['other-dir', '2147483646']] as const) {
-    await mkdir(join(root, name));
+  const { transport, calls } = await fixture(t, {}, state => ({
+    userData: join(state, 'profile'), controlRoot: root, keepAliveSeconds: 900, reuseUserMasters: false, channelKinds: [],
+  }));
+  await transport.run(workspace, 'true');
+  assert.match((await calls()).at(-1)!, /ControlMaster=auto -o ControlPersist=900 /);
+  transport.setKeepAliveSeconds(14400);
+  await transport.login(target, async prompt => prompt.kind === 'secret' ? 'pa ss"word' : '123456');
+  assert.match((await calls()).find(line => line.includes('-f -N'))!, /ControlMaster=yes -o ControlPersist=14400 /);
+  transport.setKeepAliveSeconds(28800);
+  await transport.run(workspace, 'true');
+  assert.match((await calls()).at(-1)!, /ControlMaster=auto -o ControlPersist=28800 /);
+});
+
+test('crash cleanup closes only legacy masters whose owner is gone', posix, async t => {
+  const { closeStaleMasters } = await import('../src/backend/transport');
+  const { calls } = await fixture(t);
+  const root = await mkdtemp(join('/tmp', 'lssh-s-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const socketName = 'a'.repeat(40);
+  const deadSocket = join(root, 'lectern-ssh-dead99', socketName);
+  for (const [name, owner] of [['lectern-ssh-dead99', '2147483646'], ['lectern-ssh-live99', String(process.pid)], ['lssh-0-profile', '2147483646']] as const) {
+    await mkdir(join(root, name), { mode: 0o700 });
     await writeFile(join(root, name, 'owner.pid'), owner);
-    await writeFile(join(root, name, 'abc123'), '');
   }
+  const socket = createServer();
+  t.after(() => { socket.close(); });
+  await new Promise<void>(resolve => socket.listen(deadSocket, resolve));
   await closeStaleMasters(root);
-  const { readdir } = await import('node:fs/promises');
-  assert.deepEqual((await readdir(root)).sort(), ['lectern-ssh-live', 'other-dir']);
-  assert.match((await calls()).join('\n'), new RegExp(`ControlPath=${join(root, 'lectern-ssh-dead', 'abc123').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} -O exit`));
-  void state;
+  assert.deepEqual((await readdir(root)).sort(), ['lectern-ssh-live99', 'lssh-0-profile']);
+  assert.ok((await calls()).some(line => line.includes(`-S ${deadSocket} -O exit`)));
 });

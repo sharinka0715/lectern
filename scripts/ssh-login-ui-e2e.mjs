@@ -11,6 +11,7 @@ import { _electron as electron } from './fixtures/electron.mjs';
 import { packagedExecutable } from './package-executable.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-login-ui-'));
+const controlRoot = await mkdtemp('/tmp/ltc-ui-');
 const profile = path.join(root, 'profile'), state = path.join(root, 'ssh');
 await mkdir(state, { recursive: true });
 const results = path.resolve('test-results');
@@ -27,7 +28,7 @@ case " $* " in
   *" -V "*) printf 'OpenSSH_9.8p1, LibreSSL 3.3.6\\n' >&2; exit 0;;
   *" -G "*) if [ -f "$state/user-config" ]; then printf 'hostname lab\\ncontrolpath /tmp/ssh-user-%%C\\ncontrolmaster auto\\ncontrolpersist 600\\n'; else printf 'hostname lab\\ncontrolpath none\\n'; fi; exit 0;;
   *" -O check "*) [ -n "$socket" ] && [ -f "$state/master-$socket" ] && exit 0; exit 255;;
-  *" -O stop "*) rm -f "$state/master-$socket"; exit 0;;
+  *" -O stop "*|*" -O exit "*) [ -n "$socket" ] && rm -f "$state/master-$socket"; exit 0;;
   *" -f -N "*)
     printf '%s\\n' "$LECTERN_ASKPASS_NODE" > "$state/askpass-node"
     printf '%s\\n' "\${DISPLAY-unset}" > "$state/display"
@@ -58,7 +59,8 @@ case " $* " in *" -V "*) printf 'tmux 3.4\\n'; exit 0;; esac
 printf 'no server running on /tmp/tmux-%s/default\\n' "$(id -u)" >&2; exit 1
 `, { mode: 0o700 });
 
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', PATH: `${state}:${process.env.PATH}`, LECTERN_USER_DATA: profile, LECTERN_NODE_BINARY: process.execPath };
+const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', PATH: `${state}:${process.env.PATH}`, LECTERN_USER_DATA: profile,
+  LECTERN_NODE_BINARY: process.execPath, LECTERN_TEST_SSH_CONTROL_ROOT: controlRoot };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.LECTERN_DEV_URL;
 const exists = file => access(file).then(() => true, () => false);
@@ -101,7 +103,7 @@ try {
   await login.waitFor({ state: 'detached' });
   assert.ok(await exists(path.join(state, 'master-private')), 'the master is left running for later commands');
   const loginCall = (await readFile(path.join(state, 'calls'), 'utf8')).split('\n').find(line => line.includes('-f -N'));
-  assert.match(loginCall, /BatchMode=no .*StrictHostKeyChecking=ask .*ControlMaster=yes .*ControlPath=\/tmp\/lectern-ssh-/);
+  assert.match(loginCall, /BatchMode=no .*StrictHostKeyChecking=ask .*ControlMaster=yes -o ControlPersist=3600 -o ControlPath=[^ ]*\/lssh-/);
   // The relay ran as Node in Electron's helper on macOS (LSUIElement: no second Dock
   // icon), in the executable elsewhere; ssh says it is 8.4+, so no DISPLAY is made up.
   const { execPath, platform } = await app.evaluate(() => ({ execPath: process.execPath, platform: process.platform }));
@@ -175,21 +177,28 @@ try {
   await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();
   await settings.getByRole('button', { name: 'SSH 连接', exact: true }).click();
   const reuse = settings.getByLabel('复用已有的 SSH 连接', { exact: true });
+  const keep = settings.getByLabel('退出后保留 SSH 连接', { exact: true });
   await page.waitForFunction(() => !document.querySelector('.pref-ssh-connection input')?.disabled);
   assert.equal(await reuse.isChecked(), true, 'reuse is the default');
+  assert.equal(await keep.inputValue(), '3600');
+  assert.deepEqual(await keep.locator('option').allTextContents(), ['退出时断开', '15 分钟', '1 小时', '4 小时', '8 小时', '24 小时']);
+  await keep.selectOption('900');
   await page.screenshot({ path: path.join(results, 'ssh-connection-setting.png') });
   // Off, then on again: sharing again, Lectern's own master for this machine stops taking sessions.
   await reuse.uncheck();
   await reuse.check();
   await page.waitForFunction(async () => (await window.desktop.sshConnectionPreferences()).reuseConnections === true);
   // Saved first, then applied: the stop follows a moment later.
-  const stopped = async () => (await sshCalls()).some(line => /ControlPath=\/tmp\/lectern-ssh-.* -O stop lab-alias$/.test(line));
+  const stopped = async () => (await sshCalls()).some(line => /ControlPath=[^ ]*\/lssh-.* -O stop lab-alias$/.test(line));
   for (let i = 0; i < 100 && (!await stopped() || await exists(path.join(state, 'master-private'))); i++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.ok(await stopped(), 'the private master was told to stop');
   assert.equal(await exists(path.join(state, 'master-private')), false);
   let mark = (await sshCalls()).length;
   assert.deepEqual(await check(), { ok: true });
   assert.ok((await commandsSince(mark)).every(line => line.includes('ControlMaster=no') && !line.includes('ControlPath=')), 'commands use the user\'s master');
+  const disconnect = settings.getByRole('button', { name: '断开 实验集群', exact: true });
+  await page.waitForFunction(() => document.querySelector('[data-ssh-machine="lab-alias"] button[disabled][title*="自己的 SSH 连接"]'));
+  assert.equal(await disconnect.isDisabled(), true, 'the user master cannot be disconnected');
   await settings.getByRole('button', { name: '登录 实验集群', exact: true }).click();
   await login.getByText('这台机器已有可复用的连接', { exact: false }).waitFor();
   await login.waitFor({ state: 'detached' });
@@ -206,8 +215,8 @@ try {
   }
   assert.equal(refused.ok, false);
   assert.match(refused.message, /Permission denied/);
-  assert.ok((await commandsSince(mark)).every(line => /ControlPath=\/tmp\/lectern-ssh-/.test(line)), 'commands no longer use the user\'s master');
-  assert.deepEqual(JSON.parse(await readFile(path.join(profile, 'ssh-settings.json'), 'utf8')), { reuseConnections: false });
+  assert.ok((await commandsSince(mark)).every(line => /ControlPath=[^ ]*\/lssh-/.test(line)), 'commands no longer use the user\'s master');
+  assert.deepEqual(JSON.parse(await readFile(path.join(profile, 'ssh-settings.json'), 'utf8')), { reuseConnections: false, keepAliveSeconds: 900 });
   mark = (await sshCalls()).length;
   await settings.getByRole('button', { name: '登录 实验集群', exact: true }).click();
   await login.getByText("dev@lab's password:", { exact: true }).waitFor();
@@ -216,18 +225,35 @@ try {
   await field.fill(code); await field.press('Enter');
   await login.waitFor({ state: 'detached' });
   const exclusiveLogin = (await sshCalls()).slice(mark).find(line => line.includes('BatchMode=no'));
-  assert.match(exclusiveLogin, /^-f -N .*ControlMaster=yes -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-/);
+  assert.match(exclusiveLogin, /^-f -N .*ControlMaster=yes -o ControlPersist=900 -o ControlPath=[^ ]*\/lssh-/);
   assert.ok(await exists(path.join(state, 'master-private')));
   assert.ok(await exists(path.join(state, 'master-user')), 'the user\'s master is left alone');
   mark = (await sshCalls()).length;
   assert.deepEqual(await check(), { ok: true });
-  assert.ok((await commandsSince(mark)).every(line => /ControlPath=\/tmp\/lectern-ssh-/.test(line)));
+  assert.ok((await commandsSince(mark)).every(line => /ControlPath=[^ ]*\/lssh-/.test(line)));
+  await disconnect.click();
+  await settings.getByText('已断开', { exact: true }).waitFor();
+  assert.equal(await exists(path.join(state, 'master-private')), false);
+  assert.equal(await exists(path.join(state, 'master-user')), true);
+  mark = (await sshCalls()).length;
+  assert.deepEqual(await check(), { ok: false, message: 'SSH 已断开。', disconnected: true });
+  await new Promise(resolve => setTimeout(resolve, 2300));
+  assert.deepEqual(await commandsSince(mark), [], 'background discovery stays off after disconnect');
+  await settings.getByRole('button', { name: '连接 实验集群', exact: true }).click();
+  await login.getByText("dev@lab's password:", { exact: true }).waitFor();
+  await field.fill(password); await field.press('Enter');
+  await login.getByText('Verification code:', { exact: true }).waitFor();
+  await field.fill(code); await field.press('Enter');
+  await login.waitFor({ state: 'detached' });
+  assert.deepEqual(await check(), { ok: true });
+  await disconnect.and(settings.locator('button:enabled')).waitFor();
   // The choice is kept: reopening the settings shows it.
   await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
   await page.getByRole('button', { name: '界面与连接设置', exact: true }).click();
   await settings.getByRole('button', { name: 'SSH 连接', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.pref-ssh-connection input')?.disabled);
   assert.equal(await reuse.isChecked(), false);
+  assert.equal(await keep.inputValue(), '900');
   await settings.getByRole('button', { name: '关闭设置', exact: true }).click();
 
   // Replies stay out of the diagnostics and the profile.
@@ -255,4 +281,5 @@ try {
 } finally {
   await app?.close();
   await rm(root, { recursive: true, force: true });
+  await rm(controlRoot, { recursive: true, force: true });
 }

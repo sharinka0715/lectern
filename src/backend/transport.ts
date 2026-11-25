@@ -1,7 +1,9 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { setMaxListeners } from 'node:events';
 import { spawn } from './child-fds';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { Transform, type Writable } from 'node:stream';
@@ -14,6 +16,8 @@ import { hangUp, hangUpGraceMs, whenGone } from './hang-up';
 import { defaultSessionLimits, HostSessions, type ConnectionMode, type SessionPlace } from './session-slots';
 import { sshOnly, sshOnlyMessage, targetSystem, unsupportedTargetMessage, windowsShellFailure } from '../shared/supported-targets';
 import { t } from '../shared/i18n';
+import { defaultSshConnectionPreferences, type SshDisconnectResult, type SshMasterState } from '../shared/ssh-connections';
+import { ownerFile, privateSshDirectory, sshControlSockets, type SshControlDirectory } from './ssh-control';
 
 /** The SSH target runs neither macOS nor Linux. Kept for the host: every later command fails the same way. */
 export class UnsupportedTargetError extends Error {}
@@ -43,7 +47,7 @@ export function validateWorkspace(value: Workspace): Workspace {
 }
 
 export interface CommandOptions {
-  signal?: AbortSignal; input?: string | Buffer; timeoutMs?: number; maxBytes?: number; controlPath?: string; sshConfigPath?: string; reuseExistingMaster?: boolean; tag?: string; output?: Writable;
+  signal?: AbortSignal; input?: string | Buffer; timeoutMs?: number; maxBytes?: number; controlPath?: string; controlPersist?: number; sshConfigPath?: string; reuseExistingMaster?: boolean; tag?: string; output?: Writable;
   /** Skip the channel's request/output files for sensitive command data. */
   privateContent?: boolean;
   /** Called once the command's process is gone, which for SSH means its session has ended on the target
@@ -105,7 +109,7 @@ export function remoteRequest(command: string, input?: string | Buffer, statusMa
     + (statusMarker ? `(exit "$lectern_status")\n${report}exit 0\n` : 'exit "$lectern_status"\n') + '}\n';
 }
 
-export function commandInvocation(workspace: Workspace, script: string, controlPath?: string, sshConfigPath?: string, reuseExistingMaster = false, input?: string | Buffer, statusMarker?: string, privateContent = false): { file: string; args: string[]; input?: string | Buffer; closeInput?: boolean } {
+export function commandInvocation(workspace: Workspace, script: string, controlPath?: string, sshConfigPath?: string, reuseExistingMaster = false, input?: string | Buffer, statusMarker?: string, privateContent = false, controlPersist = 0): { file: string; args: string[]; input?: string | Buffer; closeInput?: boolean } {
   validateWorkspace(workspace);
   // Windows has no tmux: Lectern runs Claude Code on macOS and Linux machines over SSH only.
   if (sshOnly(process.platform) && workspace.kind !== 'ssh') throw new Error(sshOnlyMessage());
@@ -115,9 +119,8 @@ export function commandInvocation(workspace: Workspace, script: string, controlP
     const args = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'];
     if (sshConfigPath) args.push('-F', sshConfigPath);
     if (reuseExistingMaster) args.push('-o', 'ControlMaster=no');
-    // Lectern's own master stays up until the app quits (Transport.dispose closes it),
-    // so every later request reuses one authenticated connection.
-    else if (controlPath && process.platform !== 'win32') args.push('-o', 'ControlMaster=auto', '-o', 'ControlPersist=yes', '-o', `ControlPath=${controlPath}`);
+    // OpenSSH treats zero as unlimited. Transport explicitly closes those masters at quit.
+    else if (controlPath && process.platform !== 'win32') args.push('-o', 'ControlMaster=auto', '-o', `ControlPersist=${controlPersist}`, '-o', `ControlPath=${controlPath}`);
     if (workspace.port) args.push('-p', String(workspace.port));
     if (privateContent && input !== undefined) {
       // Keep the payload out of the remote command and the shell's here-document
@@ -146,7 +149,7 @@ export async function runCommand(workspace: Workspace, script: string, options: 
   // A one-off SSH session reports its command's status itself (see remoteRequest);
   // streamed downloads keep their bytes untouched.
   const marker = workspace.kind === 'ssh' && !options.output ? `__LECTERN_STATUS_${randomUUID()}__:` : undefined;
-  const invocation = commandInvocation(workspace, script, options.controlPath, options.sshConfigPath, options.reuseExistingMaster, options.input, marker, options.privateContent);
+  const invocation = commandInvocation(workspace, script, options.controlPath, options.sshConfigPath, options.reuseExistingMaster, options.input, marker, options.privateContent, options.controlPersist);
   const started = performance.now();
   diagnostic.event('transport.command.request', { script: options.privateContent ? undefined : summarize(script), input: options.input === undefined || options.privateContent ? undefined : summarize(options.input),
     sshCommandBytes: workspace.kind === 'ssh' ? Buffer.byteLength(invocation.args.at(-1)!) : undefined,
@@ -245,48 +248,53 @@ function commandTag(script: string): string {
   return 'shell.command';
 }
 
-const ownerFile = 'owner.pid';
 const controlRoot = () => process.platform === 'darwin' ? '/tmp' : tmpdir();
 function alive(pid: number) {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 let staleSweep: Promise<void> | undefined;
-/** Masters persist until their app quits. After a crash, close the ones whose owner is gone. */
+/** Old per-launch directories are reclaimed once their owner is gone. */
 export function closeStaleMasters(root?: string): Promise<void> {
   if (process.platform === 'win32') return Promise.resolve();
   if (root === undefined) return staleSweep ??= sweepStaleMasters(controlRoot());
   return sweepStaleMasters(root);
 }
 async function sweepStaleMasters(root: string): Promise<void> {
-  {
-    const uid = process.getuid?.();
-    for (const name of await readdir(root).catch(() => [] as string[])) {
-      if (!name.startsWith('lectern-ssh-')) continue;
-      const directory = join(root, name);
-      try {
-        const info = await stat(directory);
-        if (!info.isDirectory() || (uid !== undefined && info.uid !== uid)) continue;
-        const owner = Number(await readFile(join(directory, ownerFile), 'utf8'));
-        if (!Number.isSafeInteger(owner) || owner < 2 || alive(owner)) continue;
-        for (const socket of await readdir(directory)) {
-          if (socket === ownerFile) continue;
-          await new Promise<void>(resolve => {
-            const child = spawn('ssh', ['-F', '/dev/null', '-o', `ControlPath=${join(directory, socket)}`, '-O', 'exit', 'lectern-stale'], { stdio: 'ignore', windowsHide: true });
-            const timer = setTimeout(() => { child.kill(); resolve(); }, 2000);
-            child.on('error', () => { clearTimeout(timer); resolve(); }); child.on('exit', () => { clearTimeout(timer); resolve(); });
-          });
-        }
-        await rm(directory, { recursive: true, force: true });
-        diagnostic.event('transport.ssh.stale_masters_closed', { directory: name });
-      } catch { /* Older or foreign directory: leave it alone. */ }
-    }
+  const uid = process.getuid?.();
+  for (const name of await readdir(root).catch(() => [] as string[])) {
+    if (!/^lectern-ssh-[A-Za-z0-9]{6}$/.test(name)) continue;
+    const directory = join(root, name);
+    try {
+      const info = await lstat(directory);
+      if (!info.isDirectory() || info.uid !== uid || (info.mode & 0o7777) !== 0o700) continue;
+      const owner = Number(await readFile(join(directory, ownerFile), 'utf8'));
+      if (!Number.isSafeInteger(owner) || owner < 2 || alive(owner)) continue;
+      for (const socket of await sshControlSockets(directory)) await controlSocket(socket, 'exit');
+      await rm(directory, { recursive: true, force: true });
+      diagnostic.event('transport.ssh.stale_masters_closed', { directory: name });
+    } catch { /* Older or foreign directory: leave it alone. */ }
   }
+}
+
+function sshControl(args: string[]): Promise<boolean> {
+  return new Promise(resolve => {
+    const child = spawn('ssh', args, { stdio: 'ignore', windowsHide: true });
+    const timer = setTimeout(() => { child.kill(); resolve(false); }, 2000);
+    const finish = (exists: boolean) => { clearTimeout(timer); resolve(exists); };
+    child.on('error', () => finish(false)); child.on('exit', code => finish(code === 0));
+  });
+}
+
+function controlSocket(path: string, operation: 'check' | 'exit'): Promise<boolean> {
+  return sshControl(['-F', '/dev/null', '-S', path, '-O', operation, 'lectern-private']);
 }
 
 /** A command channel's place on its host, and whether a caller has claimed it to run next. */
 interface ChannelEntry { place: SessionPlace; generation: number; claimed: boolean }
 /** Per host: the sessions Lectern has open there, its command channels and their start-up back-off. */
 interface HostState {
+  abort: AbortController;
+  clients: Set<Promise<unknown>>;
   sessions: HostSessions<CommandChannel>;
   channels: Map<CommandChannel, ChannelEntry>;
   opening: number; failures: number; retryAt: number;
@@ -295,7 +303,7 @@ interface HostState {
   connected: boolean;
 }
 /** How the next session to a host connects. */
-interface Route { controlPath?: string; reuseExistingMaster: boolean; mode: ConnectionMode }
+interface Route { controlPath?: string; controlPersist?: number; reuseExistingMaster: boolean; mode: ConnectionMode }
 export interface TransportOptions {
   /** Connection kinds whose commands run on persistent command channels (default: SSH). */
   channelKinds?: Workspace['kind'][];
@@ -304,6 +312,10 @@ export interface TransportOptions {
   /** Commands reuse a master the user's ssh_config already runs for the host (default).
    * When false Lectern uses only its own connections (see setReuseUserMasters). */
   reuseUserMasters?: boolean;
+  /** Profiles with a userData path can keep their private masters across app restarts. */
+  userData?: string;
+  keepAliveSeconds?: number;
+  controlRoot?: string;
   /** Sessions and channels per host for each connection mode (default defaultSessionLimits). */
   limits?: Record<ConnectionMode, { sessions: number; channels: number }>;
   channelIdleMs?: number;
@@ -319,13 +331,20 @@ const channelStartMs = 15_000;
 const channelKey = (workspace: Workspace) => `${workspace.kind}:${workspace.host ?? ''}:${workspace.port ?? ''}`;
 const masterKey = (workspace: Workspace) => `${workspace.host}:${workspace.port ?? ''}`;
 const disposedError = () => new Error('Transport has been disposed');
+const disconnectedError = () => new Error(t('backend.sshDisconnected'));
 
 /** Control sockets stay local; authentication and known_hosts remain OpenSSH's job. */
 export class Transport {
-  private directory?: Promise<string>;
-  /** Hosts with a master in Lectern's private directory (closed when the app quits). */
-  private readonly masters = new Map<string, Workspace>();
+  private directory?: Promise<SshControlDirectory>;
+  private exitDirectory?: Promise<SshControlDirectory>;
+  /** Sockets adopted at startup, and targets encountered by routing or login. */
+  private readonly masters = new Set<string>();
+  private readonly masterTargets = new Map<string, Workspace>();
   private readonly existingMasters = new Map<string, Promise<boolean>>();
+  private readonly disconnected = new Set<string>();
+  private readonly disconnecting = new Map<string, Promise<void>>();
+  private readonly reconnecting = new AsyncLocalStorage<string>();
+  private readonly inputScope = new AsyncLocalStorage<{ key: string; signal: AbortSignal }>();
   private disposed = false;
   private readonly hosts = new Map<string, HostState>();
   private readonly channelKinds: ReadonlySet<Workspace['kind']>;
@@ -335,11 +354,14 @@ export class Transport {
   private readonly hangUpGraceMs: number;
   private readonly unconfirmedHoldMs: number;
   private reuseUserMasters: boolean;
+  private keepAliveSeconds: number;
   /** Bumped when the connection setting changes: channels of an older generation are retired. */
   private generation = 0;
   private sweeper?: ReturnType<typeof setInterval>;
   private readonly platforms = new Map<string, Promise<void>>();
   private readonly rehearsal: TransportOptions['rehearsal'];
+  private readonly userData?: string;
+  private readonly controlRoot: string;
   constructor(private readonly sshConfigPath?: string, options: TransportOptions = {}) {
     this.rehearsal = options.rehearsal;
     // Every new SSH session repeats the handshake (≈300 ms through a relay); a
@@ -352,6 +374,9 @@ export class Transport {
     this.hangUpGraceMs = options.hangUpGraceMs ?? hangUpGraceMs;
     this.unconfirmedHoldMs = options.unconfirmedHoldMs ?? 30_000;
     this.reuseUserMasters = options.reuseUserMasters ?? true;
+    this.userData = options.userData;
+    this.keepAliveSeconds = options.keepAliveSeconds ?? (this.userData ? defaultSshConnectionPreferences.keepAliveSeconds : 0);
+    this.controlRoot = options.controlRoot ?? controlRoot();
   }
   private host(workspace: Workspace): HostState {
     const key = channelKey(workspace);
@@ -360,7 +385,8 @@ export class Transport {
       // Kinds that are not counted (a local target) never wait; they keep the channel count.
       const limits = this.sessionKinds.has(workspace.kind) ? this.limits
         : { shared: { sessions: Infinity, channels: this.limits.shared.channels }, exclusive: { sessions: Infinity, channels: this.limits.exclusive.channels } };
-      const created: HostState = { channels: new Map(), opening: 0, failures: 0, retryAt: 0, connected: false, sessions: undefined! };
+      const created: HostState = { abort: new AbortController(), clients: new Set(), channels: new Map(), opening: 0, failures: 0, retryAt: 0, connected: false, sessions: undefined! };
+      setMaxListeners(0, created.abort.signal);
       created.sessions = new HostSessions<CommandChannel>({ host: workspace.host, port: workspace.port }, {
         takeIdleChannel: () => this.takeIdleChannel(created),
         closeIdleChannel: () => this.yieldIdleChannel(created),
@@ -368,6 +394,96 @@ export class Transport {
       this.hosts.set(key, state = created);
     }
     return state;
+  }
+  private assertActive(workspace: Workspace, state?: HostState): void {
+    if (this.disposed) throw disposedError();
+    state?.abort.signal.throwIfAborted();
+    const key = masterKey(workspace);
+    const input = this.inputScope.getStore();
+    if (workspace.kind === 'ssh' && input?.key === key) input.signal.throwIfAborted();
+    if (workspace.kind === 'ssh' && this.disconnected.has(key) && this.reconnecting.getStore() !== key) throw disconnectedError();
+  }
+  private trackClient<T>(state: HostState, client: Promise<T>): Promise<T> {
+    state.clients.add(client);
+    const done = () => state.clients.delete(client);
+    void client.then(done, done);
+    return client;
+  }
+  private closeHost(state: HostState, error: Error): Promise<unknown> {
+    state.abort.abort(error);
+    state.sessions.drain();
+    for (const channel of state.channels.keys()) channel.close(error.message);
+    return Promise.allSettled(state.clients);
+  }
+  setKeepAliveSeconds(seconds: number): void { this.keepAliveSeconds = seconds; }
+  withSshInput<T>(workspace: Workspace, input: () => Promise<T>): Promise<T> {
+    this.assertActive(workspace);
+    return this.inputScope.run({ key: masterKey(workspace), signal: this.host(workspace).abort.signal }, input);
+  }
+
+  /** Adopt sockets even for targets no longer listed in the app. A control check makes no network connection. */
+  async initializeSsh(): Promise<void> {
+    if (!this.userData || process.platform === 'win32') return;
+    const directory = await this.controlDirectory();
+    if (!directory.persistent) return;
+    await Promise.all((await sshControlSockets(directory.path)).map(async socket => {
+      if (await controlSocket(socket, 'check')) this.masters.add(socket);
+    }));
+  }
+
+  isSshDisconnected(workspace: Workspace): boolean {
+    return workspace.kind === 'ssh' && this.disconnected.has(masterKey(workspace));
+  }
+  async sshMasterState(workspace: Workspace): Promise<SshMasterState> {
+    if (this.isSshDisconnected(workspace)) return 'disconnected';
+    if (process.platform === 'win32') return 'none';
+    for (;;) {
+      const reuse = this.reuseUserMasters;
+      const key = masterKey(workspace), cached = this.existingMasters.get(key);
+      const cachedShared = cached && await cached;
+      const shared = reuse && (!cached || cachedShared) && await this.checkMaster(workspace);
+      const own = !shared && (await this.livePrivatePaths(workspace)).length > 0;
+      if (this.isSshDisconnected(workspace)) return 'disconnected';
+      if (reuse !== this.reuseUserMasters) continue;
+      if (!shared && cachedShared && this.existingMasters.get(key) === cached) this.existingMasters.delete(key);
+      if (own) this.masterTargets.set(key, workspace);
+      return shared ? 'user' : own ? 'private' : 'none';
+    }
+  }
+  async disconnectSsh(workspace: Workspace, confirm: () => { terminal: boolean; input: boolean } | undefined): Promise<SshDisconnectResult> {
+    const status = await this.sshMasterState(workspace);
+    if (status !== 'private' || this.isSshDisconnected(workspace)) return this.isSshDisconnected(workspace) ? 'disconnected' : status;
+    const busy = confirm();
+    if (busy) return busy;
+    const key = masterKey(workspace), hostKey = channelKey(workspace);
+    this.disconnected.add(key);
+    const state = this.hosts.get(hostKey);
+    this.hosts.delete(hostKey);
+    this.platforms.delete(hostKey);
+    this.existingMasters.delete(key);
+    const closing = (async () => {
+      if (state) await this.closeHost(state, disconnectedError());
+      const paths = await this.livePrivatePaths(workspace);
+      const closed = await Promise.all(paths.map(async path => await this.controlMaster(workspace, path, 'exit') || !await this.checkMaster(workspace, path)));
+      if (closed.includes(false)) {
+        this.disconnected.delete(key);
+        throw new Error(t('backend.sshDisconnectFailed'));
+      }
+      this.masterTargets.delete(key);
+    })();
+    this.disconnecting.set(key, closing);
+    try { await closing; }
+    finally { this.disconnecting.delete(key); }
+    return 'disconnected';
+  }
+  async reconnectSsh<T>(workspace: Workspace, connect: () => Promise<T>): Promise<T> {
+    const key = masterKey(workspace);
+    await this.disconnecting.get(key);
+    if (!this.disconnected.has(key)) return connect();
+    // Only this explicit connection attempt may reach the target while it is disconnected.
+    const result = await this.reconnecting.run(key, connect);
+    this.disconnected.delete(key);
+    return result;
   }
   /** Frees a stream's or command's place once its client is gone. A client that had to
    * be killed may leave its session open on the target: that place is kept a while longer. */
@@ -395,57 +511,48 @@ export class Transport {
     for (const state of this.hosts.values())
       for (const [channel, entry] of state.channels) if (channel.usable && !entry.claimed) channel.close('connection setting changed');
     if (!reuse || !this.directory) return;
-    const directory = await this.directory;
-    await Promise.all([...this.masters].map(async ([key, workspace]) => {
+    await Promise.all([...this.masterTargets].map(async ([key, workspace]) => {
       if (!await this.hasExistingMaster(workspace)) return;
-      this.masters.delete(key);
+      this.masterTargets.delete(key);
       const state = this.hosts.get(channelKey(workspace));
       if (state) state.connected = false;
-      await this.controlMaster(workspace, join(directory, '%C'), 'stop');
+      if (this.isSshDisconnected(workspace)) return;
+      await Promise.all((await this.privatePaths()).map(path => this.controlMaster(workspace, path, 'stop')));
       diagnostic.event('transport.ssh.private_master_stopped', { host: workspace.host, port: workspace.port });
     }));
   }
   /** `ssh -O <operation>` for one of Lectern's masters. */
-  private controlMaster(workspace: Workspace, controlPath: string, operation: 'exit' | 'stop'): Promise<void> {
-    return new Promise<void>(resolve => {
-      const invocation = commandInvocation(workspace, '', controlPath, this.sshConfigPath);
-      invocation.args.pop(); // Remote script is absent for the OpenSSH control operation.
-      invocation.args.splice(-1, 0, '-O', operation);
-      const child = spawn(invocation.file, invocation.args, { stdio: 'ignore', windowsHide: true });
-      const timer = setTimeout(() => { child.kill(); resolve(); }, 2000);
-      const finish = () => { clearTimeout(timer); resolve(); };
-      child.on('error', finish); child.on('exit', finish);
-    });
+  private controlMaster(workspace: Workspace, controlPath: string | undefined, operation: 'check' | 'exit' | 'stop'): Promise<boolean> {
+    const invocation = commandInvocation(workspace, '', undefined, this.sshConfigPath, true);
+    invocation.args.pop();
+    if (controlPath) invocation.args.splice(-1, 0, '-o', `ControlPath=${controlPath}`);
+    invocation.args.splice(-1, 0, '-O', operation);
+    return sshControl(invocation.args);
   }
   /** How the next session to this host connects; the host's limits follow it. */
-  private async route(workspace: Workspace): Promise<Route> {
+  private async route(workspace: Workspace, state: HostState): Promise<Route> {
     for (;;) {
+      this.assertActive(workspace, state);
       const reuse = this.reuseUserMasters;
       let route: Route = { reuseExistingMaster: false, mode: 'exclusive' };
       if (workspace.kind === 'ssh' && process.platform !== 'win32') {
         if (reuse && await this.hasExistingMaster(workspace)) route = { reuseExistingMaster: true, mode: 'shared' };
-        else route = { controlPath: await this.privateControlPath(), reuseExistingMaster: false, mode: 'exclusive' };
+        else {
+          const { path, seconds } = await this.privateRoute(workspace);
+          route = { controlPath: path, controlPersist: seconds, reuseExistingMaster: false, mode: 'exclusive' };
+        }
       }
-      if (this.disposed) throw disposedError();
+      this.assertActive(workspace, state);
       // The setting changed meanwhile: decide again.
       if (reuse !== this.reuseUserMasters) continue;
-      if (route.controlPath) this.masters.set(masterKey(workspace), workspace);
-      this.host(workspace).sessions.setMode(route.mode);
+      if (route.controlPath) this.masterTargets.set(masterKey(workspace), workspace);
+      state.sessions.setMode(route.mode);
       return route;
     }
   }
   /** `ssh -O check` against the user's configured ControlPath, or against ours. Never connects. */
   private checkMaster(workspace: Workspace, controlPath?: string): Promise<boolean> {
-    return new Promise<boolean>(resolve => {
-      const invocation = commandInvocation(workspace, '', undefined, this.sshConfigPath, true);
-      invocation.args.pop();
-      if (controlPath) invocation.args.splice(-1, 0, '-o', `ControlPath=${controlPath}`);
-      invocation.args.splice(-1, 0, '-O', 'check');
-      const child = spawn(invocation.file, invocation.args, { stdio: 'ignore', windowsHide: true });
-      const timer = setTimeout(() => { child.kill(); resolve(false); }, 2000);
-      const finish = (exists: boolean) => { clearTimeout(timer); resolve(exists); };
-      child.on('error', () => finish(false)); child.on('exit', code => finish(code === 0));
-    });
+    return this.controlMaster(workspace, controlPath, 'check');
   }
   private hasExistingMaster(workspace: Workspace): Promise<boolean> {
     const key = `${workspace.host}:${workspace.port ?? ''}`;
@@ -456,17 +563,38 @@ export class Transport {
     }
     return check;
   }
-  private privateControlPath() {
-    // macOS TMPDIR is long; OpenSSH expands %C to 40 bytes and Unix socket paths
-    // are limited to 104 bytes there. mkdtemp still creates a private 0700 dir.
-    this.directory ??= (async () => {
-      void closeStaleMasters();
-      const directory = await mkdtemp(join(controlRoot(), 'lectern-ssh-'));
-      // Marks the owner, so a later start can close masters left by a crash.
-      await writeFile(join(directory, ownerFile), String(process.pid), { mode: 0o600 });
-      return directory;
-    })();
-    return this.directory.then(directory => join(directory, '%C'));
+  private controlDirectory() {
+    if (!this.directory) {
+      void closeStaleMasters(this.controlRoot === controlRoot() ? undefined : this.controlRoot);
+      this.directory = privateSshDirectory(this.controlRoot, this.userData);
+    }
+    return this.directory;
+  }
+  private async privatePaths(): Promise<string[]> {
+    const directories = await Promise.all([this.directory, this.exitDirectory]);
+    return directories.flatMap(directory => directory ? [join(directory.path, '%C')] : []);
+  }
+  private async livePrivatePaths(workspace: Workspace): Promise<string[]> {
+    const paths = await this.privatePaths();
+    const live = await Promise.all(paths.map(path => this.checkMaster(workspace, path)));
+    return paths.filter((_, i) => live[i]);
+  }
+  private async privateRoute(workspace: Workspace) {
+    const directory = await this.controlDirectory(), path = join(directory.path, '%C');
+    if (!directory.persistent) return { path, seconds: 0 };
+    const seconds = this.keepAliveSeconds;
+    if (seconds === 0) {
+      // Keep the stable path bounded even if the existing master expires before ssh attaches.
+      if (await this.checkMaster(workspace, path)) return { path, seconds: defaultSshConnectionPreferences.keepAliveSeconds };
+      // A zero-timeout master needs explicit cleanup even if the setting changes before quit.
+      this.exitDirectory ??= privateSshDirectory(this.controlRoot);
+      return { path: join((await this.exitDirectory).path, '%C'), seconds: 0 };
+    }
+    if (this.exitDirectory) {
+      const temporary = join((await this.exitDirectory).path, '%C');
+      if (await this.checkMaster(workspace, temporary)) return { path: temporary, seconds: 0 };
+    }
+    return { path, seconds };
   }
   /** ssh_config's multiplexing for this host (`ssh -G` prints it without connecting). */
   private configuredMultiplexing(workspace: Workspace): Promise<{ path?: string; persists: boolean }> {
@@ -496,19 +624,28 @@ export class Transport {
    *   applies and Lectern never closes that master. (`true` runs as one short session
    *   on it, outside Lectern's session count.)
    * - Otherwise (including whenever Lectern uses only its own connections) Lectern
-   *   keeps its own master at a private path until the app quits: `-f -N` opens no
-   *   session, and ControlPersist=yes overrides a time limit from ssh_config.
+   *   uses its own private path and idle timeout: `-f -N` opens no session.
    * Later commands keep BatchMode and simply reuse the master.
    */
   async login(target: { host?: string; port?: number }, answer: AnswerPrompt, signal?: AbortSignal): Promise<'existing' | 'connected'> {
-    if (this.disposed) throw disposedError();
-    if (process.platform === 'win32') throw new Error(t('backend.winLoginUnsupported'));
     const workspace = validateWorkspace({ id: 'ssh-login', name: 'SSH login', kind: 'ssh', cwd: '/', host: target?.host, port: target?.port });
+    return this.reconnectSsh(workspace, () => this.loginNow(workspace, answer, signal));
+  }
+  private async loginNow(workspace: Workspace, answer: AnswerPrompt, signal?: AbortSignal): Promise<'existing' | 'connected'> {
+    this.assertActive(workspace);
+    if (process.platform === 'win32') throw new Error(t('backend.winLoginUnsupported'));
+    const state = this.host(workspace);
+    signal = signal ? AbortSignal.any([signal, state.abort.signal]) : state.abort.signal;
     const key = masterKey(workspace), reuse = this.reuseUserMasters;
     this.existingMasters.delete(key);
-    if (reuse && await this.hasExistingMaster(workspace)) return 'existing';
-    const privatePath = await this.privateControlPath();
-    if (await this.checkMaster(workspace, privatePath)) return 'existing';
+    if (reuse && await this.hasExistingMaster(workspace)) { signal.throwIfAborted(); return 'existing'; }
+    const { path: privatePath, seconds } = await this.privateRoute(workspace);
+    if (await this.checkMaster(workspace, privatePath)) {
+      signal.throwIfAborted();
+      this.masterTargets.set(key, workspace);
+      state.connected = true;
+      return 'existing';
+    }
     const multiplexing = reuse ? await this.configuredMultiplexing(workspace) : { persists: false, path: undefined };
     const userPath = multiplexing.persists ? multiplexing.path : undefined;
     const common = ['-T', '-o', 'BatchMode=no', '-o', 'StrictHostKeyChecking=ask', '-o', 'ConnectTimeout=15',
@@ -516,16 +653,18 @@ export class Transport {
     const destination = [...(workspace.port ? ['-p', String(workspace.port)] : []), workspace.host!];
     // The user's own ControlMaster/ControlPersist take over once `true` has run.
     const args = userPath ? [...common, ...destination, 'true']
-      : ['-f', '-N', ...common, '-o', 'ControlMaster=yes', '-o', 'ControlPersist=yes', '-o', `ControlPath=${privatePath}`, ...destination];
+      : ['-f', '-N', ...common, '-o', 'ControlMaster=yes', '-o', `ControlPersist=${seconds}`, '-o', `ControlPath=${privatePath}`, ...destination];
+    signal.throwIfAborted();
     diagnostic.event('transport.ssh.login.start', { host: workspace.host, port: workspace.port, master: userPath ? 'user' : 'private', reuseUserMasters: reuse });
-    await runInteractiveLogin({ command: { file: 'ssh', args }, answer, signal });
-    if (!userPath) this.masters.set(key, workspace);
-    const state = this.hosts.get(channelKey(workspace));
-    if (state) { state.failures = 0; state.retryAt = 0; state.connected = true; }
+    if (!userPath) this.masterTargets.set(key, workspace);
+    await this.trackClient(state, runInteractiveLogin({ command: { file: 'ssh', args }, answer, signal }));
+    state.failures = 0; state.retryAt = 0; state.connected = true;
     // The foreground ssh exits once authenticated; the socket follows immediately.
     for (let attempt = 0; attempt < 30; attempt++) {
+      signal.throwIfAborted();
       this.existingMasters.delete(key);
       if (userPath ? await this.hasExistingMaster(workspace) : await this.checkMaster(workspace, privatePath)) {
+        signal.throwIfAborted();
         diagnostic.event('transport.ssh.login.connected', { host: workspace.host, port: workspace.port });
         return 'connected';
       }
@@ -540,22 +679,29 @@ export class Transport {
    * takeover waits for one like any command).
    */
   async stream(workspace: Workspace, script: string): Promise<ChildProcessWithoutNullStreams> {
-    if (this.disposed) throw disposedError();
-    await this.supported(workspace);
-    await this.route(workspace);
-    const { place } = await this.host(workspace).sessions.acquire('terminal');
-    if (this.disposed) { place!.release(); throw disposedError(); }
+    this.assertActive(workspace);
+    const state = this.host(workspace);
+    await this.supported(workspace, state);
+    await this.route(workspace, state);
+    const { place } = await state.sessions.acquire('terminal', { signal: state.abort.signal });
     // The connection setting may have changed while waiting.
     let route: Route;
-    try { route = await this.route(workspace); } catch (error) { place!.release(); throw error; }
-    return this.spawnStream(workspace, script, route, place!);
+    try { route = await this.route(workspace, state); this.assertActive(workspace, state); } catch (error) { place!.release(); throw error; }
+    return this.spawnStream(workspace, script, route, state, place!);
   }
-  private spawnStream(workspace: Workspace, script: string, route: Route, place: SessionPlace): ChildProcessWithoutNullStreams {
-    const invocation = commandInvocation(workspace, script, route.controlPath, this.sshConfigPath, route.reuseExistingMaster);
+  private spawnStream(workspace: Workspace, script: string, route: Route, state: HostState, place: SessionPlace): ChildProcessWithoutNullStreams {
+    const invocation = commandInvocation(workspace, script, route.controlPath, this.sshConfigPath, route.reuseExistingMaster, undefined, undefined, false, route.controlPersist);
     let child: ChildProcessWithoutNullStreams;
     try { child = spawn(invocation.file, invocation.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
     catch (error) { place.release(); throw error; }
-    whenGone(child, this.releaseWhenEnded(place, workspace));
+    const abort = () => hangUp(child, this.hangUpGraceMs);
+    const release = this.releaseWhenEnded(place, workspace);
+    if (workspace.kind === 'ssh') state.abort.signal.addEventListener('abort', abort, { once: true });
+    void this.trackClient(state, new Promise<void>(resolve => whenGone(child, confirmed => {
+      state.abort.signal.removeEventListener('abort', abort);
+      release(confirmed);
+      resolve();
+    })));
     // The remote `exec sh -s` reads exactly this first command and is replaced by
     // the loop, which then owns the rest of stdin. Nothing else is written until
     // the loop reports that it is ready, so no later line is consumed early.
@@ -566,13 +712,13 @@ export class Transport {
    * An SSH target must run macOS or Linux; asked once per host (`uname -s`) before
    * its first command. Only a definite answer is kept: a failed connection asks again.
    */
-  private supported(workspace: Workspace): Promise<void> {
+  private supported(workspace: Workspace, state: HostState): Promise<void> {
     if (workspace.kind !== 'ssh') return Promise.resolve();
     const key = channelKey(workspace);
     let check = this.platforms.get(key);
     if (!check) {
       const refuse = (system: string) => new UnsupportedTargetError(unsupportedTargetMessage(workspace.host ?? '', system));
-      check = this.unchecked(workspace, 'uname -s', { tag: 'ssh.platform', timeoutMs: 20_000, maxBytes: 4096 }).then(({ stdout }) => {
+      check = this.unchecked(workspace, state, 'uname -s', { tag: 'ssh.platform', timeoutMs: 20_000, maxBytes: 4096 }).then(({ stdout }) => {
         const system = targetSystem(stdout.toString());
         if (!system.supported) throw refuse(system.system);
       }, error => {
@@ -580,32 +726,36 @@ export class Transport {
         if (windowsShellFailure(error instanceof Error ? error.message : String(error))) throw refuse('Windows');
         throw error;
       });
-      check.catch(error => { if (!(error instanceof UnsupportedTargetError)) this.platforms.delete(key); });
+      check.catch(error => { if (!(error instanceof UnsupportedTargetError) && this.platforms.get(key) === check) this.platforms.delete(key); });
       this.platforms.set(key, check);
     }
     return check;
   }
   async run(workspace: Workspace, script: string, options: CommandOptions = {}): Promise<CommandResult> {
-    if (this.disposed) throw new Error('Transport has been disposed');
+    this.assertActive(workspace);
+    const state = this.host(workspace);
     const rehearsal = this.rehearsal?.(options.tag);
     if (rehearsal?.delayMs && rehearsal.delayMs > 0) await new Promise(resolve => setTimeout(resolve, rehearsal.delayMs));
     if (rehearsal?.error) throw new Error(rehearsal.error);
-    await this.supported(workspace);
-    return this.unchecked(workspace, script, options);
+    this.assertActive(workspace, state);
+    await this.supported(workspace, state);
+    return this.unchecked(workspace, state, script, options);
   }
-  private async unchecked(workspace: Workspace, script: string, options: CommandOptions = {}): Promise<CommandResult> {
-    if (this.disposed) throw disposedError();
-    await this.route(workspace);
-    const state = this.host(workspace);
+  private async unchecked(workspace: Workspace, state: HostState, script: string, options: CommandOptions = {}): Promise<CommandResult> {
+    await this.route(workspace, state);
     // Cancellable scans and streamed downloads keep their own session: aborting
     // one must not cost a warm channel.
     const channelOk = this.channelKinds.has(workspace.kind) && !options.signal && !options.output && !options.privateContent;
+    const signal = workspace.kind !== 'ssh' ? options.signal : options.signal ? AbortSignal.any([options.signal, state.abort.signal]) : state.abort.signal;
     for (;;) {
+      this.assertActive(workspace, state);
       let channel = channelOk ? this.idleChannel(workspace) : undefined, place: SessionPlace | undefined;
       if (!channel) {
         // A free place, or (waiting in line) whichever comes first: a place or an idle channel.
-        const grant = await state.sessions.acquire('command', { channelOk, signal: options.signal });
-        if (this.disposed) { grant.place?.release(); if (grant.channel) this.unclaim(state, grant.channel); throw disposedError(); }
+        const grant = await state.sessions.acquire('command', { channelOk, signal });
+        try { this.assertActive(workspace, state); } catch (error) {
+          grant.place?.release(); if (grant.channel) this.unclaim(state, grant.channel); throw error;
+        }
         ({ channel, place } = grant);
       }
       if (channel) {
@@ -619,19 +769,22 @@ export class Transport {
       }
       let route: Route;
       // The connection setting may have changed while waiting.
-      try { route = await this.route(workspace); } catch (error) { place!.release(); throw error; }
+      try { route = await this.route(workspace, state); this.assertActive(workspace, state); } catch (error) { place!.release(); throw error; }
       if (workspace.kind === 'ssh') diagnostic.event('transport.ssh.connection', { host: workspace.host, port: workspace.port, mode: route.reuseExistingMaster ? 'existing-user-master' : 'private-master' }, 'debug');
       try {
         // The place is freed when the session has ended on the target, which may be after this settles.
-        const result = await runCommand(workspace, script, { ...options, controlPath: route.controlPath, reuseExistingMaster: route.reuseExistingMaster, sshConfigPath: this.sshConfigPath,
-          hangUpGraceMs: this.hangUpGraceMs, onSessionEnd: this.releaseWhenEnded(place!, workspace) });
+        const release = this.releaseWhenEnded(place!, workspace);
+        let end!: () => void;
+        if (workspace.kind === 'ssh') void this.trackClient(state, new Promise<void>(resolve => { end = resolve; }));
+        const result = await runCommand(workspace, script, { ...options, signal, controlPath: route.controlPath, controlPersist: route.controlPersist, reuseExistingMaster: route.reuseExistingMaster,
+          sshConfigPath: this.sshConfigPath, hangUpGraceMs: this.hangUpGraceMs, onSessionEnd: confirmed => { release(confirmed); end?.(); } });
         state.connected = true;
         return result;
       } catch (error) {
         // A user may authenticate a new master after a failed attempt, or their
         // old master may disappear. Reinspect on the next explicit operation;
         // never replay the failed command (especially terminal input).
-        if (workspace.kind === 'ssh' && !options.signal?.aborted) this.existingMasters.delete(masterKey(workspace));
+        if (workspace.kind === 'ssh' && !signal?.aborted) this.existingMasters.delete(masterKey(workspace));
         throw error;
       }
     }
@@ -671,8 +824,9 @@ export class Transport {
   }
   /** Start channels ahead of the first command, e.g. when a target is shown. */
   warmChannels(workspace: Workspace): void {
-    if (this.disposed || !this.channelKinds.has(workspace.kind)) return;
-    void this.route(workspace).then(() => this.startChannel(workspace, this.host(workspace)), () => {});
+    if (this.disposed || this.isSshDisconnected(workspace) || !this.channelKinds.has(workspace.kind)) return;
+    const state = this.host(workspace);
+    void this.route(workspace, state).then(() => this.startChannel(workspace, state), () => {});
   }
   /**
    * Open one more channel in the background when none is idle and there is room: one
@@ -681,7 +835,7 @@ export class Transport {
    * free place, and over Lectern's own master only once it is up.
    */
   private startChannel(workspace: Workspace, state: HostState): void {
-    if (this.disposed || !this.channelKinds.has(workspace.kind) || state.opening || state.channels.size >= state.sessions.channelLimit || Date.now() < state.retryAt) return;
+    if (this.disposed || state.abort.signal.aborted || this.isSshDisconnected(workspace) || !this.channelKinds.has(workspace.kind) || state.opening || state.channels.size >= state.sessions.channelLimit || Date.now() < state.retryAt) return;
     // Lectern's own master is made by the first session over it (ControlMaster=auto): wait for that.
     if (workspace.kind === 'ssh' && process.platform !== 'win32' && state.sessions.mode === 'exclusive' && !state.connected) return;
     for (const [channel, entry] of state.channels) if (channel.usable && !entry.claimed && entry.generation === this.generation) return;
@@ -695,10 +849,11 @@ export class Transport {
     try {
       let child: ChildProcessWithoutNullStreams;
       try {
-        const route = await this.route(workspace);
+        const route = await this.route(workspace, state);
+        this.assertActive(workspace, state);
         // The connection setting changed meanwhile: the next command opens one over the new route.
         if (generation !== this.generation) { place.release(); return; }
-        child = this.spawnStream(workspace, channelScript(nonce), route, place);
+        child = this.spawnStream(workspace, channelScript(nonce), route, state, place);
       } catch (error) { place.release(); throw error; }
       const channel = await CommandChannel.open(child, nonce, channelStartMs, {
         onClose: (closed, reason) => {
@@ -707,7 +862,7 @@ export class Transport {
         },
         onIdle: idle => this.channelIdle(state, idle),
       });
-      if (this.disposed || generation !== this.generation) { channel.close(this.disposed ? 'transport disposed' : 'connection setting changed'); return; }
+      if (this.disposed || state.abort.signal.aborted || generation !== this.generation) { channel.close('connection retired'); return; }
       state.channels.set(channel, { place, generation, claimed: false });
       state.failures = 0;
       this.sweeper ??= setInterval(() => this.closeIdleChannels(), Math.min(60_000, this.channelIdleMs));
@@ -747,15 +902,22 @@ export class Transport {
     if (this.disposed) return;
     this.disposed = true;
     clearInterval(this.sweeper);
-    for (const state of this.hosts.values()) {
-      state.sessions.drain();
-      for (const channel of state.channels.keys()) channel.close('transport disposed');
-    }
+    await Promise.all([...this.hosts].map(([key, state]) => {
+      const closing = this.closeHost(state, disposedError());
+      return key.startsWith('ssh:') ? closing : undefined;
+    }));
     this.hosts.clear();
+    await Promise.allSettled(this.disconnecting.values());
     if (!this.directory) return;
-    const directory = await this.directory;
-    // Close only our private multiplexed SSH masters. Detached tmux/Claude survive.
-    await Promise.all([...this.masters.values()].map(workspace => this.controlMaster(workspace, join(directory, '%C'), 'exit')));
-    await rm(directory, { recursive: true, force: true });
+    for (const directory of await Promise.all([this.directory, this.exitDirectory])) {
+      if (!directory || (directory.persistent && this.keepAliveSeconds !== 0)) continue;
+      // Include adopted sockets and newly created masters even when a host was removed.
+      const sockets = new Set([...(directory.persistent ? this.masters : []), ...await sshControlSockets(directory.path)]);
+      await Promise.all([...sockets].map(socket => controlSocket(socket, 'exit')));
+      if (!directory.persistent) {
+        await Promise.all([...this.masterTargets.values()].map(workspace => this.controlMaster(workspace, join(directory.path, '%C'), 'exit')));
+        await rm(directory.path, { recursive: true, force: true });
+      }
+    }
   }
 }

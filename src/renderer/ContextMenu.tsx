@@ -39,7 +39,8 @@ export function normalizeMenu(entries: (MenuEntry | false | null | undefined)[])
 }
 
 type PointerLike = { clientX: number; clientY: number; preventDefault(): void; stopPropagation(): void; currentTarget: EventTarget | null };
-export function showContextMenu(event: PointerLike, entries: (MenuEntry | false | null | undefined)[], label = t('misc.actions')) {
+export function showContextMenu(event: PointerLike, entries: (MenuEntry | false | null | undefined)[], label = t('misc.actions'),
+  updated?: Promise<MenuEntry[]>) {
   const items = normalizeMenu(entries);
   if (!items.length) return;
   event.preventDefault();
@@ -50,8 +51,13 @@ export function showContextMenu(event: PointerLike, entries: (MenuEntry | false 
     const rect = event.currentTarget.getBoundingClientRect();
     x = rect.left + Math.min(24, rect.width / 2); y = rect.bottom - 2;
   }
-  menu = { x, y, label, items };
+  const shown = menu = { x, y, label, items };
   emit();
+  void updated?.then(next => {
+    if (menu !== shown) return;
+    menu = { ...shown, items: normalizeMenu(next) };
+    emit();
+  }, () => {});
 }
 
 /** Resolves true only on an explicit click of the confirm button. */
@@ -103,7 +109,7 @@ function Menu({ pending, onClose }: { pending: Pending; onClose(): void }) {
     el.showPopover();
     el.style.left = `${Math.max(4, Math.min(pending.x, innerWidth - el.offsetWidth - 4))}px`;
     el.style.top = `${Math.max(4, Math.min(pending.y, innerHeight - el.offsetHeight - 4))}px`;
-    el.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    if (!el.contains(document.activeElement)) el.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
   }, [pending]);
   const move = (direction: number | "first" | "last") => {
     const items = [...element.current!.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];

@@ -29,6 +29,7 @@ export const sidebar = {
   revealOther: ['在文件管理器中显示', 'Show in File Manager'],
   addFolder: ['添加项目文件夹', 'Add project folder'],
   loginMachine: ['登录这台机器', 'Sign in to this machine'],
+  disconnectSsh: ['断开 SSH 连接', 'Disconnect SSH'],
   discoverLocal: ['发现本机会话', 'Discover local conversations'],
   rename: ['重命名…', 'Rename…'],
   copyHost: ['复制主机地址', 'Copy host address'],

@@ -65,12 +65,20 @@ function MachineSection({ machine, searchOpen, demo, add, login, menu, connectio
   const id = useId();
   const remote = machine.endpoint.kind === "ssh";
   const address = remote ? `${machine.endpoint.host}${machine.endpoint.port ? `:${machine.endpoint.port}` : ""}` : undefined;
-  const problem = remote && (connection?.state === "login" || connection?.state === "unreachable" || connection?.state === "unsupported") ? connection : undefined;
+  const disconnected = connection?.state === "disconnected";
+  const problem = remote && connection && "message" in connection ? connection : undefined;
   // A machine without tmux or Claude Code (see host-tools.ts) is marked like a connection problem.
   const lacks = hostMissing(useHostTools()(machine.endpoint));
   return <section className="machine-section" aria-label={machine.name} data-machine-key={machine.key} data-connection={remote ? connection?.state : undefined}
     data-missing-tools={lacks.join(" ") || undefined}>
-    <div className="machine-heading" onContextMenu={menu && (event => showContextMenu(event, machineMenu(machine, { ...menu, addFolder: () => { setCollapsed(false); add(); } }), machine.name))}>
+    <div className="machine-heading" onContextMenu={menu && (event => {
+      const actions = { ...menu, addFolder: () => { setCollapsed(false); add(); } };
+      const state = disconnected ? "disconnected" : undefined;
+      const updated = remote && !demo && !disconnected
+        ? window.desktop.sshMasterState({ host: machine.endpoint.host!, port: machine.endpoint.port }).then(master => machineMenu(machine, actions, master))
+        : undefined;
+      showContextMenu(event, machineMenu(machine, actions, state), machine.name, updated);
+    })}>
       <button type="button" className="machine-toggle" aria-expanded={open} aria-controls={id}
         aria-label={t('sidebar.collapseMachine', { open: String(open), name: machine.name })} title={t(open ? 'sidebar.collapse' : 'sidebar.expand')}
         onClick={() => { setCollapsed(open); onNavigate?.(); }}>
@@ -80,10 +88,11 @@ function MachineSection({ machine, searchOpen, demo, add, login, menu, connectio
         title={[address || machine.name, problem?.message, t(machine.folders.length ? 'sidebar.clickNewChat' : 'sidebar.clickAddFolder')].filter(Boolean).join("\n")}
         onClick={() => { setCollapsed(false); onNavigate?.(); onOpen?.(); }}>
         {remote ? <Server size={15}/> : <Laptop size={15}/>}<strong>{machine.name}</strong>
+        {disconnected && <span className="machine-connection state-disconnected">{t('prefs.sshDisconnected')}</span>}
         {problem && <span className={`machine-connection state-${problem.state}`}>{t(problem.state === "login" ? 'sidebar.stateLogin' : problem.state === "unsupported" ? 'sidebar.stateUnsupported' : 'sidebar.stateOffline')}</span>}
-        {!problem && lacks.length > 0 && <span className="machine-connection state-missing" title={t('hostTools.badgeTitle', { tools: toolList(lacks) })}>{t('hostTools.badge')}</span>}
+        {!disconnected && !problem && lacks.length > 0 && <span className="machine-connection state-missing" title={t('hostTools.badgeTitle', { tools: toolList(lacks) })}>{t('hostTools.badge')}</span>}
       </button>
-      {remote && login && <button type="button" className="icon-button machine-login" aria-label={t('sidebar.login', { name: machine.name })} data-attention={!!problem || undefined}
+      {remote && login && !disconnected && <button type="button" className="icon-button machine-login" aria-label={t('sidebar.login', { name: machine.name })} data-attention={!!problem || undefined}
         title={t('sidebar.loginTitle')} disabled={demo} onClick={login}><LogIn size={15}/></button>}
       <button type="button" className="icon-button machine-add" aria-label={t('sidebar.addFolderOn', { name: machine.name })}
         title={t('sidebar.addFolder')} disabled={demo} onClick={() => { setCollapsed(false); add(); }}><FolderPlus size={15}/></button>

@@ -1,10 +1,12 @@
-import { Archive, ChevronDown, ChevronRight, ChevronsUp, Columns2, Copy, FolderOpen, FolderPlus, Hash, History, LogIn, Mail, MailOpen, MessageSquare, Pencil, Plus, RefreshCw, Settings2, SquareTerminal, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, ChevronsUp, Columns2, Copy, FolderOpen, FolderPlus, Hash, History, LogIn, Mail, MailOpen, MessageSquare, Pencil, Plug, Plus, RefreshCw, Settings2, SquareTerminal, Trash2, Unplug } from "lucide-react";
 import type { SessionInfo, Workspace } from "../shared/types";
+import type { SshMasterState } from "../shared/ssh-connections";
 import { confirmAction, copyWithToast, promptText, showToast, type MenuEntry } from "./ContextMenu";
 import { setDesktop, type ConnectionProfile } from "./desktop-state";
 import { revisitTreeSession, setTreeSessionUnread } from "./sidebar-receipts";
 import type { WorkspaceMachine } from "./workspace-machines";
 import { t } from '../shared/i18n';
+import { connectSshMachine, disconnectSshMachine, sshDisconnectHint } from './ssh-machines';
 
 /** Everything a sidebar right-click can do; App supplies the implementations. */
 export interface SidebarMenuActions {
@@ -33,12 +35,17 @@ const icon = (Icon: typeof Copy) => <Icon size={14} />;
 const address = (machine: WorkspaceMachine) => `${machine.endpoint.host}${machine.endpoint.port ? `:${machine.endpoint.port}` : ""}`;
 export const revealLabel = (platform: string) => t(platform === "darwin" ? 'sidebar.revealMac' : platform === "win32" ? 'sidebar.revealWindows' : 'sidebar.revealOther');
 
-export function machineMenu(machine: WorkspaceMachine, actions: SidebarMenuActions): MenuEntry[] {
+export function machineMenu(machine: WorkspaceMachine, actions: SidebarMenuActions, master?: SshMasterState): MenuEntry[] {
   const remote = machine.endpoint.kind === "ssh";
+  const target = { host: machine.endpoint.host!, port: machine.endpoint.port };
   const profile = actions.connections.find(c => c.host === machine.endpoint.host && c.port === machine.endpoint.port);
   return [
     { label: t('sidebar.addFolder'), icon: icon(FolderPlus), disabled: actions.demo, onSelect: () => actions.addFolder(machine) },
-    remote && { label: t('sidebar.loginMachine'), icon: icon(LogIn), disabled: actions.demo, onSelect: () => actions.login(machine) },
+    remote && master !== "disconnected" && { label: t('sidebar.loginMachine'), icon: icon(LogIn), disabled: actions.demo, onSelect: () => actions.login(machine) },
+    remote && (master === "disconnected"
+      ? { label: t('prefs.sshConnect'), icon: icon(Plug), onSelect: () => connectSshMachine(target, machine.name) }
+      : { label: t('sidebar.disconnectSsh'), icon: icon(Unplug), disabled: actions.demo || master !== "private",
+        hint: master && sshDisconnectHint(master), onSelect: () => disconnectSshMachine(target, machine.name) }),
     !remote && { label: t('sidebar.discoverLocal'), icon: icon(History), disabled: actions.demo, onSelect: actions.importHistory },
     "separator",
     remote && { label: t('sidebar.rename'), icon: icon(Pencil), disabled: actions.demo, onSelect: () => renameMachine(machine, profile, actions.connections) },

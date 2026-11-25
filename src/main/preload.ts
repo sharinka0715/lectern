@@ -55,6 +55,9 @@ const api: DesktopAPI = {
   sshLogin: (loginId, target) => ipcRenderer.invoke('lectern:sshLogin', loginId, target),
   answerSshLogin: (loginId, promptId, answer) => ipcRenderer.invoke('lectern:answerSshLogin', loginId, promptId, answer),
   checkSshConnection: target => ipcRenderer.invoke('lectern:checkSshConnection', target),
+  connectSsh: target => ipcRenderer.invoke('lectern:connectSsh', target),
+  sshMasterState: target => ipcRenderer.invoke('lectern:sshMasterState', target),
+  disconnectSsh: (target, confirmed) => ipcRenderer.invoke('lectern:disconnectSsh', target, confirmed === true),
   checkHost: (target, force) => ipcRenderer.invoke('lectern:checkHost', target, force === true),
   cancelSshLogin: loginId => ipcRenderer.invoke('lectern:cancelSshLogin', loginId),
   onSshLoginPrompt: callback => {

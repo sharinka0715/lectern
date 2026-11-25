@@ -114,6 +114,10 @@ Host devbox
   IdentityFile ~/.ssh/id_ed25519
 ```
 
+On macOS and Linux, SSH connections opened by Lectern stay available for one hour by default after their last SSH session ends, including when you quit and reopen the app. In **Settings → SSH connections**, choose a duration or disconnect on quit. A new duration applies to new connections. Disconnect on quit closes every connection Lectern owns at quit.
+
+Use a machine’s sidebar context menu or **Settings → SSH connections** to disconnect a connection Lectern owns. This pauses background reads for that machine until you choose **Connect**, open a conversation, or send a message. Remote tmux and Claude Code keep running. Your own SSH connections follow your OpenSSH configuration.
+
 Conversations keep running in tmux after you quit Lectern. **Close conversation** ends the Claude Code process; closing a split pane only closes the view.
 
 Lectern manages tmux sessions whose names start with `lectern-` and leaves your other tmux windows alone. To hand a Claude Code session you start yourself over to Lectern, run it inside `tmux new -s lectern-<name>`.

@@ -590,7 +590,10 @@ export interface DesktopAPI {
   /** Log in once with prompts shown in the app; resolves when a reusable connection exists. */
   sshLogin(loginId: string, target: SshLoginTarget): Promise<'existing' | 'connected'>;
   /** Non-interactive reachability check (BatchMode): ok, or the SSH error to classify. */
-  checkSshConnection(target: SshLoginTarget): Promise<{ ok: true } | { ok: false; message: string }>;
+  checkSshConnection(target: SshLoginTarget): Promise<{ ok: true } | { ok: false; message: string; disconnected?: true }>;
+  connectSsh(target: SshLoginTarget): Promise<{ ok: true } | { ok: false; message: string }>;
+  sshMasterState(target: SshLoginTarget): Promise<import('./ssh-connections').SshMasterState>;
+  disconnectSsh(target: SshLoginTarget, confirmed?: boolean): Promise<import('./ssh-connections').SshDisconnectResult>;
   /** Whether tmux and Claude Code are usable on the machine (one probe, kept until `force`): the tools found, or why the check could not run. */
   checkHost(target: WorkspaceEndpoint, force?: boolean): Promise<HostCheck>;
   /** Reply to a prompt; null cancels the login. */

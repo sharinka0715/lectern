@@ -12,6 +12,7 @@ export interface SshLoginRequest {
   label?: string;
   /** Runs once a reusable connection exists, for example to retry what failed. */
   onDone?: () => void;
+  onClose?: () => void;
 }
 
 // One login dialog for the whole window; any panel can ask for it.
@@ -20,12 +21,14 @@ let sequence = 0;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach(listener => listener());
 
-export function openSshLogin(target: SshLoginTarget, options: Pick<SshLoginRequest, 'label' | 'onDone'> = {}) {
+export function openSshLogin(target: SshLoginTarget, options: Pick<SshLoginRequest, 'label' | 'onDone' | 'onClose'> = {}) {
+  current?.onClose?.();
   current = { id: ++sequence, target: { host: target.host, ...(target.port ? { port: target.port } : {}) }, ...options };
   notify();
 }
 export function closeSshLogin(id: number) {
   if (current?.id !== id) return;
+  current.onClose?.();
   current = undefined;
   notify();
 }

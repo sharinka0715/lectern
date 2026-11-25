@@ -247,5 +247,5 @@
 .machine-connection { flex-shrink: 0; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-size: var(--text-caption); line-height: calc(17 * var(--ui-px)); font-weight: 560; }
 .machine-connection.state-login { color: var(--warning); background: var(--warning-bg); }
 .machine-connection.state-unreachable { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
-.machine-connection.state-unsupported { color: var(--secondary-text); background: var(--surface-muted); }
+.machine-connection.state-unsupported, .machine-connection.state-disconnected { color: var(--secondary-text); background: var(--surface-muted); }
 .machine-login[data-attention] { color: var(--warning); opacity: 1; }

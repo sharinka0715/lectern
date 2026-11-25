@@ -67,6 +67,7 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   terminalVisible?: boolean;
   nativeTasks?: SessionSnapshot['tasks'];
   terminalEpoch?: number;
+  sshPaused?: boolean;
   manualRecovery?: boolean;
   inactiveHistory?: boolean;
   /** The fast path while the user controls the terminal; absent or closed means per-command input. */
@@ -208,6 +209,30 @@ export class Controller extends EventEmitter {
   /** Dynamic workflows decide Ultracode's availability: read the lists again. */
   refreshModelCatalogs() { this.catalogs.refreshAll(); }
   get currentSnapshot() { return this.watch?.snapshot; }
+  setSshDisconnected(disconnected: boolean) {
+    const watch = this.watch;
+    if (!watch || !!watch.sshPaused === disconnected) return;
+    if (!disconnected) {
+      // The last read may still be unwinding from cancellation. Let it finish before resuming.
+      void (async () => {
+        if (watch.reading) await this.inFlight?.catch(() => {});
+        if (this.watch !== watch || this.backend.isSshDisconnected(watch.workspace)) return;
+        watch.sshPaused = false;
+        this.schedulePoll(watch, 0, true);
+      })();
+      return;
+    }
+    watch.sshPaused = true;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    watch.terminalEpoch = (watch.terminalEpoch ?? 0) + 1;
+    this.revokeTerminalControl(watch, 'ssh-disconnected');
+    watch.question = watch.permission = undefined;
+    watch.snapshot = { ...watch.snapshot, status: 'offline', nativeInputReady: false, settingsInputReady: false, error: undefined,
+      question: undefined, questionBusy: undefined, permission: undefined, permissionBusy: undefined, directoryTrust: undefined,
+      turnControls: undefined, turnProgress: undefined, statusLine: undefined, endpointBilling: undefined };
+    this.publish(watch, 'ssh-disconnected');
+  }
   get isBackground() { return this.background; }
   /** Background reads never publish. Foreground publishes the cached state at
    * once and reads again immediately, without discarding loaded history. */
@@ -383,7 +408,8 @@ export class Controller extends EventEmitter {
       };
       this.watch = watch;
       diagnostic.event('controller.watch.start', { watchId, workspaceId, sessionId });
-      await this.poll(watch);
+      if (workspace.kind === 'ssh' && this.backend.isSshDisconnected(workspace)) this.setSshDisconnected(true);
+      else await this.poll(watch);
       return watch.snapshot;
     });
   }
@@ -663,12 +689,14 @@ export class Controller extends EventEmitter {
       }) });
   }
   private schedulePoll(watch: Watch, delay: number, freshViewport = false): void {
+    if (watch.sshPaused) return;
     clearTimeout(this.timer);
     this.timer = setTimeout(() => { void this.poll(watch, freshViewport); }, delay);
     diagnostic.event('controller.poll.scheduled', { delayMs: delay, failures: watch.failures, freshViewport });
   }
   private async poll(watch: Watch, freshViewport = false): Promise<void> {
     this.timer = undefined;
+    if (watch.sshPaused) return;
     // One read of a conversation at a time. A second read from the same cursor hands the
     // display the same bytes twice, and when the first one stopped inside a record Claude
     // Code was still writing, the second copy of that record is dropped and never read
@@ -711,6 +739,7 @@ export class Controller extends EventEmitter {
       // Before the read: figures it returns are no newer than they were then (quota-as-of.ts).
       const readAt = Date.now();
       const result = await this.backend.readSession(watch.workspace, watch.sessionId, forceViewport, watch.display.activity.targets(), true, !!watch.terminalVisible, true, listing, elsewhere);
+      if (watch.sshPaused) return;
       const applied = this.watch === watch;
       // Incremental chunks must not be deduplicated by hash: two equal byte
       // windows may be separate portions of a large record. Empty reads can be.
@@ -731,7 +760,7 @@ export class Controller extends EventEmitter {
         if (result.reset && watch.older && !watch.display.answeredHistoryHead) {
           repair = true;
           diagnostic.event('controller.history.initial', { jsonlCaptureId, jsonl: summarize(result.jsonl), skippedHistoryRecords: result.skippedHistoryRecords });
-          try { if (!await this.readHistory(watch, watch.older, false) || this.watch !== watch) return; }
+          try { if (!await this.readHistory(watch, watch.older, false) || this.watch !== watch || watch.sshPaused) return; }
           catch (error) {
             // The forward cursor already reached EOF. Retry a fresh guarded tail
             // rather than publishing an unpaired partial page on the next poll.
@@ -1027,6 +1056,7 @@ export class Controller extends EventEmitter {
         status, notice: watch.display.notice,
       };
     } catch (error) {
+      if (watch.sshPaused) return;
       if (this.watch !== watch) { diagnostic.event('controller.poll.discarded', { reason: 'stale-watch-error', error: errorDetails(error) }); return; }
       if (this.trustOperation?.workspaceId === watch.workspace.id && this.trustOperation.sessionId === watch.sessionId) {
         // Selecting No can remove a startup pane before any JSONL exists. The

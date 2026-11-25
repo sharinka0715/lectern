@@ -26,6 +26,8 @@ export const backend = {
   renameNeedsTrust: ['原生 Claude 要求确认目录信任，请先在此目录打开并确认终端', 'Claude asks to trust this folder. Open a terminal in the folder and confirm first.'],
   renameUnverified: ['未能在临时 Claude 终端核验历史对话的新标题，请查看原生会话状态', 'Could not verify the new title in the temporary Claude terminal. Check the native conversation.'],
   winLoginUnsupported: ['Windows 版暂不支持在应用内登录 SSH，请先在系统终端完成登录。', 'Signing in to SSH inside the app is not supported on Windows yet. Sign in from a system terminal first.'],
+  sshDisconnected: ['SSH 已断开。', 'SSH is disconnected.'],
+  sshDisconnectFailed: ['无法断开 Lectern 的 SSH 连接。', "Could not disconnect Lectern's SSH connection."],
   loginNoMaster: ['登录已完成，但没有找到可复用的 SSH 连接。请检查 ssh_config 中的 ControlPath。', 'Signed in, but no reusable SSH connection was found. Check ControlPath in ssh_config.'],
   catalogIncomplete: ['命令目录响应不完整', 'Incomplete command list response.'],
   cannotLocateDirs: ['无法定位目标端工作目录或配置目录', 'Cannot locate the working or configuration folder on the target.'],

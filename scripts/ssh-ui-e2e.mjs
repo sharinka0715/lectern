@@ -57,6 +57,24 @@ try {
     // The startup connection check stays inside the fixture too.
     fixture.checks = [];
     replace('checkSshConnection', async (_event, target) => { fixture.checks.push(target); return { ok: true }; });
+    fixture.master = 'none';
+    fixture.connectionActions = [];
+    replace('sshMasterState', async () => fixture.master);
+    const publish = snapshot => BrowserWindow.getAllWindows()[0].webContents.send('lectern:snapshot', snapshot);
+    replace('disconnectSsh', async (_event, target, confirmed) => {
+      fixture.connectionActions.push({ target, confirmed });
+      if (fixture.current?.terminalControl && !confirmed) return { terminal: true, input: false };
+      fixture.master = 'disconnected';
+      publish({ ...fixture.current, terminalControl: undefined, nativeInputReady: false, status: 'offline' });
+      return fixture.master;
+    });
+    replace('connectSsh', async () => { fixture.master = 'private'; publish(fixture.current); return { ok: true }; });
+    replace('setTerminalControl', async (_event, _id, _sid, enabled) => {
+      const control = enabled ? { token: 'synthetic-terminal-control', paneId: '%42' } : undefined;
+      fixture.current = { ...fixture.current, terminalControl: control };
+      publish(fixture.current);
+      return control;
+    });
     // The machine's tmux / Claude Code check stays inside the fixture too: both are there.
     replace('checkHost', async () => ({ ok: true, tools: { system: 'Linux', distro: ['ubuntu'], managers: ['apt-get'], root: false,
       tmux: { path: '/usr/bin/tmux', version: 'tmux 3.4' }, claude: { path: '/home/dev/.local/bin/claude', version: '2.1.329 (Claude Code)' } } }));
@@ -107,8 +125,13 @@ try {
       event.sender.send('lectern:snapshot', fixture.current);
       return session(workspace);
     });
-    for (const method of ['createSession', 'sendMessage', 'sendKey', 'getSessionSetting', 'setSessionSetting', 'respondDirectoryTrust'])
+    for (const method of ['createSession', 'sendKey', 'getSessionSetting', 'setSessionSetting', 'respondDirectoryTrust'])
       replace(method, async () => { fixture.calls.push({ method }); throw new Error(`Unexpected synthetic test action: ${method}`); });
+    fixture.sends = [];
+    replace('sendMessage', async (_event, workspaceId, sessionId, text) => {
+      if (fixture.master !== 'private' || text !== '测试断开后发送') throw new Error('Unexpected synthetic send');
+      fixture.sends.push({ workspaceId, sessionId, text });
+    });
     fixture.disconnect = () => BrowserWindow.getAllWindows()[0].webContents.send('lectern:snapshot', { ...fixture.current, status: 'offline', navigationStatus: 'unknown', error: 'Synthetic SSH: connection lost' });
   }, { paths, ids, host, port });
 
@@ -305,6 +328,58 @@ try {
   assert.equal(await page.locator('.terminal-keybar').count(), 0);
   await page.locator('.error-banner').getByRole('button', { name: '重试', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
+
+  if (process.platform !== 'win32') {
+    const openMachineMenu = () => machine.locator('.machine-heading').click({ button: 'right' });
+    const disconnect = page.getByRole('menuitem', { name: '断开 SSH 连接', exact: false });
+    await openMachineMenu();
+    await disconnect.getByText('这台机器没有 Lectern 自己的 SSH 连接。').waitFor();
+    assert.equal(await disconnect.isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await app.evaluate(() => { globalThis.__sshUI.master = 'private'; });
+    const panel = page.locator('.terminal-panel');
+    if (!await panel.isVisible()) await page.getByTitle('查看终端原屏').click();
+    await panel.getByRole('button', { name: '接管终端', exact: true }).click();
+    await page.locator('.terminal-panel[data-terminal-control="true"]').waitFor();
+    await openMachineMenu();
+    await disconnect.click();
+    const confirm = page.getByRole('dialog', { name: '断开 示例 SSH 机器 的 SSH 连接？', exact: true });
+    await confirm.getByText('断开会结束 Lectern 的终端接管。', { exact: true }).waitFor();
+    await confirm.getByText('远端 tmux 和 Claude Code 会继续运行。', { exact: true }).waitFor();
+    await confirm.getByRole('button', { name: '取消', exact: true }).click();
+    assert.equal(await panel.getAttribute('data-terminal-control'), 'true');
+    await openMachineMenu();
+    await disconnect.click();
+    await confirm.getByRole('button', { name: '断开', exact: true }).click();
+    await machine.getByText('已断开', { exact: true }).waitFor();
+    await page.locator('.terminal-panel[data-readonly="true"]').waitFor();
+    assert.deepEqual(await app.evaluate(() => globalThis.__sshUI.connectionActions), [
+      { target: { host, port }, confirmed: false }, { target: { host, port }, confirmed: false }, { target: { host, port }, confirmed: true },
+    ]);
+    await app.evaluate(() => { globalThis.__sshUI.current.terminalControl = undefined; });
+    await openMachineMenu();
+    await page.getByRole('menuitem', { name: '连接', exact: true }).click();
+    await machine.getByText('已断开', { exact: true }).waitFor({ state: 'detached' });
+    await page.waitForFunction(() => !document.querySelector('textarea')?.matches(':disabled, [aria-disabled="true"]'));
+    const disconnectDirectly = async () => {
+      await openMachineMenu();
+      await disconnect.click();
+      await machine.getByText('已断开', { exact: true }).waitFor();
+      assert.equal(await confirm.count(), 0);
+    };
+    await disconnectDirectly();
+    await machine.locator(`.session-row[data-workspace-id="${first.id}"][data-session-id="${ids[0]}"]`).click();
+    await machine.getByText('已断开', { exact: true }).waitFor({ state: 'detached' });
+    await page.locator('.message-assistant').filter({ hasText: paths[0] }).waitFor();
+    await disconnectDirectly();
+    await composer.fill('测试断开后发送');
+    await composer.press('Enter');
+    await machine.getByText('已断开', { exact: true }).waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '');
+    assert.deepEqual(await app.evaluate(() => globalThis.__sshUI.sends), [
+      { workspaceId: first.id, sessionId: ids[0], text: '测试断开后发送' },
+    ]);
+  }
 
   // Create one subfolder on the browsed machine, then explicitly add it to Lectern.
   const parent = '/srv/projects', newName = "示例 'draft'", newPath = `${parent}/${newName}`;

@@ -8,7 +8,7 @@ import {
   type WorkspaceDiscoveryState,
 } from "./workspace-discovery-cache";
 import { reportDiagnostic } from "./diagnostics";
-import { reportMachineResult } from "./ssh-machines";
+import { machineDisconnected, reportMachineResult } from "./ssh-machines";
 import { noteFolderRead } from "./host-tools";
 import { desktopState, setSidebarFolds, useDesktopState } from "./desktop-state";
 
@@ -67,6 +67,7 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
       cacheRef.current = new WorkspaceDiscoveryCache(
         (id) => {
           const ws = workspacesRef.current.find(w => w.id === id);
+          if (ws?.kind === "ssh" && machineDisconnected(ws)) return Promise.resolve(undefined);
           return window.desktop.discover(id, remember && ws ? workspaceReceipts(ws).receipts.baselines() : undefined);
         },
         setStates,
@@ -108,7 +109,11 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
     },
     [cache],
   );
-  const refresh = useCallback((id: string) => cache().refresh(id), [cache]);
+  const refresh = useCallback((id: string) => {
+    const ws = workspacesRef.current.find(w => w.id === id);
+    if (ws?.kind === "ssh" && machineDisconnected(ws)) return Promise.resolve(undefined);
+    return cache().refresh(id);
+  }, [cache]);
   /** Reads the folder if due. `reveal` also opens it in the tree, which a list across
    * projects never does: the tree stays as the user left it. */
   const expand = useCallback(
@@ -177,7 +182,8 @@ export function useWorkspaceTree(workspaces: Workspace[], visible: boolean, reme
       // interactive discovery queue with a backlog of cold directories: each
       // machine starts at most its free slots.
       const entries = cache();
-      for (const id of plannedReads(workspacesRef.current, id => entries.get(id), { now: Date.now(), slots: laneSlots,
+      const reachable = workspacesRef.current.filter(ws => ws.kind !== "ssh" || !machineDisconnected(ws));
+      for (const id of plannedReads(reachable, id => entries.get(id), { now: Date.now(), slots: laneSlots,
         expanded: expandedRef.current, visible: visibleRef.current, focus: focusRef.current })) void refresh(id);
     };
     tickRef.current = tick;

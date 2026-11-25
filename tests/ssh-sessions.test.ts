@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Transport, type TransportOptions } from '../src/backend/transport';
 import type { Workspace } from '../src/shared/types';
+import { t as translate } from '../src/shared/i18n';
 
 // Session places per SSH host, with a stand-in for OpenSSH that runs every session
 // with the local shell. `-O check` finds the user's master when `master-user` exists
@@ -20,6 +21,7 @@ printf '%s\\n' "$*" >> "$state/calls"
 case " $* " in *" -o ControlPath="*) socket=private;; *) socket=user;; esac
 case " $* " in
   *" -O check "*) [ -f "$state/master-$socket" ] && exit 0; exit 255;;
+  *" -O exit "*) printf '%s %s\\n' "$socket" "$*" >> "$state/control"; rm -f "$state/master-$socket"; exit 0;;
   *" -O "*) printf '%s %s\\n' "$socket" "$*" >> "$state/control"; exit 0;;
 esac
 mkdir -p "$state/live"; : > "$state/live/$$"
@@ -82,7 +84,7 @@ test('one-off sessions: at most 4 at once over the user\'s shared master, 8 over
     assert.equal(Math.max(...await counts()), limit, `${reuseUserMasters ? 'shared' : 'exclusive'}: ${await counts()}`);
     const commands = (await lines('calls')).filter(line => line.endsWith('exec sh -s'));
     if (reuseUserMasters) assert.ok(commands.every(line => line.includes('ControlMaster=no') && !line.includes('ControlPath=')), 'the user\'s master, at its own path');
-    else assert.ok(commands.every(line => /ControlMaster=auto -o ControlPersist=yes -o ControlPath=\/tmp\/lectern-ssh-[^/]+\/%C/.test(line)), 'Lectern\'s private master');
+    else assert.ok(commands.every(line => /ControlMaster=auto -o ControlPersist=0 -o ControlPath=\/tmp\/lectern-ssh-[^/]+\/%C/.test(line)), 'Lectern\'s private master');
     if (!reuseUserMasters) assert.ok(!(await lines('calls')).some(line => line.includes('-O check')), 'the user\'s master is not even looked for');
     await transport.dispose();
   }
@@ -226,6 +228,51 @@ test('without a user master, switching back keeps Lectern\'s own master for the 
   assert.deepEqual(await lines('control'), [], 'nothing to stop: reuse would still use it');
   await transport.run(target, 'true');
   assert.match((await lines('calls')).at(-1)!, /ControlPath=\/tmp\/lectern-ssh-/);
+});
+
+test('manual disconnect drains the host and blocks commands until an explicit reconnect', { timeout: 30_000, ...posix }, async t => {
+  const limits = { shared: { sessions: 1, channels: 0 }, exclusive: { sessions: 1, channels: 0 } };
+  const { transport, state, lines, sessions, host, stream } = await fixture(t, { channelKinds: [], limits });
+  const noConfirmation = () => undefined;
+  assert.equal(await transport.disconnectSsh(target, noConfirmation), 'user');
+  assert.deepEqual(await lines('control'), []);
+  await transport.setReuseUserMasters(false);
+  assert.equal(await transport.disconnectSsh(target, noConfirmation), 'none');
+  await transport.run(target, 'true');
+  await writeFile(join(state, 'master-private'), '');
+  assert.deepEqual(await transport.disconnectSsh(target, () => ({ terminal: true, input: false })), { terminal: true, input: false });
+  const terminal = await stream('cat >/dev/null');
+  const queued = transport.run(target, 'printf unexpected');
+  const stopped = assert.rejects(queued, { message: translate('backend.sshDisconnected') });
+  for (let i = 0; i < 100 && host().sessions.queued === 0; i++) await settle(10);
+  assert.equal(host().sessions.queued, 1);
+  assert.equal(await transport.disconnectSsh(target, noConfirmation), 'disconnected');
+  await stopped;
+  assert.ok(terminal.exitCode !== null || terminal.signalCode !== null, 'the terminal client is gone');
+  assert.match((await lines('control')).at(-1)!, /^private .* -O exit gpu-box$/);
+  await readFile(join(state, 'master-user'));
+  const before = await sessions();
+  transport.warmChannels(target);
+  await assert.rejects(transport.run(target, 'true'), { message: translate('backend.sshDisconnected') });
+  assert.equal(await sessions(), before, 'background attempts cannot create another SSH session');
+  const reconnect = () => transport.run(target, 'printf connected');
+  assert.equal((await transport.reconnectSsh(target, reconnect)).stdout.toString(), 'connected');
+  assert.equal((await transport.run(target, 'printf normal')).stdout.toString(), 'normal');
+});
+
+test('manual disconnect closes busy and idle SSH command channels', { timeout: 30_000, ...posix }, async t => {
+  const { transport, state, host, sessions } = await fixture(t, { reuseUserMasters: false });
+  await warmChannel(transport, sessions);
+  await writeFile(join(state, 'master-private'), '');
+  const previous = host();
+  const channels = [...previous.channels.keys()];
+  assert.ok(channels.length > 0);
+  const interrupted = transport.run(target, 'sleep 30; printf unexpected').then(() => false, () => true);
+  for (let i = 0; i < 100 && !channels.some(channel => !channel.usable); i++) await settle(10);
+  assert.ok(channels.some(channel => !channel.usable));
+  assert.equal(await transport.disconnectSsh(target, () => undefined), 'disconnected');
+  assert.equal(await interrupted, true);
+  assert.equal(previous.channels.size, 0);
 });
 
 /**

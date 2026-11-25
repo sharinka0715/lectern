@@ -20,7 +20,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { basename, posix } from 'node:path';
 import type { SettingSwitchMode, DirectoryTrustDecision, DirectoryTrustResult, DirectoryTrustSnapshot, HistoryScan, HistoryTarget, ReplyBaselines, TranscriptPosition, NativeStatusLineObservation, PaneInfo, SessionInfo, SessionSettingKind, SessionSettingSnapshot, TerminalFrame, TerminalInput, TerminalKey, Workspace, WorkspaceDirectoryPage, WorkspaceDiscovery, WorkspaceEndpoint } from '../shared/types';
 import { TERMINAL_KEYS } from '../shared/types';
-import type { SshConnectionPreferences } from '../shared/ssh-connections';
+import type { SshConnectionPreferences, SshDisconnectResult } from '../shared/ssh-connections';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import { Transport, quoteShell as q, validateWorkspace, type TransportOptions } from './transport';
 import { uploadAttachment } from './attachment-upload';
@@ -93,7 +93,7 @@ function runtimeIdentity(workspace: Workspace, location: Location, pane?: Intern
 export type { LaunchPreferences } from '../shared/prompt-cache';
 export interface BackendOptions { conversationSettings?: Pick<ConversationSettingsStore, 'get' | 'save'>; historyIndexStore?: HistoryIndexDiskStore; tmuxSocket?: string; claudeCommand?: string; claudeArgs?: string[]; /** Optional local OpenSSH config, primarily for isolated integration tests. */ sshConfigPath?: string; /** Demo mode only: a slower or failing target (see TransportOptions). */ rehearsal?: TransportOptions['rehearsal'];
   /** Reach a machine over the master its ssh_config already runs (default), or only over Lectern's own connections. */
-  reuseSshConnections?: boolean }
+  reuseSshConnections?: boolean; sshUserData?: string; sshKeepAliveSeconds?: number; sshControlRoot?: string }
 export interface SubagentRead { jsonl: Buffer; reset: boolean; missing: boolean; hasMore: boolean; cursor: LiveCursor; olderCursor?: HistoryCursor; skippedHistoryRecords?: number }
 export interface ReadResult { /** Asked for with `listSubagents`: every subagent of the session (subagent-files.ts). */ subagents?: SubagentListing;
   /** What this launch's recording hooks delivered, when it has them (dialog-hooks.ts). */
@@ -211,7 +211,8 @@ export class Backend {
   // instead of waiting on the machine again (knownRunning).
   private readonly discoveries = new Map<string, { okAt?: number; failedAt?: number; error?: string }>();
   constructor(private readonly options: BackendOptions = {}) {
-    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal, reuseUserMasters: options.reuseSshConnections });
+    this.transport = new Transport(options.sshConfigPath, { rehearsal: options.rehearsal, reuseUserMasters: options.reuseSshConnections,
+      userData: options.sshUserData, keepAliveSeconds: options.sshKeepAliveSeconds, controlRoot: options.sshControlRoot });
     if (!options.claudeCommand) this.endpointBilling = new EndpointBillingCache(this.transport);
     this.artifacts = new WorkspaceArtifacts(this.transport);
     this.completions = new ComposerCompletions(this.transport, this.artifacts);
@@ -403,17 +404,27 @@ ${presenceReadScript(location.claudeDir)}`;
   }
   /** Applies to SSH connections made from now on; see Transport.setReuseUserMasters. */
   setSshConnectionPreferences(preferences: SshConnectionPreferences): Promise<void> {
+    this.transport.setKeepAliveSeconds(preferences.keepAliveSeconds);
     return this.transport.setReuseUserMasters(preferences.reuseConnections !== false);
+  }
+  initializeSsh() { return this.transport.initializeSsh(); }
+  isSshDisconnected(workspace: Workspace) { return this.transport.isSshDisconnected(workspace); }
+  withSshInput<T>(workspace: Workspace, input: () => Promise<T>) { return this.transport.withSshInput(workspace, input); }
+  sshMasterState(workspace: Workspace) { return this.transport.sshMasterState(workspace); }
+  disconnectSsh(workspace: Workspace, confirm: () => Exclude<SshDisconnectResult, string> | undefined) {
+    return this.transport.disconnectSsh(workspace, confirm);
   }
   /** Interactive SSH login that leaves a reusable master; see Transport.login. */
   sshLogin(target: { host?: string; port?: number }, answer: AnswerPrompt, signal?: AbortSignal) {
     return this.transport.login(target, answer, signal);
   }
   /** Whether everyday (non-interactive) commands reach this SSH machine now. Never prompts. */
-  async checkSshConnection(target: { host?: string; port?: number }): Promise<{ ok: true } | { ok: false; message: string }> {
+  async checkSshConnection(target: { host?: string; port?: number }, reconnect = false): Promise<{ ok: true } | { ok: false; message: string; disconnected?: true }> {
     const workspace = validateWorkspace({ id: 'ssh-check', name: 'SSH check', kind: 'ssh', cwd: '/', host: target?.host, port: target?.port });
+    if (!reconnect && this.isSshDisconnected(workspace)) return { ok: false, message: t('backend.sshDisconnected'), disconnected: true };
     try {
-      await this.transport.run(workspace, 'exit 0', { tag: 'ssh.check', timeoutMs: 20_000, maxBytes: 4096 });
+      const check = () => this.transport.run(workspace, 'exit 0', { tag: 'ssh.check', timeoutMs: 20_000, maxBytes: 4096 });
+      await (reconnect ? this.transport.reconnectSsh(workspace, check) : check());
       return { ok: true };
     } catch (error) {
       return { ok: false, message: (error instanceof Error ? error.message : String(error)).slice(0, 2000) };
