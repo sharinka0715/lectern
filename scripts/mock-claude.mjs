@@ -191,15 +191,17 @@ const draw = () => {
   } else if (fixtureState === 'waiting') {
     lines.push('Permission required', 'Do you want to allow this action?', '❯ 1. Yes', '  2. No', 'Enter to confirm · Esc to cancel');
   } else {
-    if (fixtureState === 'error') lines.push('────────────────────────────────────────────────────────────────', 'API Error: 503 Service unavailable');
+    if (fixtureState === 'error') lines.push('● API Error: Server error mid-response. The response above may be incomplete.');
     const draft = pasteEchoMs > 0 ? echoedInput : input;
+    const hint = busy ? '' : fixtureState === 'error' ? 'Resend your message to try again' : fixtureState === 'suggestion' ? 'Show another fixture example' : '';
+    const entry = draft ? draft.replace(/\n/g, '\n  ') : hint ? `\x1b[7m${hint[0]}\x1b[0;2m${hint.slice(1)}\x1b[0m` : '';
     if (draft === '/model' || draft === '/effort') {
       lines.push(`❯ ${draft}       Set the session ${draft.slice(1)}`);
     }
     // The goal indicator (or a busy clear's notice) right-aligned on the row on top of the input box.
     goalIndicatorShown = goalIndicator();
     if (goalIndicatorShown) lines.push(goalIndicatorShown.padStart(64));
-    lines.push('────────────────────────────────────────────────────────────────', `❯ ${draft}`, '────────────────────────────────────────────────────────────────',
+    lines.push('────────────────────────────────────────────────────────────────', `❯ ${entry}`, '────────────────────────────────────────────────────────────────',
       ['progress', 'compacting'].includes(fixtureState) ? '  ⏸ manual mode on · esc to interrupt' : '  ⏸ manual mode on · ? for shortcuts'
         + (typeof fixtureAgents === 'number' && !draft ? ' · ↓ to manage' : ''));
     if (fixtureAgents) lines.push(...agentRows());
@@ -535,7 +537,7 @@ process.stdin.on('data', chunk => {
     const char = chunk[i++];
     if (char === '\x03') { process.exit(0); }
     if (char === '\x1b') { generation++; busy = false; preview = ''; if (presence) setPresence('idle'); draw(); continue; }
-    if ((char === '\r' || char === '\n') && !pasted) {
+    if (char === '\r' && !pasted) {
       const text = input.trim(); clearDraft();
       const inline = aliasModels && /^\/(model|effort) (\S+)$/.exec(text);
       const goalArgs = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
@@ -580,9 +582,10 @@ const readFixtureState = () => {
   let next = 'ready';
   try { next = readFileSync(stateFile, 'utf8').trim(); } catch {}
   const [state, agents = ''] = next.split(/\s+/);
+  if (state === 'suggestion' && agents !== id) return ['ready', false];
   const listed = /^agents:([1-9]\d?)(?:@([1-9]\d{1,3}))?$/.exec(agents);
   tickMs = listed?.[2] ? Number(listed[2]) : 250;
-  return [['ready', 'waiting', 'error', 'progress', 'compacting'].includes(state) ? state : 'ready', listed ? Number(listed[1]) : agents === 'agents'];
+  return [['ready', 'waiting', 'error', 'suggestion', 'progress', 'compacting'].includes(state) ? state : 'ready', listed ? Number(listed[1]) : agents === 'agents'];
 };
 [fixtureState, fixtureAgents] = readFixtureState();
 let drawnTick = 0;

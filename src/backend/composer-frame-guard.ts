@@ -1,6 +1,7 @@
 import { idleComposerAdvisoryRow, TMUX_FOCUS_HINT } from '../core/settings-screen';
 import { taskRowsStart } from '../core/native-task-screen';
 import { stripTerminalEscapes } from '../core/screen';
+import { turnComposer } from '../core/turn-controls';
 import { quoteShell } from './transport';
 
 // The task rows of native-task-screen.ts (withoutTaskRows), on the target: SGR and
@@ -56,6 +57,23 @@ export function composerFrameGuard(viewport: string, tailLines?: number) {
     else if (s ~ /^  /) { sub(/^ +/, "", s); sub(/ +$/, "", s); if (s == hint) $0 = "" }
   } { print }`)}`;
   return { viewport: lines.join('\n'), tailLines, filter };
+}
+
+/** Bind occupied and placeholder text to the same style without guarding
+ * animations in the spinner, border or footer of a running turn. */
+export function turnContentsGuard(viewport: string, tailLines?: number) {
+  const editor = turnComposer(viewport);
+  if (!editor?.text || !viewport.endsWith('\n')) return;
+  const rows = viewport.split('\n');
+  const first = editor.top + 1, last = first + editor.text.split('\n').length - 1;
+  const offset = tailLines === undefined ? 0 : Math.max(0, rows.length - 1 - tailLines);
+  const sg = /\x1b\[[0-9;:]*m/g;
+  return {
+    viewport: rows.map((row, i) => i >= first && i <= last ? row : row.replace(sg, '')).join('\n'),
+    tailLines,
+    filter: ` | LC_ALL=C awk -v first=${first + 1 - offset} -v last=${last + 1 - offset} ${quoteShell(
+      'NR < first || NR > last { gsub(/\\033\\[[0-9;:]*m/, "") } { print }')}`,
+  };
 }
 
 // Claude animates some labels with a moving bold/colour highlight: the composer's

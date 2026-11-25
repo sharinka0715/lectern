@@ -140,7 +140,6 @@ export function SettingsFileEditor({ workspaceId, initial, mode, running, onAppl
 
 const reason = (key: string) => {
   if (key.startsWith('statusLine.')) return 'conversationSettings.statusLine';
-  if (key === 'promptSuggestionEnabled') return 'conversationSettings.promptSuggestion';
   if (key === 'enableWorkflows') return 'conversationSettings.workflows';
   if (key === 'permissions.defaultMode') return 'conversationSettings.defaultMode';
   if (key === 'env.CLAUDE_CODE_PROMPT_CACHE_TTL' || key === 'env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL') return 'conversationSettings.cacheTtl';

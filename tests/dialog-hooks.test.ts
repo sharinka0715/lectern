@@ -48,7 +48,7 @@ test('the hooks: PreToolUse for AskUserQuestion only, PermissionRequest and Sess
 
 test('with the setting off the launch settings are byte for byte as before; on, only `hooks` is added', () => {
   const statusLine = { statusLine: { type: 'command', command: 'true' } };
-  const before = '{"statusLine":{"type":"command","command":"true"},"promptSuggestionEnabled":false,"enableWorkflows":true,"permissions":{"defaultMode":"auto"}}';
+  const before = '{"statusLine":{"type":"command","command":"true"},"enableWorkflows":true,"permissions":{"defaultMode":"auto"}}';
   assert.equal(JSON.stringify(launchSettings({ statusLine, enableWorkflows: true })), before);
   assert.equal(JSON.stringify(launchSettings({ statusLine, enableWorkflows: true, hooks: undefined })), before);
   const on = launchSettings({ statusLine, enableWorkflows: true, hooks: dialogHookSettings(NONCE) });

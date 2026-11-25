@@ -116,5 +116,5 @@ export function useComposerCompletion({ workspaceId, sessionId, view, enabled, v
       })}
     </div><div className="composer-completion-hint">{t('composer.completionHint')}</div>
   </div> : open && loadingKey === key && result?.key !== key ? <div className="composer-completion composer-completion-loading" role="status">{t(kind === 'slash' ? 'composer.findingCommands' : 'composer.findingFiles')}</div> : null;
-  return { inputProps, onKeyDown, popup };
+  return { inputProps, onKeyDown, popup, composing };
 }

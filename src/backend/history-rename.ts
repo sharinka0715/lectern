@@ -63,7 +63,7 @@ exit 1`;
     let ready = false;
     while (!ended && Date.now() < deadline) {
       const { stdout } = await transport.run(workspace,
-        `${tmux} capture-pane -p -J -t rename: 2>/dev/null || true`, { tag: 'rename.observe', maxBytes: 64 * 1024 });
+        `${tmux} capture-pane -p -J -e -t rename: 2>/dev/null || true`, { tag: 'rename.observe', maxBytes: 64 * 1024 });
       const screen = stdout.toString();
       if (parseDirectoryTrust(screen)) throw new Error(t('backend.renameNeedsTrust'));
       const idle = isIdleEmptyComposer(screen);

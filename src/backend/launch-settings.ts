@@ -12,9 +12,6 @@ export function launchSettings(options: {
   const env = promptCacheEnv(options.promptCacheTtlPreset);
   return {
     ...options.statusLine,
-    // A prompt suggestion fills the empty composer with grey text, which reads
-    // as an unsent native draft and blocks chat input.
-    promptSuggestionEnabled: false,
     // Pro plans start with dynamic workflows off, which hides /effort's Ultracode.
     ...(options.enableWorkflows && { enableWorkflows: true }),
     // Sessions start in auto mode. As the default mode (rather than

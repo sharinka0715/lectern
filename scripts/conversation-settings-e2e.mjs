@@ -25,9 +25,10 @@ const project = { id: 'settings-fixture', name: '配置测试', cwd };
 const outside = randomUUID();
 const defaults = path.join(config, 'settings.json'), custom = path.join(home, 'per-chat.json'), nextFile = path.join(root, 'next.json');
 const homeSettingsPath = '~/per-chat.json';
-const defaultSample = { promptSuggestionEnabled: true, permissions: { defaultMode: 'default' }, env: { EXAMPLE_DEFAULT: 'default' } };
+const fixtureStatusLine = { type: 'command', command: 'true' };
+const defaultSample = { promptSuggestionEnabled: true, statusLine: fixtureStatusLine, permissions: { defaultMode: 'default' }, env: { EXAMPLE_DEFAULT: 'default' } };
 const sample = { model: 'fixture-beta', availableModels: ['fixture-beta'], promptSuggestionEnabled: true, enableWorkflows: false,
-  env: { EXAMPLE_CUSTOM: 'custom' }, permissions: { allow: ['Bash'] } };
+  statusLine: fixtureStatusLine, env: { EXAMPLE_CUSTOM: 'custom' }, permissions: { allow: ['Bash'] } };
 const shots = path.resolve('test-results', 'conversation-settings');
 const windowSize = { width: 1400, height: 900 };
 const row = id => page.locator(sel.row(id));
@@ -80,6 +81,7 @@ async function captureOverrides(locale, file = custom) {
   await list.getByRole('heading', { name: defaults, exact: true }).waitFor();
   await list.getByRole('heading', { name: file, exact: true }).waitFor();
   assert.equal(await list.getByRole('listitem').count(), 4);
+  assert.equal(await list.getByText('promptSuggestionEnabled', { exact: true }).count(), 0);
   assert.ok(await list.evaluate(list => list.scrollHeight > list.clientHeight), 'the long list scrolls within the dialog');
   await assertFooterVisible(dialog, 3);
   await screenshot(`${locale}-05-launch-overrides`);
@@ -104,7 +106,7 @@ async function closeChat() {
 async function launch(message, decision, capture = false) {
   await chat.send(message);
   if (decision) {
-    await overrides().getByText('promptSuggestionEnabled', { exact: true }).first().waitFor();
+    await overrides().getByText('statusLine.command', { exact: true }).first().waitFor();
     if (capture) await captureOverrides('zh');
     await overrides().getByRole('button', { name: decision, exact: true }).click();
   }
@@ -152,7 +154,7 @@ try {
     if (shot) await screenshot(shot);
   }
   await field(editor()).fill(homeSettingsPath);
-  await editor().getByText('promptSuggestionEnabled', { exact: true }).waitFor();
+  await editor().getByText('statusLine.command', { exact: true }).waitFor();
   await assertFooterVisible(editor(), 2);
   await screenshot('zh-02-draft-configured');
   assert.equal((await lines('probe-calls.jsonl')).length, count, 'typing runs no CLI probe');
@@ -186,7 +188,7 @@ try {
       assert.equal(record.args.includes('--model'), false, 'a model missing from the custom list is reset to default');
       assert.deepEqual(record.settings.env, sample.env);
       assert.deepEqual(record.settings.permissions, { ...sample.permissions, defaultMode: 'auto' });
-      assert.equal(record.settings.promptSuggestionEnabled, false);
+      assert.equal(record.settings.promptSuggestionEnabled, true);
       await assert.rejects(readFile(flag), { code: 'ENOENT' });
     } else assert.ok(flag.startsWith('{"statusLine":'));
     const pid = Number(tmux('display-message', '-p', '-t', await chat.pane(), '#{pane_pid}').trim());
@@ -253,7 +255,7 @@ try {
     assert.equal(await field(edit).inputValue(), custom);
     if (sort === '按项目') {
       await edit.getByText('配置文件格式有效。', { exact: true }).waitFor();
-      await edit.getByText('promptSuggestionEnabled', { exact: true }).waitFor();
+      await edit.getByText('statusLine.command', { exact: true }).waitFor();
       await screenshot('zh-06b-running-settings');
     }
     if (sort === '进行中优先') {

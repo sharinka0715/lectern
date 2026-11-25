@@ -7,6 +7,7 @@ import { namedEditorBorder } from './editor-border';
 import { withoutGoalIndicator } from './goal-screen';
 import { parseCacheConfirmationLines, type ModelSwitchConfirmation } from './model-switch-confirmation';
 import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
+import { turnComposer } from './turn-controls';
 export type { ModelSwitchConfirmation } from './model-switch-confirmation';
 
 export type SettingKind = 'model' | 'effort';
@@ -271,20 +272,21 @@ export function newSettingViewport(viewport: string, previous: string[]): string
 }
 
 /** True only for a ready empty composer, including a recoverable native API error. */
-export function isIdleEmptyComposer(viewport: string): boolean {
+export function isIdleEmptyComposer(viewport: string, paintedViewport = viewport): boolean {
   const lines = linesOf(viewport);
   if (menuBounds(lines, 'model') || menuBounds(lines, 'effort')) return false;
   const status = classifySessionScreen(viewport).status;
   if (status === 'working' || status === 'waiting') return false;
   const index = lastIndex(lines, line => /^\s*[❯>]/.test(line));
+  const editor = turnComposer(viewport, paintedViewport);
+  if (editor && (!editor.empty || editor.running)) return false;
+  if (editor?.text) {
+    if (index !== editor.top + 1) return false;
+    if (editor.placeholder !== 'fallback') return true;
+    return /^Try ["“]/i.test(editor.text) ? status === 'idle' : hasCurrentApiErrorBeforeRetry(lines, index);
+  }
   if (index < 0 || index < lines.length - 12) return false;
-  if (/^\s*[❯>]\s*$/.test(lines[index])) return status === 'idle' || status === 'error';
-  const boxed = index > 0 && index + 1 < lines.length
-    && isSeparator(lines[index - 1]) && isSeparator(lines[index + 1]);
-  if (!boxed) return false;
-  if (/^\s*❯\s+Try ["“].+["”]\s*$/.test(lines[index])) return status === 'idle';
-  if (!/^\s*❯\s+Once fixed, resend your message\s*$/.test(lines[index])) return false;
-  return hasCurrentApiErrorBeforeRetry(lines, index);
+  return /^\s*[❯>]\s*$/.test(lines[index]) && (status === 'idle' || status === 'error');
 }
 
 /** A bare menu command, or an inline switch such as "/model haiku" / "/effort high". */
@@ -299,8 +301,8 @@ function lastBoxedPrompt(lines: string[]) {
  * composer's upper border. It may disappear while a settings paste is pending. */
 export function idleComposerAdvisoryRow(viewport: string): number | undefined {
   if (!isIdleEmptyComposer(viewport)) return;
-  const lines = linesOf(viewport), prompt = lastBoxedPrompt(lines);
-  if (prompt >= 2 && prompt === lastIndex(lines, line => /^\s*[❯>]/u.test(line))) return prompt - 2;
+  const lines = linesOf(viewport), prompt = turnComposer(viewport)?.top;
+  if (prompt !== undefined && prompt >= 1 && prompt + 1 === lastIndex(lines, line => /^\s*[❯>]/u.test(line))) return prompt - 1;
 }
 
 /** The footer rows under a boxed editor (and its completion list): task rows listed below

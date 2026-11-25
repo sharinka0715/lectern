@@ -403,6 +403,8 @@ export interface SessionSnapshot {
   backgroundWork?: import('./activity').BackgroundCounts;
   /** Fresh, strictly recognized empty native composer; recovery sends recheck before paste. */
   nativeInputReady?: boolean;
+  /** Current suggestion in the idle native composer of this pane. */
+  promptSuggestion?: string;
   /** The same empty composer takes /model and /effort: also while the reply is over and
    * only background subagents or workflows keep Claude Code busy (never during a reply). */
   settingsInputReady?: boolean;

@@ -36,6 +36,18 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.5',
+    features: [
+      ['Lectern 输入框显示 Claude Code 的提示建议，按 Tab 可填入草稿。', 'Press Tab to add the Claude Code suggestion shown in Lectern\'s input box to your draft.'],
+    ],
+    changes: [
+      ['提示建议遵循会话的 Claude Code 设置。', 'Prompt suggestions follow the Claude Code settings for the conversation.'],
+    ],
+    fixes: [
+      ['出错后原生输入框里的灰色提示不会再被当成草稿，可以直接发下一条消息。', 'Send your next message after an error without the grey native prompt being treated as a draft.'],
+    ],
+  },
+  {
     version: '0.2.4',
     features: [
       ['外观设置新增「将思考展示为正文」，可在回复原有位置直接阅读和复制折叠的思考。',

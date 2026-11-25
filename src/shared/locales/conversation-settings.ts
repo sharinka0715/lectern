@@ -34,7 +34,6 @@ export const conversationSettings = {
   acceptAlways: ['接受且不再显示', "Accept and don't show again"],
   warn: ['Lectern 覆盖我的设置时提醒', 'Warn when Lectern overrides my settings'],
   statusLine: ['Lectern 用状态栏读取会话状态。', 'Lectern reads conversation status through the status line.'],
-  promptSuggestion: ['灰色建议会占住输入框。', 'The grey suggestion would occupy the input box.'],
   workflows: ['开启工作流后，effort 菜单可以使用 Ultracode。', 'Enabling workflows allows Ultracode in the effort menu.'],
   defaultMode: ['Lectern 的对话默认以 auto mode 启动。', 'Lectern starts conversations in auto mode by default.'],
   cacheTtl: ['你在 Lectern 设置里选择了缓存时长。', 'You selected a cache lifetime in Lectern settings.'],
