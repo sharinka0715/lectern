@@ -165,10 +165,13 @@ const moves: Record<string, Record<string, string>> = {
   close: { 'confirm-model': 'menu-5-back', 'confirm-prompt': 'menu-3-back', ...Object.fromEntries(['menu-0', 'menu-1', 'menu-2', 'menu-3', 'menu-4', 'menu-5', 'menu-3-back', 'menu-5-back'].map(name => [name, 'closed'])) },
   erase: { 'rewind-typed': 'idle' },
 };
-function pane(version: string, change: Partial<Record<Step, (screen: string) => string | Error | undefined>> = {}) {
+function pane(version: string, change: Partial<Record<Step, (screen: string) => string | Error | undefined>> = {}, afterInput = false) {
   const screens = frames(version);
   let screen = 'idle', observed: string | undefined;
   const sent: Step[] = [];
+  let reads = 0;
+  // Claude Code reports "waiting" while its menu is open.
+  const frame = () => { observed = screen; return { viewport: screens[screen], paneId: '%1', panePid: 7, nativeStatus: /^(?:menu|confirm)/.test(screen) ? 'waiting' : 'idle' }; };
   const dispatch = async (step: Step) => {
     const changed = change[step]?.(screen);
     if (changed instanceof Error) throw changed;
@@ -177,14 +180,32 @@ function pane(version: string, change: Partial<Record<Step, (screen: string) => 
     screen = changed ?? moves[step]?.[screen] ?? assert.fail(`no recorded screen after ${step} on ${screen}`);
   };
   const driver: TurnDriver = {
-    // Claude Code reports "waiting" while its menu is open.
-    frame: async () => { observed = screen; return { viewport: screens[screen], paneId: '%1', panePid: 7, nativeStatus: /^(?:menu|confirm)/.test(screen) ? 'waiting' : 'idle' }; },
-    pasteForTurn: async text => dispatch(`paste ${text}` as Step),
-    keyForTurn: async key => dispatch(key),
+    frame: async () => { reads++; return frame(); },
+    pasteForTurn: async (text, _footer, observeAfter) => {
+      await dispatch(`paste ${text}` as Step);
+      if (afterInput && observeAfter) return frame();
+    },
+    keyForTurn: async (key, _footer, observeAfter) => {
+      await dispatch(key);
+      if (afterInput && observeAfter) return frame();
+    },
   };
-  return { driver, sent, screen: () => screen };
+  return { driver, sent, screen: () => screen, reads: () => reads };
 }
 const target = (index: number): RewindTarget => ({ index, prompts: NATIVE });
+
+test('the guarded post-key frame replaces a round trip only after validating the new ordinal', async () => {
+  const action = { kind: 'rewindTo', uuid: 'second' } as const;
+  const direct = pane('2.1.330', {}, true);
+  await performTurnAction(direct.driver, '%1', 7, action, target(3));
+  assert.equal(direct.reads(), 1, 'only the initial frame needs a separate read');
+  assert.deepEqual(direct.sent, ['paste /rewind', 'submit', 'up', 'up', 'up', 'accept']);
+
+  const skipped = pane('2.1.330', { up: () => 'menu-2' }, true);
+  await assert.rejects(performTurnAction(skipped.driver, '%1', 7, action, target(3)),
+    { message: t('native.rewindMenuClosed', { detail: t('native.rewindMismatch') }) });
+  assert.deepEqual(skipped.sent, ['paste /rewind', 'submit', 'up', 'close']);
+});
 
 test('rewind reaches the prompt below the switches, and restoring a switch puts the command back (2.1.330, 2.1.300)', async () => {
   for (const version of versions) {

@@ -12,8 +12,8 @@ export interface TurnDriver {
   frame(): Promise<TurnFrame>;
   /** `close` is Esc in the rewind menu like `cancel`, but not bound to the transcript revision
    * a rewind was chosen from: Lectern closes the menu it opened after the rewind failed. */
-  keyForTurn(key: 'queue' | 'steer' | 'stop' | 'up' | 'down' | 'accept' | 'cancel' | 'close' | 'submit' | 'clear' | 'erase' | 'switchSession', footerOnly?: boolean): Promise<void>;
-  pasteForTurn(text: string, footerOnly: boolean): Promise<void>;
+  keyForTurn(key: 'queue' | 'steer' | 'stop' | 'up' | 'down' | 'accept' | 'cancel' | 'close' | 'submit' | 'clear' | 'erase' | 'switchSession', footerOnly?: boolean, observeAfter?: boolean): Promise<void | TurnFrame>;
+  pasteForTurn(text: string, footerOnly: boolean, observeAfter?: boolean): Promise<void | TurnFrame>;
 }
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const changed = () => new Error(t('native.screenChanged'));
@@ -31,7 +31,7 @@ class NotYetConfirmed extends Error { constructor() { super(t('native.commandUnc
  * is bound to that frame). If the recheck fails, the refusal stands. A failure after
  * the guard passed, or a changed transcript record, is never repeated.
  */
-export async function sendGuarded(dispatch: () => Promise<void>, recheck: () => Promise<unknown>, attempts = 3): Promise<void> {
+export async function sendGuarded<T>(dispatch: () => Promise<T>, recheck: () => Promise<unknown>, attempts = 3): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try { return await dispatch(); }
     catch (error) {
@@ -107,12 +107,13 @@ export function checkpointPosition(menu: RewindMenu, target: RewindTarget) {
 }
 
 export async function performTurnAction(driver: TurnDriver, pane: string, pid: number, action: TurnAction, target?: RewindTarget, assertCurrent?: () => void): Promise<{ restoredDraft?: string; message?: string } | undefined> {
-  const inspect = async () => {
-    const frame = await driver.frame();
+  const verify = (frame: TurnFrame) => {
     if (frame.paneId !== pane || frame.panePid !== pid) throw new Error(t('native.terminalChanged'));
     return frame;
   };
-  const waitFor = async (test: (frame: TurnFrame) => boolean) => {
+  const inspect = async () => verify(await driver.frame());
+  const waitFor = async (test: (frame: TurnFrame) => boolean, observed?: TurnFrame | void) => {
+    if (observed && test(verify(observed))) return observed;
     for (const ms of [30, 60, 100, 160, 250, 400, 600]) {
       await delay(ms);
       const frame = await inspect();
@@ -124,12 +125,39 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
   // under: a streaming reply redraws constantly, and under load the guard can catch a
   // half-drawn frame more than once. In the rewind menu the guard covers only the menu,
   // so its keys repeat only while the parsed menu (rows, focus, stage) is unchanged.
-  const press = (key: Parameters<TurnDriver['keyForTurn']>[0], footerOnly: boolean | undefined, still: (frame: TurnFrame) => boolean) =>
-    sendGuarded(() => driver.keyForTurn(key, footerOnly), () => waitFor(still));
-  const paste = (text: string, footerOnly: boolean, still: (frame: TurnFrame) => boolean) =>
-    sendGuarded(() => driver.pasteForTurn(text, footerOnly), () => waitFor(still));
+  const press = (key: Parameters<TurnDriver['keyForTurn']>[0], footerOnly: boolean | undefined, still: (frame: TurnFrame) => boolean, observeAfter?: boolean) =>
+    sendGuarded(() => driver.keyForTurn(key, footerOnly, observeAfter), () => waitFor(still));
+  const paste = (text: string, footerOnly: boolean, still: (frame: TurnFrame) => boolean, observeAfter?: boolean) =>
+    sendGuarded(() => driver.pasteForTurn(text, footerOnly, observeAfter), () => waitFor(still));
   const onMenu = (menu: RewindMenu) => (frame: TurnFrame) => readRewind(frame.viewport)?.signature === menu.signature;
   const withdraw = (command: string) => withdrawCommand(driver, command, async () => (await inspect()).viewport);
+  const available = (frame: TurnFrame) => frame.nativeStatus !== 'waiting' && frame.nativeStatus !== 'busy'
+    && classifySessionScreen(frame.viewport).status !== 'waiting' && !readRewind(frame.viewport);
+  const openRewind = async () => {
+    const text = '/rewind';
+    const empty = (frame: TurnFrame) => available(frame) && isIdleEmptyComposer(frame.viewport);
+    const typed = (frame: TurnFrame) => {
+      const editor = turnComposer(frame.viewport);
+      return !!editor && sameDraft(editor.text, text) && available(frame)
+        && rewindDescription.test(focusedTurnCommandDescription(frame.viewport, text) ?? '');
+    };
+    if (!empty(await inspect())) throw changed();
+    const pasted = await paste(text, false, f => empty(f) && turnComposer(f.viewport)?.empty === true, true);
+    try { await waitFor(typed, pasted); }
+    catch (error) {
+      if (!(error instanceof NotYetConfirmed)) throw error;
+      throw notRunError(text, await withdraw(text), false);
+    }
+    let submitted: TurnFrame | void;
+    try { submitted = await press('submit', false, typed, true); }
+    catch (error) {
+      if (!keysNotSent(error)) throw error;
+      const cleared = await withdraw(text);
+      if (cleared && error instanceof TranscriptChangedNoKeys) throw error;
+      throw notRunError(text, cleared, true);
+    }
+    return waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint', submitted);
+  };
   // Lectern opened the menu for a rewind it could not finish: back out again (Esc from the
   // confirmation to the list, then out of the list; Esc never restores anything) and wait for the
   // idle, empty input box /rewind was typed into. The error says whether that worked.
@@ -162,24 +190,28 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
         assertCurrent?.();
         const delta = Math.sign(target.index - position);
         const old = menu;
-        await press(delta < 0 ? 'up' : 'down', undefined, onMenu(old));
-        frame = await waitFor(f => readRewind(f.viewport)?.signature !== old.signature);
+        const observed = await press(delta < 0 ? 'up' : 'down', undefined, onMenu(old), true);
+        frame = await waitFor(f => {
+          const next = readRewind(f.viewport);
+          return !!next && next.signature !== old.signature;
+        }, observed);
         menu = readRewind(frame.viewport);
         if (!menu || checkpointPosition(menu, target) !== position + delta) throw mismatch();
         position += delta;
       }
       assertCurrent?.();
-      await press('accept', undefined, onMenu(menu));
-      frame = await waitFor(f => readRewind(f.viewport)?.stage === 'confirm');
+      const observed = await press('accept', undefined, onMenu(menu), true);
+      frame = await waitFor(f => readRewind(f.viewport)?.stage === 'confirm', observed);
       menu = readRewind(frame.viewport);
       if (!confirmation(menu)) throw mismatch();
       return menu!;
     };
     if (action.kind === 'rewindTo') {
       // Only a transcript change refused before /rewind was typed, or with it taken out again, is "nothing done".
-      try { await performTurnAction(driver, pane, pid, {kind:'openRewind'}); }
+      let opened: TurnFrame;
+      try { opened = await openRewind(); }
       catch (error) { throw error instanceof TranscriptChangedNoKeys ? new RewindRecordChanged() : error; }
-      try { await chooseCheckpoint(await inspect()); }
+      try { await chooseCheckpoint(opened); }
       catch (error) { throw await closeOpenedMenu(error); }
       return;
     }
@@ -187,11 +219,12 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     if (!confirmation(opened) || opened!.signature !== action.signature) throw mismatch();
     // Even identical prompts produce identical confirmation pages. Return to
     // the list and verify the actual focused ordinal before any restore.
-    await press('cancel', undefined, onMenu(opened!));
-    const menu = await chooseCheckpoint(await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint'));
+    const observed = await press('cancel', undefined, onMenu(opened!), true);
+    const menu = await chooseCheckpoint(await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint', observed));
     assertCurrent?.();
     return performTurnAction(driver, pane, pid, {kind:'restore',signature:menu.signature}, undefined, assertCurrent);
   }
+  if (action?.kind === 'openRewind') { await openRewind(); return; }
   const initial = await inspect();
   const editor = turnComposer(initial.viewport);
   // Once a draft is pasted Claude hides its interrupt hint; the boxed editor,
@@ -202,8 +235,6 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     return !!current && frame.nativeStatus !== 'waiting' && status !== 'waiting' &&
       (current.running || frame.nativeStatus === 'busy' && status === 'working');
   };
-  const available = (frame: TurnFrame) => frame.nativeStatus !== 'waiting' && frame.nativeStatus !== 'busy'
-    && classifySessionScreen(frame.viewport).status !== 'waiting' && !readRewind(frame.viewport);
   if (!action || typeof action !== 'object') throw changed();
   if (action.kind === 'stop') {
     if (!canInterruptTurn(initial.viewport, initial.nativeStatus, editor)) throw changed();
@@ -244,14 +275,12 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     await press('submit', true, typed);
     return;
   }
-  if (action.kind === 'queue' || action.kind === 'steer' || action.kind === 'sendRestored' || action.kind === 'openRewind') {
+  if (action.kind === 'queue' || action.kind === 'steer' || action.kind === 'sendRestored') {
     const restored = action.kind === 'sendRestored';
-    const opening = action.kind === 'openRewind';
-    const text = opening ? '/rewind' : 'text' in action ? action.text : undefined;
+    const text = action.text;
     if (!validText(text)) throw new Error(t('native.enterValidMessage'));
-    if (!opening && !restored && /^[!/]/.test(text.trimStart())) throw new Error(t('native.plainMessagesOnly'));
-    if (opening ? !available(initial) || !isIdleEmptyComposer(initial.viewport)
-      : restored ? !available(initial) || !editor || editor.empty || !sameDraft(editor.text, action.original)
+    if (!restored && /^[!/]/.test(text.trimStart())) throw new Error(t('native.plainMessagesOnly'));
+    if (restored ? !available(initial) || !editor || editor.empty || !sameDraft(editor.text, action.original)
       : !running(initial) || !editor?.empty) throw changed();
     const original = restored ? action.original : '';
     if (restored && !sameDraft(editor!.text,text)) {
@@ -259,31 +288,14 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
       await waitFor(f => available(f) && turnComposer(f.viewport)?.empty === true);
     }
     if (!restored || !sameDraft(editor!.text,text)) {
-      // The input box is empty here: idle for /rewind and a restored draft, replying for queue and steer.
-      await paste(text, !opening, f => turnComposer(f.viewport)?.empty === true
-        && (opening ? available(f) && isIdleEmptyComposer(f.viewport) : restored ? available(f) : running(f)));
-      const shown = () => waitFor(frame => {
+      await paste(text, true, f => turnComposer(f.viewport)?.empty === true && (restored ? available(f) : running(f)));
+      await waitFor(frame => {
         const actual = turnComposer(frame.viewport);
-        return !!actual && sameDraft(actual.text,text) && (opening || restored ? available(frame) : running(frame)) &&
-          (!opening || rewindDescription.test(focusedTurnCommandDescription(frame.viewport, '/rewind') ?? ''));
+        return !!actual && sameDraft(actual.text,text) && (restored ? available(frame) : running(frame));
       });
-      // A /rewind that is not confirmed as such is never submitted, nor left in the input box.
-      try { await shown(); }
-      catch (error) {
-        if (!opening || !(error instanceof NotYetConfirmed)) throw error;
-        throw notRunError(text, await withdraw(text), false);
-      }
     }
-    const submitted = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport); return !!actual && sameDraft(actual.text, text) && (opening || restored ? available(frame) : running(frame)); };
-    try { await press(opening || restored ? 'submit' : action.kind === 'queue' ? 'queue' : 'steer', !opening, submitted); }
-    catch (error) {
-      if (!opening || !keysNotSent(error)) throw error;
-      const cleared = await withdraw(text);
-      // The transcript changed under a rewind's Enter: once /rewind is out again, nothing was done.
-      if (cleared && error instanceof TranscriptChangedNoKeys) throw error;
-      throw notRunError(text, cleared, true);
-    }
-    if (opening) await waitFor(f => readRewind(f.viewport)?.stage === 'checkpoint');
+    const submitted = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport); return !!actual && sameDraft(actual.text, text) && (restored ? available(frame) : running(frame)); };
+    await press(restored ? 'submit' : action.kind === 'queue' ? 'queue' : 'steer', true, submitted);
     return;
   }
   if (!('signature' in action)) throw changed();
@@ -306,8 +318,11 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
   const delta = index - menu.focused;
   for (let step = 0; step < Math.abs(delta); step++) {
     const prev = menu!;
-    await press(delta < 0 ? 'up' : 'down', undefined, onMenu(prev));
-    const frame = await waitFor(f => readRewind(f.viewport)?.signature !== prev.signature);
+    const observed = await press(delta < 0 ? 'up' : 'down', undefined, onMenu(prev), true);
+    const frame = await waitFor(f => {
+      const next = readRewind(f.viewport);
+      return !!next && next.signature !== prev.signature;
+    }, observed);
     menu = readRewind(frame.viewport);
     if (!menu || menu.stage !== prev.stage || menu.message !== prev.message) throw changed();
     if (JSON.stringify(menu.rows) !== rows) {
@@ -319,12 +334,14 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
   if (JSON.stringify(menu.rows[menu.focused]) !== JSON.stringify(choice)) throw changed();
   const message = menu.message, chosen = menu;
   assertCurrent?.();
-  await press('accept', undefined, onMenu(chosen));
+  const observed = await press('accept', undefined, onMenu(chosen), true);
   if (action.kind === 'checkpoint') {
-    await waitFor(f => readRewind(f.viewport)?.stage === 'confirm');
+    await waitFor(f => readRewind(f.viewport)?.stage === 'confirm', observed);
     return;
   }
-  const frame = await waitFor(f => !readRewind(f.viewport) && !!turnComposer(f.viewport));
+  // A half-painted composer can be empty while Claude Code puts the draft back.
+  const restored = observed && turnComposer(observed.viewport)?.empty === false ? observed : undefined;
+  const frame = await waitFor(f => !readRewind(f.viewport) && !!turnComposer(f.viewport), restored);
   const draft = turnComposer(frame.viewport)!;
   return { restoredDraft: !draft.empty ? draft.text : undefined, message };
 }

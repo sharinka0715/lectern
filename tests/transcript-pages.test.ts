@@ -7,12 +7,30 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Backend, projectSlug } from '../src/backend';
 import { Transport, type CommandOptions } from '../src/backend/transport';
+import { TranscriptPages } from '../src/backend/transcript-pages';
 import { JsonlDecoder } from '../src/core/jsonl';
 import { Controller } from '../src/main/controller';
 import { WorkspaceStore } from '../src/main/store';
 import type { Workspace } from '../src/shared/types';
 
 const posix = { skip: process.platform === 'win32' ? 'Local POSIX fixture; Windows runs no local commands' : false };
+
+test('the remote timeout grows with the bytes requested, including a page at byte zero', async () => {
+  const timeouts: (number | undefined)[] = [];
+  const transport = { async run(_workspace: Workspace, _script: string, options: CommandOptions) {
+    timeouts.push(options.timeoutMs);
+    throw new Error('fixture stopped before transfer');
+  } } as unknown as Transport;
+  const workspace: Workspace = { id: 'pages', name: 'History', kind: 'ssh', cwd: '/tmp', host: 'example.test' };
+  const pages = new TranscriptPages(transport, workspace, 'session', ['/tmp/sample.jsonl']);
+  const MiB = 1024 * 1024;
+  const cursor = { inode: '1', size: 24 * MiB, before: 24 * MiB };
+  await assert.rejects(pages.older(cursor), /fixture stopped/);
+  await assert.rejects(pages.older(cursor, 16), /fixture stopped/);
+  await assert.rejects(pages.older({ ...cursor, before: 6 * MiB }, 16), /fixture stopped/);
+  assert.deepEqual(timeouts, [undefined, Math.ceil(20_000 * 16 / 3), 40_000]);
+});
+
 async function fixture(t: TestContext) {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "lectern-tail-'")));
   const workspace: Workspace = { id: 'pages', name: 'History', kind: 'local', cwd };

@@ -188,6 +188,17 @@ export function replayEntries(input: DiagnosticEntry[], options: ReplayOptions =
         typeof entry.data.sourceSessionId === 'string' ? entry.data.sourceSessionId : undefined);
       if (typeof entry.data.skippedHistoryRecords === 'number') state.display.noteSkippedHistoryRecords(entry.data.skippedHistoryRecords);
       state.report.trace.push({ seq: entry.seq, event: entry.event, detail: { bytes: bytes?.length, hasOlder: entry.data.hasOlder } });
+    } else if (entry.event === 'controller.history.rewind_pages' && Array.isArray(entry.data.pages)) {
+      const captured = entry.data.pages.flatMap((value: unknown) => {
+        if (!value || typeof value !== 'object') return [];
+        const page = value as Record<string, unknown>;
+        const jsonl = capture(state, entry, page.jsonlCaptureId, 'jsonl', page.jsonl);
+        return jsonl ? [{ jsonl, sourceSessionId: string(page.sourceSessionId),
+          skippedHistoryRecords: typeof page.skippedHistoryRecords === 'number' ? page.skippedHistoryRecords : undefined }] : [];
+      });
+      if (captured.length === entry.data.pages.length) state.display.prependCompleteHistory(captured);
+      else warn(state, `Rewind history batch unavailable at sequence ${entry.seq}.`);
+      state.report.trace.push({ seq: entry.seq, event: entry.event, detail: { pages: entry.data.pages.length } });
     } else if (entry.event === 'controller.optimistic_user') {
       const input = capture(state, entry, entry.data.inputCaptureId, 'input', entry.data.text);
       if (input) state.display.optimisticUser(input.toString('utf8'));

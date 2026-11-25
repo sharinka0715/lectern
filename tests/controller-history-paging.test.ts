@@ -28,17 +28,52 @@ function result(bytes: Buffer, reset: boolean, active = false): ReadResult {
     screen: '', active, reset, jsonl: bytes, hasMore: false, ...(reset && { olderCursor: cursor }) };
 }
 type OlderPage = { jsonl: Buffer; olderCursor?: HistoryCursor };
-async function fixture(read: () => Promise<ReadResult>, older: (cursor: HistoryCursor, sizeMiB?: number) => Promise<OlderPage>) {
+async function fixture(read: () => Promise<ReadResult>, older: (cursor: HistoryCursor, sizeMiB?: number) => Promise<OlderPage>, turnAction?: Backend['turnAction']) {
   const directory = await mkdtemp(path.join(tmpdir(), 'lectern-page-control-'));
   const store = new WorkspaceStore(directory);
   await store.save({id: 'project', name: 'Paging', kind: 'local', cwd: '/tmp'});
   const backend = { readSession: (_w: unknown, _s: string, _v: boolean, _a: unknown, tailFirst: boolean) => {
     assert.equal(tailFirst, true); return read();
   }, readOlderHistory: (_workspace: unknown, _session: string, cursor: HistoryCursor, sizeMiB?: number) => older(cursor, sizeMiB),
-    resetRead() {}, async dispose() {} } as unknown as Backend;
+    turnAction, resetRead() {}, async dispose() {} } as unknown as Backend;
   const controller = new Controller(store, backend);
   return {controller, cleanup: async () => { await controller.dispose(); await rm(directory, {recursive:true, force:true}); }};
 }
+
+test('rewind projects older pages once, counts duplicate prompts by UUID, and leaves a failed read retryable', async () => {
+  const pairWithSamePrompt = (n: number) => Buffer.from(pair(n).toString().replace('Question ' + n, 'Repeated prompt'));
+  const reads: number[] = [];
+  const snapshots: string[][] = [];
+  let fail = true, dispatched = 0;
+  const { controller, cleanup } = await fixture(async () => ({
+    ...result(pairWithSamePrompt(3), true, true), panePid: 7, nativeStatus: 'idle',
+  }), async (current, sizeMiB) => {
+    assert.equal(sizeMiB, 16);
+    reads.push(current.before);
+    if (current.before === cursor.before) return { jsonl: pair(2), olderCursor: { ...cursor, before: 1 } };
+    if (fail) { fail = false; throw new Error('interrupted'); }
+    return { jsonl: pairWithSamePrompt(1) };
+  }, async (_workspace, _session, _pane, _pid, _action, target) => {
+    dispatched++;
+    assert.deepEqual(target, { index: 2, prompts: ['Repeated prompt', 'Question 2', 'Repeated prompt'] });
+    assert.deepEqual(snapshots.filter(messages => messages.length !== 2), [[
+      'Repeated prompt', 'Answer 1', 'Question 2', 'Answer 2', 'Repeated prompt', 'Answer 3',
+    ]]);
+    assert.equal(controller.currentSnapshot?.historyPage?.hasOlder, false);
+    return undefined;
+  });
+  try {
+    const first = await controller.watchSession('project', 'session');
+    controller.on('snapshot', snapshot => snapshots.push(snapshot.messages.map((message: { text: string }) => message.text)));
+    const rewind = () => controller.turnAction('project', 'session', '%1', 7, { kind: 'rewindTo', uuid: 'u3' });
+    await assert.rejects(rewind(), /interrupted/);
+    assert.equal(dispatched, 0);
+    assert.equal(controller.currentSnapshot?.historyPage?.cursor, first.historyPage?.cursor);
+    await rewind();
+    assert.equal(dispatched, 1);
+    assert.deepEqual(reads, [cursor.before, 1, cursor.before, 1]);
+  } finally { await cleanup(); }
+});
 
 test('only a requested page is read, simultaneous requests share it and an old ticket cannot prepend twice', async () => {
   let reads = 0;

@@ -1798,11 +1798,13 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
       kind = command.startsWith('/effort') ? 'effort' : 'model';
       pending = await input(paneId, 'Enter', ['Chat'], this.tmux('send-keys', '-t', paneId, 'Enter') + '\nsleep 0.03', true);
     };
+    const turnFrame = (frame: Awaited<ReturnType<typeof read>>) =>
+      ({ ...frame, panePid: last!.pane.pid, nativeStatus: last!.pane.native?.status, nativeWaitingFor: last!.pane.native?.waitingFor });
+    // Give the TUI time to repaint before the capture already carried by the
+    // guarded command. A caller still polls if it cannot verify the transition.
+    const afterTurnInput = (command: string, observeAfter?: boolean) => command + (observeAfter ? '\nsleep 0.015' : '');
     return {
-      frame: async () => {
-        const frame = await read(false);
-        return { ...frame, panePid: last!.pane.pid, nativeStatus: last!.pane.native?.status, nativeWaitingFor: last!.pane.native?.waitingFor };
-      },
+      frame: async () => turnFrame(await read(false)),
       questionKey: async (key, tailLines) => {
         if (!last) throw new Error(t('backend.questionScreenUnchecked'));
         const binding = key === 'BTab' ? 'shift+tab' : key.replace(/^C-/, 'ctrl+');
@@ -1816,7 +1818,7 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
           await input(paneId, 'Enter', ['Question', 'Select', 'Confirmation', 'TextInput'], this.tmux('paste-buffer', '-p', '-r', '-d', '-b', name, '-t', paneId), false);
         } finally { await this.transport.run(workspace, `${this.tmux('delete-buffer', '-b', name)} 2>/dev/null || true`).catch(() => {}); }
       },
-      keyForTurn: async (action, footerOnly) => {
+      keyForTurn: async (action, footerOnly, observeAfter) => {
         if (!last) throw new Error(t('backend.nativeScreenUnchecked'));
         const { pane, viewport } = last;
         const keys: Record<typeof action, [string, string[]]> = {
@@ -1828,21 +1830,25 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
         const [binding, tmuxKeys] = keys[action];
         const contexts: Parameters<NativeKeybindings['guard']>[2] = ['up','down','accept','cancel','close'].includes(action) ? ['Select','Confirmation'] : ['Chat'];
         const tail = footerOnly && turnComposer(viewport)?.tailLines;
-        await input(pane.id, binding, contexts, this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), false, tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession', action !== 'erase' && action !== 'close');
+        const frame = await input(pane.id, binding, contexts, afterTurnInput(this.tmux('send-keys', '-t', pane.id, ...tmuxKeys), observeAfter), false,
+          tail ? tail - 1 : rewindGuardLines(viewport), false, action === 'switchSession', action !== 'erase' && action !== 'close');
+        if (observeAfter) return turnFrame(frame);
       },
-      pasteForTurn: async (text, footerOnly) => {
+      pasteForTurn: async (text, footerOnly, observeAfter) => {
         if (!last) throw new Error(t('backend.nativeInputUnchecked'));
         const { pane, viewport } = last;
         const name = 'lectern-turn-' + randomUUID();
         const tail = footerOnly && turnComposer(viewport)?.tailLines;
         const typing = this.typedInput(pane.id, text);
         if (typing && await bindings.permits(last.location.claudeDir, 'ctrl+j', ['Chat'])) {
-          await input(pane.id, 'ctrl+j', ['Chat'], typing, false, tail ? tail - 1 : undefined);
-          return;
+          const frame = await input(pane.id, 'ctrl+j', ['Chat'], afterTurnInput(typing, observeAfter), false, tail ? tail - 1 : undefined);
+          return observeAfter ? turnFrame(frame) : undefined;
         }
         try {
           await this.transport.run(workspace, this.tmux('load-buffer','-b',name,'-'), { input: text });
-          await input(pane.id, 'Enter', ['Chat'], this.tmux('paste-buffer','-p','-r','-d','-b',name,'-t',pane.id), false, tail ? tail - 1 : undefined);
+          const command = this.tmux('paste-buffer','-p','-r','-d','-b',name,'-t',pane.id);
+          const frame = await input(pane.id, 'Enter', ['Chat'], afterTurnInput(command, observeAfter), false, tail ? tail - 1 : undefined);
+          if (observeAfter) return turnFrame(frame);
         } finally { await this.transport.run(workspace, `${this.tmux('delete-buffer','-b',name)} 2>/dev/null || true`).catch(() => {}); }
       },
       guardsViewport: true,

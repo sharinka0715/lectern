@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { TurnAction } from '../shared/turn-controls';
 import { checkpointPosition, RewindRecordChanged, type RewindTarget } from '../backend/native-turn-controls';
 import { canInterruptTurn, readRewind, turnComposer } from '../core/turn-controls';
-import { Backend, validateWorkspace, type HistoryCursor } from '../backend';
+import { Backend, validateWorkspace, type HistoryCursor, type HistoryPage } from '../backend';
 import type { JsonRecord } from '../core/jsonl';
 import { parseGoalIndicator, runningStopHook } from '../core/goal-screen';
 import { observeGoal } from './goal-observation';
@@ -490,22 +490,59 @@ export class Controller extends EventEmitter {
 
     older.reading = diagnostic.operation('controller.history.previous', { watchId: watch.id, workspaceId, sessionId }, async () => {
       if (!await this.readHistory(watch, older, true, sizeMiB)) return watch.snapshot;
-      const { activity, listed } = activityOf(watch, watch.snapshot.cliVersion);
-      watch.snapshot = {
-        ...watch.snapshot, messages: presentedMessages(watch), tasks: watch.nativeTasks ?? watch.display.tasks.list, historyPage: historyPage(watch),
-        contextUsage: watch.display.contextUsage, notice: watch.display.notice,
-        lastCompact: watch.compactSamples.receipt(watch.display.activity.currentCompact),
-        activity, subagentsListed: listed || undefined,
-        // The records now reach further back; the screen part is the last poll's.
-        goal: watch.display.goal ? observeGoal({ records: watch.display.goal.current, source: watch.display.goal.source,
-          live: !!watch.snapshot.paneId && !watch.inactiveHistory, indicator: watch.snapshot.goal?.screen, present: watch.goalPresent ?? 0,
-          absent: watch.goalAbsent ?? 0, checking: watch.snapshot.goal?.phase === 'checking' }) : watch.snapshot.goal,
-      };
-      this.publish(watch, 'history-prepend', watch.inactiveHistory);
-      return watch.snapshot;
+      return this.publishEarlierMessages(watch);
     });
     try { return await older.reading; }
     finally { older.reading = undefined; }
+  }
+  private publishEarlierMessages(watch: Watch) {
+    const { activity, listed } = activityOf(watch, watch.snapshot.cliVersion);
+    watch.snapshot = {
+      ...watch.snapshot, messages: presentedMessages(watch), tasks: watch.nativeTasks ?? watch.display.tasks.list, historyPage: historyPage(watch),
+      contextUsage: watch.display.contextUsage, notice: watch.display.notice,
+      lastCompact: watch.compactSamples.receipt(watch.display.activity.currentCompact),
+      activity, subagentsListed: listed || undefined,
+      // The records now reach further back; the screen part is the last poll's.
+      goal: watch.display.goal ? observeGoal({ records: watch.display.goal.current, source: watch.display.goal.source,
+        live: !!watch.snapshot.paneId && !watch.inactiveHistory, indicator: watch.snapshot.goal?.screen, present: watch.goalPresent ?? 0,
+        absent: watch.goalAbsent ?? 0, checking: watch.snapshot.goal?.phase === 'checking' }) : watch.snapshot.goal,
+    };
+    this.publish(watch, 'history-prepend', watch.inactiveHistory);
+    return watch.snapshot;
+  }
+
+  private async loadRewindHistory(watch: Watch) {
+    while (watch.older) {
+      if (this.watch !== watch) throw new Error(t('controller.rewindSwitched'));
+      const older = watch.older;
+      if (older.reading) { await older.reading; continue; }
+      older.reading = diagnostic.operation('controller.history.rewind', {
+        watchId: watch.id, workspaceId: watch.workspace.id, sessionId: watch.sessionId,
+      }, async () => {
+        // Rewind drains the cursor. Stage its pages so a failed read or a live
+        // reset cannot leave a half-applied batch in the projection.
+        const pages: HistoryPage[] = [];
+        let cursor: HistoryCursor | undefined = older.cursor;
+        while (cursor) {
+          const page: HistoryPage = await this.backend.readOlderHistory(watch.workspace, watch.sessionId, cursor, 16);
+          if (this.watch !== watch) throw new Error(t('controller.conversationSwitched'));
+          if (watch.older !== older) return watch.snapshot;
+          const next = page.olderCursor;
+          if (next && (next.before <= 0 || next.before >= cursor.before)) throw new Error(t('controller.historyCursorStuck'));
+          pages.push(page);
+          cursor = next;
+        }
+        if (getDiagnosticsInfo().enabled) diagnostic.event('controller.history.rewind_pages', { pages: pages.map(page => ({
+          jsonlCaptureId: diagnostic.capture('jsonl', page.jsonl, { direction: 'older' }), jsonl: summarize(page.jsonl),
+          sourceSessionId: page.sourceSessionId, skippedHistoryRecords: page.skippedHistoryRecords,
+        })) });
+        watch.display.prependCompleteHistory(pages);
+        watch.older = undefined;
+        return this.publishEarlierMessages(watch);
+      });
+      try { await older.reading; }
+      finally { older.reading = undefined; }
+    }
   }
   private async readHistory(watch: Watch, older: NonNullable<Watch['older']>, requireNewTurn: boolean, sizeMiB?: number) {
     let repairStep = 0;
@@ -1165,12 +1202,9 @@ export class Controller extends EventEmitter {
       for (let attempt = 1; ; attempt++) {
         let assertCurrent: (() => void) | undefined;
         if (action.kind === 'rewindTo' || action.kind === 'checkpoint' || action.kind === 'restore') {
-          // The native index counts the whole active branch, never the current
-          // JSONL page. Drain older pages before matching even a recent duplicate.
-          while (watch.older) {
-            if (this.watch !== watch) throw new Error(t('controller.rewindSwitched'));
-            await this.loadEarlierMessages(workspaceId, sessionId, watch.older.ticket);
-          }
+          // The native index counts the entire rewind list, including when the
+          // selected prompt is a recent duplicate.
+          await this.loadRewindHistory(watch);
           // Claude Code's list: the prompts, and the local commands it lists between them (rewindPoints).
           const branch = watch.display.rewindPoints();
           selectedUuid = action.kind === 'rewindTo' ? action.uuid : action.kind === 'restore' ? memory.checkpointUuid

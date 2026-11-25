@@ -264,22 +264,42 @@ export class MessageDisplay {
    * hold part of a newly appended UTF-8 line and belongs exclusively to live IO. */
   prependJsonl(chunk: Buffer | string, hasOlder: boolean, deferUntilPrompt = false, requireNewTurn?: boolean, sourceSessionId?: string): boolean | undefined {
     if (!this.pages) return;
+    const older = this.recordOlderPage(chunk, sourceSessionId);
+    // 一轮可能有数十页工具输出。先保留各页，遇到候选提问或文件开头再一起重建分支。
+    if (hasOlder && deferUntilPrompt && !older.some(row => isTranscriptTurnStart(row, this.sessionId))) return;
+    return this.rebuildHistory(hasOlder, requireNewTurn);
+  }
+
+  /** Rewind needs the entire history before it can select a native ordinal.
+   * Pages are newest first, with the last one reaching the start of the history. */
+  prependCompleteHistory(pages: readonly { jsonl: Buffer; sourceSessionId?: string; skippedHistoryRecords?: number }[]) {
+    if (!this.pages) return;
+    for (const page of pages) {
+      this.recordOlderPage(page.jsonl, page.sourceSessionId);
+      if (page.skippedHistoryRecords) this.noteSkippedHistoryRecords(page.skippedHistoryRecords);
+    }
+    this.rebuildHistory(false);
+  }
+
+  private recordOlderPage(chunk: Buffer | string, sourceSessionId?: string) {
+    const pages = this.pages!;
     const decoder = new JsonlDecoder();
     const recordsOnDisk = this.adopt(decoder.push(chunk));
     if (sourceSessionId && !this.tipUsers) {
       this.tipUsers = new Set();
-      for (const page of this.pages) this.rememberTipUsers(page);
+      for (const page of pages) this.rememberTipUsers(page);
     }
     if (!sourceSessionId) this.rememberTipUsers(recordsOnDisk);
     // Only the verified predecessor owns this page. Re-home the top-level
     // session field at the projection boundary, never text, tool IDs or UUIDs.
     const older = sourceSessionId ? recordsOnDisk.filter(r => r.sessionId === sourceSessionId).map(r => ({ ...r, sessionId: this.sessionId })) : recordsOnDisk;
     this.olderInvalid += decoder.invalidLines + decoder.oversizedLines;
-    if (older.length) this.pages.unshift(older);
-    // 一轮可能有数十页工具输出。先保留各页，遇到候选提问或文件开头再一起重建分支。
-    if (hasOlder && deferUntilPrompt && !older.some(row => isTranscriptTurnStart(row, this.sessionId))) return;
+    if (older.length) pages.unshift(older);
+    return older;
+  }
 
-    const records = this.pages.flat();
+  private rebuildHistory(hasOlder: boolean, requireNewTurn?: boolean) {
+    const records = this.pages!.flat();
     const transcript = new TranscriptStore(this.sessionId, true, true);
     transcript.partialStart = hasOlder;
     const change = transcript.append(records, true);

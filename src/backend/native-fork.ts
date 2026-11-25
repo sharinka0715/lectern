@@ -37,7 +37,7 @@ export async function submitNativeFork(driver: TurnDriver, pane: string, pid: nu
   // Each step is bound to the whole frame and repeats only after a refusal, on a fresh
   // frame with the same precondition (sendGuarded). A refusal that stands keeps its
   // type, so a refused Enter still drops the fork journal.
-  const step = (send: () => Promise<void>, still: (view: string) => boolean) =>
+  const step = (send: () => Promise<unknown>, still: (view: string) => boolean) =>
     sendGuarded(send, () => wait(view => still(view) || undefined));
   // A typed command that is not confirmed as such is taken out again, never left behind.
   const withdrawn = async (command: '/fork' | '/branch', refused = false) => notRunError(command, await withdrawCommand(driver, command, frame), refused);

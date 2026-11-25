@@ -6,7 +6,7 @@ import { goalStatusOf } from '../core/goal-records';
 import type { JsonRecord } from '../core/jsonl';
 import { diagnostic } from '../diagnostics';
 import type { Workspace } from '../shared/types';
-import { historyPageSizeMiB } from '../shared/history-paging';
+import { DEFAULT_HISTORY_PAGE_MIB, historyPageSizeMiB } from '../shared/history-paging';
 import { quoteShell as q, type Transport } from './transport';
 
 export interface HistoryCursor { before: number; inode: string; size: number; guard?: string; layout?: string; frozenStamp?: string }
@@ -17,6 +17,7 @@ interface FileWindow { inode: string; size: number; offset: number; end: number;
 const WINDOW = 128 * 1024;
 const PAGE_TURNS = 24;
 const PAGE_ROWS = 256;
+const DEFAULT_PAGE_BYTES = DEFAULT_HISTORY_PAGE_MIB * 1024 * 1024;
 // UTF-8 needs at most three bytes per UTF-16 code unit. Anything larger than
 // this cannot fit the decoder's 16M-code-unit record limit, even as CJK text.
 const MAX_RECORD_BYTES = 3 * 16 * 1024 * 1024;
@@ -161,8 +162,11 @@ export class TranscriptPages {
     return !!row && isTranscriptTurnStart(row, this.sessionId);
   }
 
-  private async run(script: string, maxBytes: number, tag = 'session.history_page') {
-    return (await this.transport.run(this.workspace, this.historyGuard + script, { maxBytes, tag })).stdout;
+  private async run(script: string, maxBytes: number, tag = 'session.history_page', expectedBytes = maxBytes) {
+    // Larger pages must allow the same transfer rate as a default page on SSH.
+    const timeoutMs = this.workspace.kind === 'ssh' && expectedBytes > DEFAULT_PAGE_BYTES
+      ? Math.ceil(20_000 * expectedBytes / DEFAULT_PAGE_BYTES) : undefined;
+    return (await this.transport.run(this.workspace, this.historyGuard + script, { maxBytes, tag, timeoutMs })).stdout;
   }
 
   private async bytes(cursor: HistoryCursor, start: number, end: number) {
@@ -170,7 +174,7 @@ export class TranscriptPages {
     const script = withTranscript(this.files, `${verified(cursor)}
 start=${start}; end=${end}
 ${range}`, noFile());
-    const data = await this.run(script, end - start + 1);
+    const data = await this.run(script, end - start + 1, undefined, end - start);
     diagnostic.event('backend.history.byte_range', { sessionId: this.sessionId, inode: cursor.inode, offset: start, end, bytes: data.length }, 'debug');
     if (data.length !== end - start) throw new Error(stale());
     return data;
@@ -215,7 +219,7 @@ if [ $((target - found)) -le ${limit} ]; then
  start=$found; end=$target
  ${range}
 fi`, noFile());
-    const output = await this.run(script, limit + 32);
+    const output = await this.run(script, limit + 32, undefined, end - before);
     const lf = output.indexOf(10);
     const text = lf > 0 ? output.subarray(0, lf).toString('ascii') : '';
     const offset = Number(text);
