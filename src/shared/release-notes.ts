@@ -36,6 +36,20 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.4',
+    features: [],
+    changes: [
+      ['回退更快：长对话只读一遍完整历史，在回退菜单里一次移动到目标再核对位置。',
+        'Rewinding is faster: a long conversation\'s history is read once, and the rewind menu moves to the target in one go before its position is checked.'],
+    ],
+    fixes: [
+      ['对话正在更新时打开设置，不再先闪出下面的对话。',
+        'Opening Settings while a conversation updates no longer flashes the conversation underneath first.'],
+      ['在同一个 Claude Code 进程里压缩（/compact 或自动压缩）之后，也能回退到压缩前的提问。',
+        'After a compaction (/compact or automatic) in the same Claude Code process, you can still rewind to prompts from before it.'],
+    ],
+  },
+  {
     version: '0.2.3',
     features: [
       ['每段对话可以指定自定义 Claude 配置文件。', 'Each conversation can use a custom Claude settings file.'],
