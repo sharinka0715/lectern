@@ -58,6 +58,8 @@ export const releaseNotes: ReleaseNote[] = [
         'Retrying the current conversation or renaming its project no longer makes the goal capsule above the input box disappear and come back.'],
       ['发出消息后往上翻看时，不再被拉回到最新消息。',
         'Scrolling up right after sending a message no longer pulls you back to the latest message.'],
+      ['后台同时有多种任务（例如 shell 和 monitor）时，权限模式不再显示为「未知」。',
+        'The permission mode no longer shows as unknown while several kinds of background work run (a shell and a monitor, say).'],
     ],
   },
   {
