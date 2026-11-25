@@ -49,6 +49,8 @@ export const releaseNotes: ReleaseNote[] = [
         'After a compaction (/compact or automatic) in the same Claude Code process, you can still rewind to prompts from before it.'],
       ['重试读取当前对话或修改项目显示名时，输入框上方的目标胶囊不再先消失再出现。',
         'Retrying the current conversation or renaming its project no longer makes the goal capsule above the input box disappear and come back.'],
+      ['发出消息后往上翻看时，不再被拉回到最新消息。',
+        'Scrolling up right after sending a message no longer pulls you back to the latest message.'],
     ],
   },
   {
