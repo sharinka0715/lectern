@@ -191,7 +191,13 @@
   color: var(--text);
   background: var(--surface-raised);
 }
-.desktop-preferences.modal[open] { display: flex; flex-direction: column; }
+.desktop-preferences.modal[open] {
+  display: flex;
+  flex-direction: column;
+  /* Keep the conversation covered while the settings panel moves in. */
+  animation: preferences-in .16s ease-out;
+}
+@keyframes preferences-in { from { transform: translateY(6px) scale(.985); } }
 .pref-header {
   display: flex;
   align-items: center;

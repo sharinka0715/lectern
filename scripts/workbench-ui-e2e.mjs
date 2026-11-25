@@ -108,6 +108,23 @@ async function expectText(view, i) {
     .getByText("独立历史回复 " + i, { exact: true })
     .waitFor();
 }
+async function openingAnimations(trigger, selector) {
+  await page.evaluate(selector => {
+    window.__openingAnimations = undefined;
+    // Read the animation as the dialog opens, before a busy runner can miss it.
+    const observer = new MutationObserver(() => {
+      const dialog = document.querySelector(`${selector}:modal`);
+      if (!dialog) return;
+      observer.disconnect();
+      window.__openingAnimations = dialog.getAnimations().filter(animation => animation instanceof CSSAnimation)
+        .map(animation => ({ name: animation.animationName, frames: animation.effect.getKeyframes() }));
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
+  }, selector);
+  await trigger.click();
+  await page.locator(`${selector}:modal`).waitFor({ state: "attached" });
+  return page.evaluate(() => window.__openingAnimations);
+}
 // Rows that follow the interface font size: a sidebar conversation and folder, and one
 // line of reply text in the primary pane. Their heights scale with it, so a smaller font
 // leaves no extra space between the rows.
@@ -296,7 +313,15 @@ try {
   await page.getByLabel("筛选项目和对话").fill("设计稿");
   assert.equal(await page.locator(".workspace-row").count(), 1);
   await page.getByLabel("筛选项目和对话").fill("");
-  await page.getByRole("button", { name: "界面与连接设置" }).click();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const openSettings = () => page.getByRole("button", { name: "界面与连接设置" });
+  const settingsMotion = await openingAnimations(openSettings(), ".desktop-preferences");
+  assert.equal(settingsMotion.length, 1, "Settings has one opening animation");
+  const settingsFrames = settingsMotion[0].frames;
+  assert.ok(settingsFrames.every(frame => frame.opacity === undefined || Number(frame.opacity) === 1),
+    "Settings stays opaque throughout its opening animation");
+  assert.ok(settingsFrames.some(frame => /translate|scale/.test(frame.transform ?? "")) &&
+    new Set(settingsFrames.map(frame => frame.transform)).size > 1, "Settings still moves or scales on entry");
   const settings = page.getByRole("dialog", { name: "设置", exact: true });
   // Every tab keeps the same, larger window; long tabs scroll inside the section.
   const tabSizes = [];
@@ -351,7 +376,10 @@ try {
   await machine.getByText("尚未添加项目文件夹").waitFor();
   assert.equal(await machine.locator(".workspace-row").count(), 0);
   // A folder is added on that machine: the dialog is bound to it.
-  await machine.getByRole("button", { name: "在 开发主机 添加项目文件夹", exact: true }).click();
+  const folderMotion = await openingAnimations(
+    machine.getByRole("button", { name: "在 开发主机 添加项目文件夹", exact: true }), ".workspace-modal");
+  assert.deepEqual(folderMotion.map(animation => animation.name), ["dialog-in"], "Other modals keep the shared animation");
+  assert.equal(Number(folderMotion[0].frames[0].opacity), 0, "The shared animation still fades in");
   const dialog = page.getByRole("dialog", { name: "添加项目文件夹" });
   assert.equal(await dialog.locator(".machine-endpoint").innerText(), "开发主机");
   assert.equal(await dialog.getByLabel("SSH 主机").count(), 0, "host and port come from the machine");
@@ -470,6 +498,9 @@ try {
   await expectText("primary", 0);
   assert.equal(await row(0).evaluate(el => el.getBoundingClientRect().height), spacing.session);
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("lectern.desktop.preferences.v1")).rowSpacing), 100);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  assert.deepEqual(await openingAnimations(openSettings(), ".desktop-preferences"), [], "Settings honors reduced motion");
+  await appearance.getByRole("button", { name: "关闭设置" }).click();
   results.rowSpacing = true;
   results.chatLayout = true;
   results.fontPreferences = true;
