@@ -7,7 +7,7 @@ import { archiveKey, archiveSession, desktopState, focusChat, forgetProject, pru
 import { Search, Settings2 } from "lucide-react";
 import type { ChatView } from "../shared/types";
 import "./workbench.css";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowUp,
@@ -48,6 +48,7 @@ import { messageFileNames } from "../shared/attachments";
 import { liveShells as foregroundShells, panelActivities, shellScreenLines, type ActivityKind, type SessionActivity } from "../shared/activity";
 import { LiveShells } from "./MessageDisplay";
 import { ArtifactDrawer, type ArtifactTarget } from "./ArtifactDrawer";
+import { artifactReferences } from "./artifact-reference-cache";
 import { SshLoginHost } from "./SshLoginDialog";
 import { ReleaseNotesDialog } from "./ReleaseNotesDialog";
 import { checkForUpdatesFromMenu, UpdatePrompt } from "./UpdatePrompt";
@@ -207,6 +208,9 @@ function ChatPane({ view, resumes, setResume }: {
     demo: false,
   });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  useLayoutEffect(() => {
+    if (primary && loaded) artifactReferences.syncWorkspaces(workspaces);
+  }, [primary, loaded, workspaces]);
   const [workspaceId, setWorkspaceId] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [snapshot, setSnapshot] = useState<SessionSnapshot>();

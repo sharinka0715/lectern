@@ -36,6 +36,13 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.5',
+    features: [],
+    fixes: [
+      ['切回对话或切换分屏时，已识别的文件路径会立即显示为链接。', 'Recognized file paths appear as links immediately when you return to a conversation or switch panes.'],
+    ],
+  },
+  {
     version: '0.2.4',
     features: [
       ['外观设置新增「将思考展示为正文」，可在回复原有位置直接阅读和复制折叠的思考。',
