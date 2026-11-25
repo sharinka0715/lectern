@@ -22,12 +22,23 @@ createRoot(document.querySelector('main')).render(<Composer/>);`;
   const {outputFiles} = await build({stdin:{contents:harness,resolveDir:root,loader:'tsx'}, bundle:true,write:false,outdir:dir,entryNames:'fixture',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}});
   await Promise.all(outputFiles.map(f=>writeFile(f.path,f.contents)));
   await writeFile(join(dir,'page.html'),'<meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><style>body>main {position:absolute;bottom:20px;left:20px;width:500px}</style><main></main><script src="fixture.js"></script>');
-  await writeFile(join(dir,'main.cjs'),`const {app,BrowserWindow}=require('electron');let w;app.whenReady().then(()=>{w=new BrowserWindow({show:false,webPreferences:{sandbox:true}});w.loadFile(${JSON.stringify(join(dir,'page.html'))})});`);
+  await writeFile(join(dir,'main.cjs'),`const { app, BrowserWindow } = require('electron');
+let w;
+// Match silent-windows.ts so Linux CI composites in software from startup.
+if (process.platform === 'linux') app.disableHardwareAcceleration();
+app.whenReady().then(() => {
+  w = new BrowserWindow({show:false,webPreferences:{sandbox:true,backgroundThrottling:false}});
+  // Playwright's pointer action needs animation frames to check that the option is stable.
+  w.setOpacity(process.platform === 'linux' ? 0.01 : 0);
+  w.setIgnoreMouseEvents(true);
+  w.showInactive();
+  w.loadFile(${JSON.stringify(join(dir,'page.html'))});
+});`);
   app=await electron.launch({args:[`--user-data-dir=${join(dir,'profile')}`,join(dir,'main.cjs')]});
   const page=await app.firstWindow(); page.setDefaultTimeout(5000);
   const input=page.locator('textarea'), list=page.getByRole('listbox'), active=page.locator('[role=option][aria-selected=true]');
   const resolve = (prefix, names, kind='file') => page.evaluate(({prefix,names,kind})=>window.pending.get(prefix).resolve(names.map(value=>({value,kind,source:'workspace'}))),{prefix,names,kind});
-  // The hidden window can stop producing animation frames while IPC still arrives.
+  // The debounced IPC request is independent of rendering.
   const pending = prefix=>page.waitForFunction(p=>window.pending.has(p),prefix,{polling:50});
   // Only allow-listed built-ins are offered; interactive ones such as /help or /config are not.
   await input.fill('/'); await list.waitFor(); assert.match(await active.textContent(),/\/compact/);
