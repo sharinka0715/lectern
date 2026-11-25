@@ -162,7 +162,7 @@ test('a launch without a custom path retains its original command exactly', asyn
   t.after(() => backend.dispose());
   const nonce = 'a'.repeat(32), version = 'tmux 3.4';
   const callback = statusLineLaunch(sid, nonce, version);
-  const inline = JSON.stringify({ ...JSON.parse(callback.settings), promptSuggestionEnabled: false, enableWorkflows: true, permissions: { defaultMode: 'auto' } });
+  const inline = JSON.stringify({ ...JSON.parse(callback.settings), enableWorkflows: true, permissions: { defaultMode: 'auto' } });
   const transport = (backend as any).transport as Transport;
   transport.run = async () => ({ stdout: Buffer.from('/sample/bin/claude\n'), stderr: '' });
   const result = await (backend as any).launchCommand(workspace, { ...location, tmuxVersion: version }, sid, false, undefined, {}, null, nonce);

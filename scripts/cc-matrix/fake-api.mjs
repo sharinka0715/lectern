@@ -67,6 +67,8 @@ function kindOf(body) {
   if (!tools.length && /You are evaluating a stop-condition hook in Claude Code/.test(systemOf(body)) && /^Condition: /m.test(lastText)) return 'goal';
   // The compaction prompt (not a task notification, whose XML also has a <summary> tag).
   if (!/<task-notification>/.test(lastText) && /create a detailed summary of the conversation|summary of the conversation so far|an <analysis> block followed by a <summary> block/i.test(lastText)) return 'compact';
+  // This fork inherits the main loop's tools and appends its own user prompt.
+  if (lastText.startsWith('[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]')) return 'suggestion';
   // Subagents cannot start subagents: only the main loop is offered Agent (Task before).
   if (tools.includes('Agent') || tools.includes('Task')) return 'main';
   if (tools.length) return 'agent';
@@ -169,6 +171,7 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     // A test can fail the safety check with the '@classifier' script (see failure plans below).
     else if (kind === 'classifier' && scripts.has('@classifier')) plan = await scripts.get('@classifier')({ body, messages, kind, action: gradedAction(messages), answer: () => classifierAnswer(body, messages) });
     else if (kind === 'classifier') plan = { blocks: [{ type: 'text', text: classifierAnswer(body, messages) }] };
+    else if (kind === 'suggestion') plan = scripts.has('@suggestion') ? await scripts.get('@suggestion')({ body, messages }) : { blocks: [{ type: 'text', text: '' }] };
     else if (kind === 'side') plan = { blocks: [{ type: 'text', text: sideAnswer(body) }] };
     else plan = { blocks: [{ type: 'text', text: defaultText }] };
     if (!plan.blocks) plan = { blocks: plan.text ? [{ type: 'text', text: plan.text }] : [{ type: 'text', text: defaultText }], ...plan };
@@ -230,6 +233,13 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
       send('content_block_stop', { index });
     }
     await pause(plan.tailMs);
+    if (plan.streamError) {
+      entry.failed = 'stream';
+      if (plan.streamError === 'reset') return req.socket.destroy();
+      send('error', { error: { type: 'api_error', message: plan.streamError } });
+      if (!closed) res.end();
+      return;
+    }
     send('message_delta', { delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: plan.outputTokens ?? 24 } });
     send('message_stop');
     if (!closed) res.end();

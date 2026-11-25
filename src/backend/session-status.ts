@@ -1,4 +1,5 @@
 import { classifySessionScreen } from '../core/screen';
+import { isIdleEmptyComposer } from '../core/settings-screen';
 import type { NativePresence } from './native-presence';
 import type { NavigationSessionStatus } from '../shared/types';
 import { t } from '../shared/i18n';
@@ -12,7 +13,7 @@ export interface PaneStatusEvidence {
   native?: NativePresence;
   identityError?: string;
 }
-export interface ViewportObservation { screen?: string; error?: string }
+export interface ViewportObservation { screen?: string; styled?: string; error?: string }
 export interface NavigationStatus { status: NavigationSessionStatus; statusDetail?: string; background?: string }
 
 /** Navigation cannot infer active work from mere process existence or old JSONL. */
@@ -24,7 +25,10 @@ export function paneNavigationStatus(pane: PaneStatusEvidence | undefined, obser
     return { status: 'history', statusDetail: t('backend.processEnded') };
   }
   if (pane.identityError) return { status: 'unknown', statusDetail: pane.identityError };
-  const classified = observation?.screen === undefined ? undefined : classifySessionScreen(observation.screen);
+  const screen = observation?.screen;
+  let classified = screen === undefined ? undefined : classifySessionScreen(screen);
+  if (screen && classified?.status === 'unknown' && observation?.styled && isIdleEmptyComposer(screen, observation.styled))
+    classified = { status: 'idle', detail: t('core.waitingMessage') };
   if (classified?.status === 'error') return { status: 'error', statusDetail: classified.detail };
   if (!pane.active) return { status: 'unknown', statusDetail: t('backend.paneWithoutClaude') };
   switch (pane.native?.status) {

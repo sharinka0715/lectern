@@ -20,6 +20,9 @@ export const FEATURES = [
   { id: 'model-catalog', title: 'Model/effort lists from the stream-json control-request probe' },
   { id: 'launch-flags', title: 'New chat launches with the chosen --model/--effort' },
   { id: 'first-prompt', title: 'First prompt delivered once the native composer is ready' },
+  { id: 'composer-recovery', title: 'Send after a mid-response error, including the native retry placeholder when present' },
+  { id: 'composer-suggestion', title: 'Show a native prompt suggestion, accept it in Lectern and submit it once as ordinary text' },
+  { id: 'composer-multiline', title: 'Replace a native suggestion with the full multiline prompt, submitted once' },
   { id: 'final-transcript', title: 'Final reply from the JSONL transcript' },
   { id: 'auto-mode-new', title: 'A new chat starts in auto mode (status bar)' },
   { id: 'auto-mode-user-manual', title: 'Auto mode even when the user\'s own default is manual, no blocking prompt' },
@@ -157,7 +160,23 @@ async function apiKeyApproval(sandbox) {
 async function startChat({ ui }, folder, prompt) {
   await ui.openDraft(folder.name);
   await ui.send(prompt);
+  await acceptFixtureTrust(ui, folder, prompt);
   await ui.waitUser(prompt, 90_000);
+}
+/** Claude may ask again after another fixture session writes the shared config.
+ * Confirm only the folder this chat was launched in, through Lectern's card. */
+async function acceptFixtureTrust(ui, folder, prompt) {
+  const result = await ui.page.waitForFunction(([trust, users, goal, prompt]) => {
+    if (document.querySelector(trust)) return 'trust';
+    if ([...document.querySelectorAll(users)].some(el => el.dataset.source === 'jsonl' && el.textContent.includes(prompt))) return 'started';
+    if (prompt.startsWith('/goal ') && document.querySelector(goal)?.dataset.goalCondition === prompt.slice(6)) return 'started';
+  }, [sel.trust, sel.user, sel.goal, prompt], { timeout: 90_000 });
+  const outcome = await result.jsonValue();
+  await result.dispose();
+  if (outcome !== 'trust') return;
+  const card = ui.page.locator(sel.trust);
+  assert.equal(await card.getAttribute('data-directory-trust-cwd'), folder.cwd);
+  await card.locator('[data-trust-decision="trust"]').click();
 }
 /** The permission mode the status bar reports for the active chat. */
 async function waitMode(page, mode, timeout = 30_000) {
@@ -184,6 +203,10 @@ export async function prepareFolders(sandbox, phase = 'main') {
     return { onboard: { id: 'ccm-onboard', name: 'ccm-onboard', cwd: sandbox.work } };
   }
   if (phase === 'server') return { server: { id: 'ccm-server', name: 'ccm-server', cwd: sandbox.work } };
+  if (phase === 'composer') {
+    sandbox.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = '1';
+    return { main: { id: 'ccm-composer', name: 'ccm-composer', cwd: sandbox.work } };
+  }
   const main = sandbox.work;
   const perm = path.join(sandbox.root, 'perm-work');
   const fresh = path.join(sandbox.root, 'fresh-work');
@@ -250,12 +273,92 @@ async function waitGoalEvent(page, kind, timeout = 30_000) {
  * once the capsule shows the goal (`wanted` adds the status or phase to wait for). */
 async function startGoal({ ui, page }, folder, condition, wanted = { status: 'active' }) {
   await ui.openDraft(folder.name);
-  await ui.send(`/goal ${condition}`);
+  const prompt = `/goal ${condition}`;
+  await ui.send(prompt);
+  await acceptFixtureTrust(ui, folder, prompt);
   await waitGoal(page, { condition, ...wanted }, 90_000);
   return ui.activeSessionId();
 }
 
 export const SCENARIOS = [
+  {
+    id: 'composer-placeholder',
+    sandboxPhase: 'composer',
+    features: ['composer-recovery', 'composer-suggestion', 'composer-multiline'],
+    timeoutMs: 120_000,
+    async run(ctx) {
+      const { ui, page, api, sandbox, folders, check, note } = ctx;
+      const failed = 'Fixture interrupted reply ccm:composer-error';
+      const retry = 'Retry the example ccm:composer-retry';
+      const next = 'Prepare an example ccm:composer-next';
+      const suggestion = 'Show another fixture example';
+      const suggestedInput = page.locator(`${sel.composer}[placeholder="${suggestion}"]`);
+      let offer = false;
+      api.script('composer-error', () => ({ text: 'Partial fixture reply.', tailMs: 250, streamError: 'reset' }));
+      api.script('composer-retry', () => ({ text: 'Fixture recovery reply.' }));
+      api.script('composer-next', () => ({ text: 'Fixture suggestion reply.' }));
+      api.script('@suggestion', () => {
+        if (!offer) return { blocks: [] };
+        offer = false;
+        return { text: suggestion, delayMs: 300 };
+      });
+      await check('composer-recovery', async () => {
+        await startChat(ctx, folders.main, failed);
+        const screen = await poll(ui.screen, view => /(?:Connection lost|Server error) mid-response/.test(view) &&
+          /^❯[ \u00a0]*(?:Resend your message to try again)? *$/m.test(view), 30_000);
+        note('retryPlaceholder', screen.includes('Resend your message to try again'));
+        await ui.send(retry);
+        await ui.waitReply('Fixture recovery reply.');
+      });
+      await check('composer-suggestion', async () => {
+        offer = true;
+        await ui.send(next);
+        await ui.waitReply('Fixture suggestion reply.');
+        const composer = page.locator(sel.composer);
+        await suggestedInput.waitFor({ timeout: 30_000 });
+        await composer.press('Tab');
+        assert.equal(await composer.inputValue(), suggestion);
+        await poll(ui.screen, view => /^❯[ \u00a0]+Show another fixture example *$/m.test(view), 10_000);
+        await composer.press('Enter');
+        await ui.waitUser(suggestion);
+        await poll(ui.screen, view => /^❯[ \u00a0]*$/m.test(view), 20_000);
+        assert.equal((await ui.transcript()).filter(row => row.role === 'user' && row.source === 'jsonl' && row.text.includes(suggestion)).length, 1);
+      });
+      await check('composer-multiline', async () => {
+        const marker = 'ccm:composer-multiline';
+        const prompt = [
+          'Replace the suggestion with this fixture ' + marker,
+          'The next line exercises multiple literal chunks. '.repeat(6).trimEnd(),
+          'Keep the third line.',
+          'Keep the fourth line too.',
+        ].join('\n');
+        const submitted = [];
+        api.script('composer-multiline', ({ messages }) => {
+          submitted.push(textOf(messages.findLast(message => message.role === 'user')?.content));
+          return { text: 'Complete multiline fixture received.' };
+        });
+        api.script('composer-multiline-ready', () => ({ text: 'Ready for the new multiline example.' }));
+        offer = true;
+        await ui.send('Prepare another suggestion ccm:composer-multiline-ready');
+        await ui.waitReply('Ready for the new multiline example.');
+        await suggestedInput.waitFor({ timeout: 30_000 });
+        const currentPrompt = screen => screen.split('\n').findLast(row => row.startsWith('❯')) ?? '';
+        assert.match(currentPrompt(await ui.screen()), /^❯[ \u00a0]+Show another fixture example *$/);
+        await ui.send(prompt);
+        await ui.waitReply('Complete multiline fixture received.');
+        const screen = await poll(ui.screen, view => /^❯[ \u00a0]*$/.test(currentPrompt(view)), 20_000);
+        assert.match(currentPrompt(screen), /^❯[ \u00a0]*$/);
+        assert.doesNotMatch(screen, /^❯[ \u00a0]+\[Pasted text/m);
+        assert.deepEqual(submitted, [prompt], 'the fake API received the full prompt exactly once');
+        const id = await ui.activeSessionId();
+        const file = (await sandbox.projectFiles()).find(name => path.basename(name) === `${id}.jsonl`);
+        assert.ok(file, 'the active conversation has a transcript');
+        const prompts = (await readJsonl(file)).filter(row => row.type === 'user' && !row.isMeta && !row.isSidechain)
+          .map(row => textOf(row.message?.content)).filter(text => text.split('\n', 1)[0].endsWith(marker));
+        assert.deepEqual(prompts, [prompt], 'the native transcript stores the full prompt exactly once');
+      });
+    },
+  },
   {
     id: 'new-chat',
     features: ['model-catalog', 'launch-flags', 'first-prompt', 'final-transcript', 'auto-mode-new'],
@@ -283,6 +386,7 @@ export const SCENARIOS = [
       });
       await ui.send('Say hello ccm:hello');
       await check('first-prompt', async () => {
+        await acceptFixtureTrust(ui, folders.main, 'Say hello ccm:hello');
         await ui.waitUser('Say hello ccm:hello', 90_000);
         assert.equal(api.requests.filter(r => r.script === 'hello').length >= 1, true);
       });

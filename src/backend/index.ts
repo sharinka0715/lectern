@@ -18,6 +18,7 @@ import { applySubagentPoll, decodeSubagentList, subagentListScript, subagentPath
 import { decodeTaskOutput, taskOutputScript, type TaskOutputRead, type TaskOutputWindow } from './task-output-files';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, posix } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import type { SettingSwitchMode, DirectoryTrustDecision, DirectoryTrustResult, DirectoryTrustSnapshot, HistoryScan, HistoryTarget, ReplyBaselines, TranscriptPosition, NativeStatusLineObservation, PaneInfo, SessionInfo, SessionSettingKind, SessionSettingSnapshot, TerminalFrame, TerminalInput, TerminalKey, Workspace, WorkspaceDirectoryPage, WorkspaceDiscovery, WorkspaceEndpoint } from '../shared/types';
 import { TERMINAL_KEYS } from '../shared/types';
 import type { SshConnectionPreferences, SshDisconnectResult } from '../shared/ssh-connections';
@@ -45,8 +46,8 @@ import type { ConversationSettingsStore } from '../main/conversation-settings-st
 import type { DialogHookObservation } from '../shared/dialog-hooks';
 import { DialogHookStore, dialogHookDir, dialogHookOption, dialogHookPrefix, dialogHookSettings, readDialogHooks, removeDialogHookDir } from './dialog-hooks';
 import type { LaunchChoices, ModelCatalog } from '../shared/model-catalog';
-import { composerFrameGuard, animatedLabelText, goalRowText, guardWindow } from './composer-frame-guard';
-import { MAX_REWIND_BATCH, notRunError, performTurnAction, RewindRecordChanged, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
+import { composerFrameGuard, animatedLabelText, goalRowText, guardWindow, turnContentsGuard } from './composer-frame-guard';
+import { MAX_REWIND_BATCH, notRunError, performTurnAction, RewindRecordChanged, sendGuarded, withdrawCommand, type TurnDriver, type RewindTarget } from './native-turn-controls';
 import { performQuestionAction, type QuestionDriver } from './native-question-actions';
 import { performPermissionAction } from './native-permission-actions';
 import type { NativePermissionScreen, PermissionAction } from '../shared/native-permission';
@@ -103,7 +104,7 @@ export interface ReadResult { /** Asked for with `listSubagents`: every subagent
   /** The verified registration time of a process launched for this transcript. */
   rewindStartedAt?: number;
   /** The folder's absolute paths on the target (physical first, then as written): where its conversations start. */
-  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; styledScreen?: string; viewport?: string; questionViewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
+  folderPaths?: string[]; nativeTasks?: ConversationTask[]; endpointBilling?: EndpointBilling; transcriptPosition?: TranscriptPosition; olderCursor?: HistoryCursor; skippedHistoryRecords?: number; activitySamples?: ActivitySample[]; statusLineManaged?: boolean; statusLine?: NativeStatusLineObservation; session: SessionInfo; screen: string; styledScreen?: string; viewport?: string; styledViewport?: string; terminalFrame?: TerminalFrame; jsonl: Buffer; reset: boolean; active: boolean; hasMore: boolean; panePid?: number; runtimeInstanceId?: string; screenCapturedAt?: string; nativeStatus?: NativeStatus; nativeWaitingFor?: string; nativeStartedAt?: number; directoryTrust?: DirectoryTrustSnapshot }
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
@@ -922,7 +923,8 @@ exit 1`, { tag: 'settings.launch.ready', timeoutMs: 35_000, maxBytes: 0 }).catch
         journal = { source, scope: sessionSettingsTarget(workspace), known: new Set(discovery.sessions.map(s => s.id)) };
         try {
           await submitNativeFork(this.settingDriver(workspace, sessionId, {
-            expected: { panePid, instanceId: runtimeIdentity(workspace, location, source) }, onSwitchDispatch: () => this.forks.set(key, journal!),
+            expected: { panePid, instanceId: runtimeIdentity(workspace, location, source) }, turnControls: true,
+            onSwitchDispatch: () => this.forks.set(key, journal!),
           }), paneId, panePid);
         } catch (e) {
           // Only this one-use receipt proves Enter never ran. A disconnect is
@@ -1323,15 +1325,15 @@ ${script}`;
     // styledScreen: the same scrollback with colours and attributes (capture-pane -e), which tell
     // Claude's reply apart from the rows around it (core/reply-rows.ts); screen is it without escapes.
     let screen = '', styledScreen: string | undefined, viewport = '', viewportError: string | undefined, capturedAt: number | undefined;
-    let questionViewport: string | undefined;
+    let styledViewport: string | undefined;
     let terminalFrame: TerminalFrame | undefined;
     let nativeTasks: ConversationTask[] | undefined;
     const identity = pane && JSON.stringify([key, pane.nativeTarget, pane.cwd, pane.pid, pane.claudePid, pane.native?.procStart, pane.native?.registrationId, pane.serverInstance,
       pane.native?.status, pane.native?.waitingFor, pane.width, pane.height, pane.cursorX, pane.cursorY]);
     const cached = identity && this.screenCache?.identity === identity ? this.screenCache : undefined;
-    // The active question tab can change its highlight without changing the viewport text.
+    // A question tab or composer can change its style without changing its text.
     const stable = pane?.native?.status && ['idle', 'shell', 'waiting'].includes(pane.native.status)
-      && !cached?.viewport.includes('✔ Submit  →');
+      && !cached?.viewport.includes('✔ Submit  →') && !turnComposer(cached?.viewport ?? '')?.text;
     if (cached && stable && !this.sending.size && !forceViewport && !terminalVisible && !reset && !jsonl.length && Date.now() - cached.capturedAt < 2500) {
       screen = cached.screen; styledScreen = cached.styledScreen; viewport = cached.viewport; capturedAt = cached.capturedAt; nativeTasks = cached.nativeTasks;
     } else if (pane && identity && !pane.identityError) {
@@ -1342,16 +1344,23 @@ ${script}`;
       // current viewport may contribute provisional text to that new session.
       const onlyVisible = !!pane.forkOrigin || !!pane.native && pane.boundSessionId !== sessionId;
       const after = pane.claudePid ? presenceReadScript(location.claudeDir, pane.claudePid) : '';
-      const captureScript = `lectern_visible=$({ ${capture()} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c 16512)
-printf '%s' "$lectern_visible" | base64
+      // Even a small styled viewport can carry more escape bytes than text.
+      const encodeVisible = workspace.kind === 'ssh' ? `if command -v gzip >/dev/null 2>&1; then
+ printf 'gzip:'; printf '%s' "$lectern_painted" | gzip -1 -c | base64
+else
+ printf '%s' "$lectern_painted" | base64
+fi` : `printf '%s' "$lectern_painted" | base64`;
+      const captureScript = `lectern_painted=$({ ${capture('-e')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c 65664)
+${encodeVisible}
 printf '\\0'
+lectern_visible=$(printf '%s' "$lectern_painted" | LC_ALL=C awk '{ gsub(/\\033\\[[0-9;:]*m/, ""); print }')
 lectern_checksum=$(printf '%s' "\${lectern_visible%${q(marker + '0')}}" | cksum)
 printf '%s\\0' "$lectern_checksum"
-${onlyVisible ? `{ ${capture('-e')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c ${STYLED_LIMIT + 128} | base64` : `if [ "$lectern_checksum" != ${q(previous?.checksum ?? '')} ]; then
+${onlyVisible ? '' : `if [ "$lectern_checksum" != ${q(previous?.checksum ?? '')} ]; then
  { ${capture('-e', '-S', '-2000')} 2>&1; printf '%s%s' ${q(marker)} "$?"; } | head -c ${STYLED_LIMIT + 128} | base64
 fi`}
 printf '\\0'
-${terminalVisible ? `{ ${this.tmux('capture-pane', '-p', '-e', '-t', pane.id, ';', 'display-message', '-p', '-t', pane.id, '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 262272 | base64` : `case "$lectern_visible" in (*'✔ Submit  →'*) { ${capture('-e')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 65700 | base64 ;; esac`}
+${terminalVisible ? `{ ${this.tmux('capture-pane', '-p', '-e', '-t', pane.id, ';', 'display-message', '-p', '-t', pane.id, '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}')} 2>/dev/null; printf '%s%s' ${q(marker)} "$?"; } | head -c 262272 | base64` : ''}
 printf '\\0'
 ${taskListFrame(location.claudeDir, sessionId)}
 printf '\\0'
@@ -1373,7 +1382,13 @@ ${after}`;
       }
       const decode = (encoded: string | undefined, limit: number): ViewportObservation => {
         if (encoded === undefined) return { error: t('backend.captureIncomplete') };
-        const output = Buffer.from(encoded, 'base64').toString('utf8'), at = output.lastIndexOf(marker);
+        const compressed = encoded.startsWith('gzip:');
+        let bytes: Buffer = Buffer.from(compressed ? encoded.slice(5) : encoded, 'base64');
+        if (compressed) {
+          try { bytes = gunzipSync(bytes, { maxOutputLength: limit + 128 }); }
+          catch { return { error: t('backend.captureIncomplete') }; }
+        }
+        const output = bytes.toString('utf8'), at = output.lastIndexOf(marker);
         if (at < 0 || Buffer.byteLength(output.slice(0, at)) > limit) return { error: t('backend.captureTooLarge') };
         if (output.slice(at + marker.length) !== '0') return { error: t('backend.captureTmuxFailed') };
         return { screen: output.slice(0, at) };
@@ -1389,14 +1404,10 @@ ${after}`;
             terminalFrame = { paneId: pane.id, ansi: physical.slice(0, dims.index), cols, rows, cursorX: Math.min(cols - 1, x), cursorY: y, cursorVisible: !!visible };
         }
       }
-      const visible = decode(visibleFrame, 16384);
-      viewport = visible.screen ?? ''; viewportError = visible.error;
-      if (styledFrame && !terminalVisible) {
-        // A redraw between the two reads must not contribute an unrelated highlight.
-        const styled = decode(styledFrame, 65536).screen;
-        if (styled && stripTerminalEscapes(styled) === viewport) questionViewport = styled;
-      }
-      if (onlyVisible) { screen = viewport; styledScreen = decode(historyFrame, STYLED_LIMIT).screen; }
+      const visible = decode(visibleFrame, 65536);
+      styledViewport = visible.screen;
+      viewport = styledViewport ? stripTerminalEscapes(styledViewport) : ''; viewportError = visible.error;
+      if (onlyVisible) { screen = viewport; styledScreen = styledViewport; }
       else if (!historyFrame && previous && previous.checksum === checksum) { screen = previous.screen; styledScreen = previous.styledScreen; }
       else {
         const historyScreen = decode(historyFrame, STYLED_LIMIT);
@@ -1425,7 +1436,7 @@ ${after}`;
     }
     if (this.physicalPages.get(key)?.key !== layout?.key) throw new Error(t('backend.resumedHistoryChanged'));
     if (this.readGenerations.get(key) === generation) this.cursors.set(key, { offset: nextOffset, inode, skipPartial, stamp: window.stamp, guard: window.guard });
-    const currentSession: SessionInfo = { ...session, paneId: pane?.active ? pane.id : undefined, mapping: pane?.active ? (pane.managed ? 'exact' : 'manual') : 'unbound', background: undefined, ...paneNavigationStatus(pane, pane ? { screen: viewport, error: viewportError } : undefined) };
+    const currentSession: SessionInfo = { ...session, paneId: pane?.active ? pane.id : undefined, mapping: pane?.active ? (pane.managed ? 'exact' : 'manual') : 'unbound', background: undefined, ...paneNavigationStatus(pane, pane ? { screen: viewport, styled: styledViewport, error: viewportError } : undefined) };
     if (pane && capturedAt && !viewportError) this.rememberNavigation(workspace, pane, { status: currentSession.status!, statusDetail: currentSession.statusDetail, background: currentSession.background }, capturedAt);
     diagnostic.event('backend.jsonl.read', { workspaceId: workspace.id, sessionId, path: session.path ?? candidates[0], pathInferred: !session.path, inode, offset, windowBytes: window.data.length, selectedBytes: jsonl.length, fileSize: size, olderBefore: page?.olderCursor?.before, ...summarize(jsonl), reset, hasMore: nextOffset < size, generation, cursorCommitted: this.readGenerations.get(key) === generation }, 'debug');
     if (this.sessions.get(key) === session) this.sessions.set(key, currentSession);
@@ -1441,7 +1452,7 @@ ${after}`;
     // trust the launch time for the UUID this pane was started for.
     const rewindStartedAt = runtimeInstanceId && pane?.managed && pane.boundSessionId === sessionId && !pane.forkOrigin
       ? pane.native?.startedAt : undefined;
-    return { dialogHooks, subagents, sessionProcess: elsewhere, rewindStartedAt, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir, Date.now(), pane?.processSettings ? pane.processSettings.settingsFile : this.conversationSettings(workspace, sessionId)?.settingsFile), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, questionViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
+    return { dialogHooks, subagents, sessionProcess: elsewhere, rewindStartedAt, folderPaths: location.cwdAliases, nativeTasks, endpointBilling: this.endpointBilling?.observe(workspace, location.claudeDir, Date.now(), pane?.processSettings ? pane.processSettings.settingsFile : this.conversationSettings(workspace, sessionId)?.settingsFile), transcriptPosition: { inode, offset: nextOffset }, olderCursor: page?.olderCursor, skippedHistoryRecords: page?.skippedHistoryRecords, activitySamples, statusLineManaged: !!registration, statusLine, session: currentSession, screen, styledScreen, viewport, styledViewport, terminalFrame, jsonl, reset, active: pane?.active ?? false, hasMore: nextOffset < size, panePid: pane?.pid, runtimeInstanceId, screenCapturedAt: capturedAt ? new Date(capturedAt).toISOString() : undefined, nativeStatus: pane?.native?.status, nativeWaitingFor: pane?.native?.waitingFor, nativeStartedAt: pane?.native?.startedAt, directoryTrust };
     });
   }
   private async livePane(workspace: Workspace, sessionId: string, expected?: SettingRuntime): Promise<string> {
@@ -1548,7 +1559,7 @@ ${after}`;
       if (await this.livePane(workspace, sessionId) !== paneId) throw new Error('The pane binding changed while sending; input was not submitted');
       if (expectedPane) {
         const observation = await this.settingDriver(workspace, sessionId).inspect();
-        if (observation.paneId !== expectedPane || !isIdleEmptyComposer(observation.viewport)) throw new SessionSettingError(t('backend.settingComposerChanged'));
+        if (observation.paneId !== expectedPane || !isIdleEmptyComposer(stripTerminalEscapes(observation.viewport), observation.viewport)) throw new SessionSettingError(t('backend.settingComposerChanged'));
       }
       await this.sendPaneInput(workspace, sessionId, this.tmux('paste-buffer', '-p', '-r', '-d', '-b', bufferName, '-t', paneId));
       diagnostic.event('backend.send.pasted', { paneId, bracketedPaste: true, preserveNewlines: true });
@@ -1650,7 +1661,7 @@ ${after}`;
         if (cursor?.inode !== position.inode || cursor?.offset !== position.offset) throw new RewindRecordChanged();
         historyGuard = transcriptVersionGuard(this.transcriptPaths(session, location), cursor);
       }
-      return performTurnAction(this.settingDriver(workspace, sessionId, {historyGuard, expected: {panePid, instanceId}}), paneId, panePid, action, target, assertCurrent);
+      return performTurnAction(this.settingDriver(workspace, sessionId, {historyGuard, expected: {panePid, instanceId}, turnControls: true}), paneId, panePid, action, target, assertCurrent);
     });
   }
   async answerQuestion(workspace: Workspace, sessionId: string, paneId: string, panePid: number, screen: NativeQuestionScreen,
@@ -1686,7 +1697,7 @@ ${after}`;
       return performPermissionAction(driver, paneId, panePid, screen, action, assertCurrent, call);
     });
   }
-  private settingDriver(workspace: Workspace, sessionId: string, options: { expected?: SettingRuntime; historyGuard?: string; assertCurrent?: () => void; onSwitchDispatch?: () => void; questionTabs?: boolean } = {}): SettingDriver & TurnDriver & QuestionDriver {
+  private settingDriver(workspace: Workspace, sessionId: string, options: { expected?: SettingRuntime; historyGuard?: string; assertCurrent?: () => void; onSwitchDispatch?: () => void; turnControls?: boolean; questionTabs?: boolean } = {}): SettingDriver & TurnDriver & QuestionDriver {
     const { expected } = options;
     const resolve = async () => {
       const session = await this.getSession(workspace, sessionId);
@@ -1707,8 +1718,11 @@ ${after}`;
     let last: { pane: InternalPane; viewport: string; location: Location; singleClaudePane: boolean } | undefined;
     let inlineRewindProbe = !this.options.claudeCommand;
     let pending: Awaited<ReturnType<SettingDriver['inspect']>> | undefined;
-    // The highlight is part of the guarded frame when it identifies a question tab.
-    const capture = (id: string) => this.tmux('capture-pane', '-p', '-J', ...(!options.assertCurrent || options.questionTabs ? ['-e'] : []), '-t', id);
+    // Settings and turn observations inspect the composer. Dialogs use plain
+    // captures, except questions where the active tab is identified by style.
+    const styled = !options.assertCurrent || !!options.questionTabs;
+    const capture = (id: string, withStyle = styled) => this.tmux('capture-pane', '-p', '-J', ...(withStyle ? ['-e'] : []), '-t', id);
+    const frameLimit = styled ? 65536 : 16384;
 
     // Capture only the expected pane and resolve the complete foreground/UUID
     // mapping in the same round trip. A changed or ambiguous binding discards
@@ -1729,7 +1743,7 @@ ${after}`;
       const marker = '__LECTERN_FRAME_' + randomUUID() + '__', boundary = '\0' + marker + '\0';
       const script = `set -e
 ${input}
-lectern_frame() { { ${capture(paneId)} 2>&1; printf '%s%d' ${q(marker)} "$?"; } | head -c 16512; }
+lectern_frame() { { ${capture(paneId)} 2>&1; printf '%s%d' ${q(marker)} "$?"; } | head -c ${frameLimit + 128}; }
 ${settle ? 'lectern_frame\nsleep 0.06 &\nlectern_delay=$!' : ''}
 printf '\\0'
 (
@@ -1760,7 +1774,7 @@ lectern_frame`;
       }
       const decode = (bytes: Buffer) => {
         const index = bytes.lastIndexOf(marker);
-        if (index < 0 || index > 16384 || bytes.subarray(index + marker.length).toString() !== '0') throw new SessionSettingError(t('backend.settingScreenUnreadable'));
+        if (index < 0 || index > frameLimit || bytes.subarray(index + marker.length).toString() !== '0') throw new SessionSettingError(t('backend.settingScreenUnreadable'));
         return bytes.subarray(0, index).toString('utf8');
       };
       const viewport = decode(stdout.subarray(end + boundary.length));
@@ -1774,18 +1788,21 @@ lectern_frame`;
     // Bind a key to the locally parsed frame at the instant of dispatch, even
     // on legacy panes without native PID records. Never send the captured text
     // back through the shell. A redraw or external draft aborts before input.
-    const guard = (paneId: string, frameKind: 'effort' | 'setting-paste' | 'exact', rejectedNavigation?: string, tailLines?: number) => {
+    const guard = (paneId: string, frameKind: 'effort' | 'setting-paste' | 'turn-composer' | 'exact', rejectedNavigation?: string, tailLines?: number) => {
       if (!last || last.pane.id !== paneId) throw new SessionSettingError(t('backend.settingPaneChangedNoInput'));
-      const { pane, viewport, location } = last;
+      const { pane, location } = last;
       const format = ['#{pane_id}', '#{pane_pid}', '#{session_name}:#{window_id}.#{pane_id}', '#{@lectern_session_id}', '#{@lectern_cwd}', '#{@lectern_claude_dir}', '#{pane_dead}', ...(pane.serverInstance ? ['#{pid}:#{start_time}'] : [])].join(SEP);
       const expected = [pane.id, pane.pid, pane.nativeTarget, pane.boundSessionId, pane.boundCwd, pane.boundClaudeDir, '0', ...(pane.serverInstance ? [pane.serverInstance] : [])].join(SEP);
-      const frameGuard = frameKind === 'setting-paste' ? composerFrameGuard(viewport, tailLines)
-        : { tailLines, ...(frameKind === 'effort' ? effortFrameGuard(viewport, tailLines) : { viewport, filter: '' }) };
+      const contents = frameKind === 'turn-composer' ? turnContentsGuard(last.viewport, tailLines) : undefined;
+      const withStyle = options.turnControls ? !!contents : styled;
+      const viewport = withStyle ? last.viewport : stripTerminalEscapes(last.viewport);
+      const frameGuard = contents ?? (frameKind === 'setting-paste' ? composerFrameGuard(viewport, tailLines)
+        : { tailLines, ...(frameKind === 'effort' ? effortFrameGuard(viewport, tailLines) : { viewport, filter: '' }) });
       // The rows the digest covers, on the target and here (task rows, animated labels).
       const framed = guardWindow(viewport, frameGuard);
       return `[ "$(${this.tmux('display-message', '-p', '-t', paneId, format)})" = ${q(expected)} ] || { echo ${q(t('backend.settingPaneChangedNoInput'))} >&2; exit 1; }
 ps -p ${pane.claudePid} -o pgid=,tpgid= | awk 'NF == 2 && $1 > 0 && $1 == $2 { found=1 } END { exit !found }' || { echo ${q(t('backend.claudeLeftNoInput'))} >&2; exit 1; }
-${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_digest=$(${capture(paneId)}${framed.filter} | head -c 16385 | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; })
+${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_digest=$(${capture(paneId, withStyle)}${framed.filter} | head -c ${frameLimit + 1} | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; })
 [ "\${lectern_digest%% *}" = ${q(createHash('sha256').update(framed.expected).digest('hex'))} ] || { ${rejectedNavigation ? `printf '%s' ${q(rejectedNavigation)}; exit 0` : `echo ${q(t('native.screenChangedNoKeys'))} >&2; exit 1`}; }
 `;
     };
@@ -1806,9 +1823,10 @@ ${this.nativeGuard(pane, location, t('native.presenceChangedNoKeys'))}lectern_di
       const guardedNavigation = (contexts.includes('ModelPicker') && ['Up', 'Down', 'Home', 'End', 'PageUp', 'PageDown', 'Escape'].includes(key))
         || (contexts.includes('EffortSlider') && ['Left', 'Right', 'Escape'].includes(key));
       const recordChecked = !!options.historyGuard && recordBound;
-      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent || recordChecked || singlePane
+      const rejectedNavigation = guardedNavigation || switchSession || options.assertCurrent || recordChecked || singlePane || settingPaste
         ? 'LECTERN_MENU_KEY_NOT_SENT_' + randomUUID() : undefined;
-      const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort' : 'exact';
+      const frameKind = settingPaste ? 'setting-paste' : contexts.includes('EffortSlider') ? 'effort'
+        : options.turnControls && contexts.includes('Chat') && key !== 'Escape' ? 'turn-composer' : 'exact';
       // The transcript revision guard runs first: its failure is printed as a receipt that
       // nothing was sent (TranscriptChangedNoKeys), for a question or permission answer and for
       // a rewind's keys alike (the rewind is then chosen again from a fresh read).
@@ -1932,15 +1950,19 @@ END {
         // Fixed ASCII literals only: the bare menu commands or a whitelisted inline switch.
         if (command !== '/model' && command !== '/effort' && !inlineSettingCommand.test(command)) throw new SessionSettingError(t('backend.unsupportedSettingCommand'));
         if (!last || !isIdleEmptyComposer(last.viewport)) throw new SessionSettingError(t('backend.composerNotEmpty'));
-        const idleViewport = last.viewport;
+        let idleViewport = last.viewport;
         kind = command.startsWith('/effort') ? 'effort' : 'model';
         const buffer = 'lectern-setting-' + randomUUID();
         // Both commands are fixed ASCII literals. Load and consume the private
         // tmux buffer on the target. Re-probe after paste, before Enter.
-        let pasted = await input(paneId, 'Enter', ['Chat'], `${this.tmux('set-buffer', '-b', buffer, command)}
+        let pasted = await sendGuarded(() => input(paneId, 'Enter', ['Chat'], `${this.tmux('set-buffer', '-b', buffer, command)}
 trap ${q(this.tmux('delete-buffer', '-b', buffer) + ' 2>/dev/null || true')} 0
 ${this.tmux('paste-buffer', '-p', '-r', '-d', '-b', buffer, '-t', paneId)}
-sleep 0.1`, false, undefined, true);
+sleep 0.1`, false, undefined, true), async () => {
+          const frame = await read(false);
+          if (frame.paneId !== paneId || !isIdleEmptyComposer(frame.viewport)) throw new SessionSettingError(t('backend.composerNotEmpty'));
+          idleViewport = frame.viewport;
+        }, 2);
         // tmux acknowledges the paste before Claude paints it. A timer tick can
         // repaint the old draft, so ignore goal and task rows only while waiting.
         // A changed draft, permission prompt or foreground process ends the wait.
@@ -1951,12 +1973,12 @@ sleep 0.1`, false, undefined, true);
         };
         const idleFrame = frameForEcho(idleViewport);
         for (const delayMs of [60, 120, 240]) {
-          if (frameForEcho(pasted.viewport) !== idleFrame) break;
+          if (frameForEcho(pasted.viewport) !== idleFrame && !isIdleEmptyComposer(pasted.viewport)) break;
           diagnostic.event('backend.settings.await_redraw', { kind, paneId, delayMs });
           await new Promise(resolve => setTimeout(resolve, delayMs));
           pasted = await read(false);
         }
-        if (!hasPendingSettingCommand(pasted.viewport, command as Parameters<typeof hasPendingSettingCommand>[1], idleViewport)) {
+        if (turnComposer(pasted.viewport)?.empty || !hasPendingSettingCommand(pasted.viewport, command as Parameters<typeof hasPendingSettingCommand>[1], idleViewport)) {
           diagnostic.capture('settings.viewport', pasted.viewport, { kind, phase: 'command-entry-rejected', paneId, sessionId });
           // Not left in the input box: Ctrl+U, bound to a frame that shows exactly this command.
           const erase = async () => { await input(paneId, 'ctrl+u', ['Chat'], this.tmux('send-keys', '-t', paneId, 'C-u'), false); };

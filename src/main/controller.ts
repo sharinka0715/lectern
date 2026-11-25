@@ -787,8 +787,8 @@ export class Controller extends EventEmitter {
         memory = undefined;
       }
       const rewind = result.active && memory?.pickerOpen ? readRewind(result.viewport ?? '') : undefined;
-      const editor = result.active ? turnComposer(result.viewport ?? '') : undefined;
-      const questionViewport = result.questionViewport ?? result.viewport;
+      const editor = result.active ? turnComposer(result.viewport ?? '', result.styledViewport) : undefined;
+      const questionViewport = result.viewport?.includes('✔ Submit  →') ? result.styledViewport ?? result.viewport : result.viewport;
       const questionScreen = result.active && questionViewport && !result.directoryTrust && !result.hasMore
         ? parseQuestionScreen(questionViewport) : undefined;
       const applyScreen = !questionScreen && !rewind && !result.hasMore && !settingsOverlap && result.nativeStatus !== 'waiting';
@@ -995,7 +995,7 @@ export class Controller extends EventEmitter {
       // rewinding (nativeInputReady) still wait for the background work.
       const busyInBackground = result.nativeStatus === 'busy' && result.session.status === 'idle' && !!result.session.background;
       const settingsPaneReady = paneCanAcceptInput || (result.active && !result.hasMore && busyInBackground && !editor?.running);
-      const settingsInputReady = settingsPaneReady && isIdleEmptyComposer(result.viewport ?? result.screen);
+      const settingsInputReady = settingsPaneReady && isIdleEmptyComposer(result.viewport ?? result.screen, result.styledViewport);
       const nativeInputReady = paneCanAcceptInput && settingsInputReady;
       // The machine answered: read its model list once (cached until the app quits).
       this.catalogs.warm(watch.workspace, this.settingsFile(watch));
@@ -1029,6 +1029,8 @@ export class Controller extends EventEmitter {
         terminalFrame: watch.terminalLink && !watch.terminalLink.closed ? watch.snapshot.terminalFrame : result.terminalFrame, screenCapturedAt: result.screen ? result.screenCapturedAt ?? new Date().toISOString() : undefined,
         navigationStatus: result.session.status, navigationStatusDetail: result.session.statusDetail,
         nativeInputReady: !question && nativeInputReady, settingsInputReady: !question && settingsInputReady,
+        promptSuggestion: status === 'idle' && settingsInputReady && !this.sending && !composerOverlap && !question && !permission && !result.directoryTrust
+          ? editor?.suggestion : undefined,
         question, questionBusy: !!watch.question?.consumed && !watch.question.unconfirmed, questionUnconfirmed: watch.question?.unconfirmed,
         permission, permissionBusy: !!watch.permission?.consumed && !watch.permission.unconfirmed, permissionUnconfirmed: watch.permission?.unconfirmed,
         turnControls: result.active && !result.directoryTrust && !question ? {
@@ -1357,6 +1359,10 @@ export class Controller extends EventEmitter {
         if (nativeCommand) {
           // Local command feedback cannot acknowledge an optimistic chat turn.
           diagnostic.event('controller.optimistic_user.skipped', { reason: 'native-' + nativeCommand[1], inputCaptureId });
+          if (watch.snapshot.promptSuggestion) {
+            watch.snapshot = { ...watch.snapshot, promptSuggestion: undefined };
+            this.publish(watch, 'send');
+          }
           if (this.timer) this.schedulePoll(watch, 0, true);
           return;
         }
@@ -1368,7 +1374,7 @@ export class Controller extends EventEmitter {
           watch.display.optimisticUser(text);
           diagnostic.event('controller.optimistic_user', { inputCaptureId, text: summarize(text) });
         } else diagnostic.event('controller.optimistic_user.skipped', { reason: 'canonical-user-already-arrived', userId: afterUser.id, inputCaptureId });
-        watch.snapshot = { ...watch.snapshot, messages: watch.display.getMessages(), status: 'working', turnProgress: undefined, error: undefined };
+        watch.snapshot = { ...watch.snapshot, messages: watch.display.getMessages(), status: 'working', promptSuggestion: undefined, turnProgress: undefined, error: undefined };
         this.publish(watch, 'send');
         if (this.timer) this.schedulePoll(watch, 0);
       } else diagnostic.event('controller.optimistic_user.skipped', { reason: terminalResponse ? 'terminal-response' : 'watch-changed', inputCaptureId });

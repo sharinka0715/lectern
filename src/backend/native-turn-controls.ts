@@ -54,7 +54,7 @@ export async function sendGuarded<T>(dispatch: () => Promise<T>, recheck: () => 
  * that command; `read` checks the pane's identity. True once the input box is empty again.
  */
 export async function withdrawCommand(driver: Pick<TurnDriver, 'keyForTurn'>, command: string, read: () => Promise<string>): Promise<boolean> {
-  const typed = (view: string) => turnComposer(view)?.text === command && classifySessionScreen(view).status !== 'waiting';
+  const typed = (view: string) => { const editor = turnComposer(view); return !!editor && !editor.empty && editor.text === command && classifySessionScreen(view).status !== 'waiting'; };
   const settle = async (test: (view: string) => boolean) => {
     for (const ms of [40, 80, 150, 270, 450]) { await delay(ms); if (test(await read())) return true; }
     return false;
@@ -191,7 +191,7 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     const empty = (frame: TurnFrame) => available(frame) && isIdleEmptyComposer(frame.viewport);
     const typed = (frame: TurnFrame) => {
       const editor = turnComposer(frame.viewport);
-      return !!editor && sameDraft(editor.text, text) && available(frame)
+      return !!editor && !editor.empty && sameDraft(editor.text, text) && available(frame)
         && rewindDescription.test(focusedTurnCommandDescription(frame.viewport, text) ?? '');
     };
     if (!empty(await inspect())) throw changed();
@@ -318,7 +318,7 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
     await paste(text, true, f => turnComposer(f.viewport)?.empty === true && running(f));
     // The reply may end meanwhile: Enter runs the command in an idle input box all the same.
     const typed = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport);
-      return !!actual && sameDraft(actual.text, text) && frame.nativeStatus !== 'waiting' && classifySessionScreen(frame.viewport).status !== 'waiting'; };
+      return !!actual && !actual.empty && sameDraft(actual.text, text) && frame.nativeStatus !== 'waiting' && classifySessionScreen(frame.viewport).status !== 'waiting'; };
     await waitFor(typed);
     await press('submit', true, typed);
     return;
@@ -339,10 +339,10 @@ export async function performTurnAction(driver: TurnDriver, pane: string, pid: n
       await paste(text, true, f => turnComposer(f.viewport)?.empty === true && (restored ? available(f) : running(f)));
       await waitFor(frame => {
         const actual = turnComposer(frame.viewport);
-        return !!actual && sameDraft(actual.text,text) && (restored ? available(frame) : running(frame));
+        return !!actual && !actual.empty && sameDraft(actual.text,text) && (restored ? available(frame) : running(frame));
       });
     }
-    const submitted = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport); return !!actual && sameDraft(actual.text, text) && (restored ? available(frame) : running(frame)); };
+    const submitted = (frame: TurnFrame) => { const actual = turnComposer(frame.viewport); return !!actual && !actual.empty && sameDraft(actual.text, text) && (restored ? available(frame) : running(frame)); };
     await press(restored ? 'submit' : action.kind === 'queue' ? 'queue' : 'steer', true, submitted);
     return;
   }

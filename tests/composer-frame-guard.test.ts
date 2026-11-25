@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { composerFrameGuard } from '../src/backend/composer-frame-guard';
+import { composerFrameGuard, guardWindow, turnContentsGuard } from '../src/backend/composer-frame-guard';
 
 // Cropped raw tmux captures from the same failed paste over SSH. The slot was
 // occupied when Lectern observed the composer and empty at the dispatch check.
@@ -40,4 +40,20 @@ test('changes to the composer, controls, completion or any other guarded row sti
     ]) assert.equal(matches(before, changed, 4), false);
     assert.equal(matches(before, atDispatch.replace(/^ +/u, 'New upstream message')), false);
     assert.equal(composerFrameGuard(before.replace('❯', '❯ /effort')).filter, '');
+  });
+
+test('turn guards retain the composer style and ignore spinner, border and footer colors',
+  { skip: process.platform === 'win32' }, () => {
+    const frame = '\x1b[31m✻ Working…\x1b[0m\n\x1b[32m──────── ultracode ────────\x1b[0m\n' +
+      '❯ \x1b[7mP\x1b[0;2mress up to edit queued messages\x1b[0m\n───────────────────────────\n' +
+      '  \x1b[33mesc to interrupt\x1b[0m\n';
+    for (const tail of [undefined, 4]) {
+      const guard = turnContentsGuard(frame, tail);
+      assert.ok(guard);
+      const { expected, filter } = guardWindow(frame, guard);
+      const project = (view: string) => execFileSync('/bin/sh', ['-c', 'cat' + filter], { input: view, encoding: 'utf8' });
+      assert.equal(project(frame.replace(/\x1b\[3[123]m/g, '\x1b[34m')), expected);
+      assert.notEqual(project(frame.replace('\x1b[0;2m', '\x1b[0m')), expected, 'the same text now belongs to a draft');
+      assert.notEqual(project(frame.replace('esc to interrupt', 'enter to confirm')), expected);
+    }
   });

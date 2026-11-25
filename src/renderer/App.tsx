@@ -580,6 +580,9 @@ function ChatPane({ view, resumes, setResume }: {
   const completion = useComposerCompletion({ workspaceId, sessionId: sessionId || (isDraft ? "draft" : ""), view,
     enabled: typing && !sending && !rewindOpen, value: attachments.text, onValue: attachments.setText, inputRef, onFile: attachments.chooseFile });
   const uploading = attachments.pending.length > 0;
+  const promptSuggestion = canSend && !sending && !launch && !inTurn && activeStatus === 'idle' &&
+    snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId &&
+    !attachments.text && !completion.popup && !completion.composing ? snapshot.promptSuggestion : undefined;
   function openRewind() { setRewindScope(JSON.stringify([workspaceId, sessionId])); }
   useEffect(() => { setRewindScope(undefined); }, [workspaceId, sessionId, paneId]);
   useEffect(() => {
@@ -1907,7 +1910,7 @@ function ChatPane({ view, resumes, setResume }: {
             <textarea
               ref={inputRef}
               aria-label={t('app.messageLabel')}
-              placeholder={composerPlaceholder({
+              placeholder={promptSuggestion ?? composerPlaceholder({
                 workspace: !!workspace, sessionId: !!sessionId, snapshot: !!snapshot, paneId: !!paneId,
                 canSend, inTurn, compacting, terminalLocked, draftOccupied: !!controls?.draftOccupied,
                 settingBusy: settingUIBusy || !!snapshot?.settingBusy, trustBusy: !!snapshot?.trustBusy,
@@ -1924,7 +1927,14 @@ function ChatPane({ view, resumes, setResume }: {
               aria-disabled={!canType || undefined}
               rows={1}
               onKeyDown={(event) => {
-                if (completion.onKeyDown(event) || imeOwnsKey(event.nativeEvent) || attachments.onKeyDown(event)) return;
+                if (imeOwnsKey(event.nativeEvent, completion.composing) || completion.onKeyDown(event) || attachments.onKeyDown(event)) return;
+                if (promptSuggestion && event.currentTarget.value === '' && event.key === 'Tab' &&
+                    !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  document.execCommand("insertText", false, promptSuggestion);
+                  return;
+                }
                 // Shift + either Enter starts a new line. macOS has no native newline for
                 // Shift + keypad Enter, so both insert it here (undoable, like typing).
                 if (isEnterKey(event) && event.shiftKey) {

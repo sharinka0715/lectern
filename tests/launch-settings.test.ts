@@ -7,7 +7,7 @@ test('every Lectern starts gets auto mode as its default through per-process set
   const settings = launchSettings({ statusLine, enableWorkflows: true });
   assert.deepEqual(settings.permissions, { defaultMode: 'auto' });
   assert.deepEqual(settings.statusLine, statusLine.statusLine);
-  assert.equal(settings.promptSuggestionEnabled, false);
+  assert.equal('promptSuggestionEnabled' in settings, false);
   assert.equal(settings.enableWorkflows, true);
   // Auto mode's check is left where Claude Code puts it: no environment of Lectern's own.
   assert.equal('env' in settings, false);

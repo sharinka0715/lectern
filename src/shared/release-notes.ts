@@ -37,12 +37,19 @@ export function isLaterVersion(a: string, b: string): boolean {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.5',
-    features: [],
+    features: [
+      ["Lectern 的输入框会显示 Claude Code 的提示建议，按 Tab 填入草稿。",
+        "Lectern's input box shows the Claude Code prompt suggestion; press Tab to put it in your draft."],
+    ],
     changes: [
+      ['Lectern 不再替会话关闭提示建议，是否出现由 Claude Code 的设置决定。',
+        'Lectern no longer turns prompt suggestions off; your Claude Code settings decide whether they appear.'],
       ['文件链接的识别结果在本次运行内保留，切回对话或切换分屏时不再重新识别，已识别的路径立即显示为链接。',
         'File links stay recognized while Lectern runs: returning to a conversation or switching panes shows them as links at once, without looking them up again.'],
     ],
     fixes: [
+      ['出错后原生输入框里的灰色提示（如 Resend your message to try again）不再被当成草稿，可以直接发下一条消息。',
+        'After an error, the grey hint in the native input box (such as Resend your message to try again) is no longer taken for a draft, so the next message can be sent right away.'],
       ['回复中的代码样式文件链接折行时，每行都显示行内代码的底色和描边。',
         'Wrapped file links in replies now show the inline code background and border on every line.'],
       ['回复中的孤立斜杠分隔符保持为普通文字。',

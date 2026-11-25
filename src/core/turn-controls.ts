@@ -3,6 +3,8 @@ import { nativeTaskPanel } from './native-task-screen';
 import { namedEditorBorder } from './editor-border';
 import { withoutGoalIndicator } from './goal-screen';
 import { completionBlocks } from './slash-completions';
+import { hasStyles, styledRows } from './screen-styles';
+import { retryHints } from './api-error-recovery';
 import type { RewindMenu } from '../shared/turn-controls';
 
 const effortBadge = /^\s*[◐◉○◌●]\s+\S+\s*·\s*\/effort\s*$/u;
@@ -44,10 +46,38 @@ function lastMatch(lines: string[], test: (line: string, index: number) => boole
   for (let i = lines.length - 1; i >= 0; i--) if (test(lines[i], i)) return i;
   return -1;
 }
-const placeholder = /^(?:Press up to (?:edit queued messages|select a queued message(?: to edit|, then Enter to edit it))(?:, (?:or )?Enter to send them now)?|Try ["“].+["”])$/i;
+const queueHint = /^Press up to (?:edit queued messages|select a queued message(?: to edit|, then Enter to edit it))(?:, (?:or )?Enter to send them now)?$/i;
+const withoutCursorStyle = /\x1b\[(?:0|7|27|39|49)(?:;(?:0|7|27|39|49))*m/g;
+
+function composerPlaceholder(text: string, rows: string[], painted: string[], view: string) {
+  const fixed = queueHint.test(text) || /^Try ["“].+["”]$/iu.test(text) || retryHints.includes(text);
+  if (!hasStyles(view)) return fixed ? 'fallback' : undefined;
+  // NO_COLOR still paints the cursor. Fall back only for a known string with
+  // the cursor at its first cell and no other styling anywhere in the capture.
+  const cursorOnly = fixed && !hasStyles(view.replace(withoutCursorStyle, ''));
+  const styled = styledRows(painted.join('\n'));
+  let characters = 0;
+  for (const [index, row] of styled.entries()) {
+    if (row.text.replace(/\u00a0/g, ' ').trimEnd() !== rows[index]) return;
+    const chars = [...row.text];
+    for (let i = 2; i < chars.length; i++) {
+      if (/\s/u.test(chars[i])) continue;
+      const cell = row.cells[i];
+      // Ink paints the first placeholder character as the cursor, without dim.
+      // A draft can have the same cursor cell, but its other characters are normal.
+      if (cell.bg || cell.fg || cell.bold || cell.italic || cell.underline ||
+          !(characters === 0 && index === 0 && i === 2 ? cell.inverse : (cursorOnly || cell.dim) && !cell.inverse)) return;
+      characters++;
+    }
+  }
+  if (characters < 2) return;
+  if (cursorOnly) return 'fallback';
+  const full = rows.length === 1 && !text.endsWith('…') && !text.endsWith('...');
+  return fixed || !full ? 'fixed' : 'suggestion';
+}
 
 /** The current boxed editor only. Ignore identical text printed above it by tools or assistants. */
-export function turnComposer(view: string) {
+export function turnComposer(view: string, paintedView = view) {
   const lines = composerLines(view);
   let end = lines.length - 1;
   while (end >= 0 && !lines[end]) end--;
@@ -61,6 +91,9 @@ export function turnComposer(view: string) {
   const continuation = lines.slice(top + 2, bottom);
   if (!continuation.every(line => !line || line.startsWith('  '))) return;
   const text = [first[1] ?? '', ...continuation.map(line => line.slice(2))].join('\n');
+  const mismatch = paintedView !== view && stripTerminalEscapes(paintedView) !== view;
+  const placeholder = !text || mismatch ? undefined
+    : composerPlaceholder(text, lines.slice(top + 1, bottom), paintedView.split('\n').slice(top + 1, bottom), paintedView);
   const footer = lines.slice(bottom + 1, end + 1).join('\n');
   // A prompt appearing below a previous editor supersedes that editor. Only
   // the slash completion for the exact draft is used when opening /rewind.
@@ -89,7 +122,8 @@ export function turnComposer(view: string) {
   // `top` (the upper border) is the same row here and in the pane. `tailLines` counts from
   // it to the end of the capture, task rows included, for the input guard's `tail -n`; the
   // guard then compares only the rows down to the footer (composer-frame-guard.ts, taskRowsGuard).
-  return { text, empty: !text || placeholder.test(text), running, queued, top, tailLines: linesOf(view).length - top };
+  return { text, empty: !mismatch && (!text || !!placeholder), placeholder, suggestion: !running && placeholder === 'suggestion' ? text : undefined,
+    running, queued, top, tailLines: linesOf(view).length - top };
 }
 
 /** The description of the focused slash completion right beside the boxed draft `command`:

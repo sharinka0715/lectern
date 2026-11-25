@@ -3,7 +3,7 @@ import { diagnostic, summarize } from '../diagnostics';
 import { parseCacheConfirmationLines } from './model-switch-confirmation';
 import { AUTO_MODE_BILLING_TITLE, AUTO_MODE_UNAVAILABLE_TITLE, parseAutoModeNudgeLines, showsAutoModeBillingNotice, showsAutoModeUnavailable, type AutoModeNudge } from './auto-mode-screen';
 import { nativeTaskPanel, withoutTaskRows } from './native-task-screen';
-import { hasCurrentApiErrorBeforeRetry } from './api-error-recovery';
+import { apiErrorText, hasCurrentApiErrorBeforeRetry, isRetryHint } from './api-error-recovery';
 import { namedEditorBorder } from './editor-border';
 import { goalTranscriptRow, withoutGoalIndicator } from './goal-screen';
 import { t } from '../shared/i18n';
@@ -205,7 +205,7 @@ function classifyLines(allLines: string[]): SessionScreenClassification {
   // prose. Its exact boxed retry placeholder provides independent evidence;
   // the error phrase alone must not turn explanations or code samples red.
   const retry = lines.findIndex((line, index) => index >= lines.length - 10 && native[index]
-    && /^\s*❯\s+Once fixed, resend your message\s*$/.test(line)
+    && /^\s*❯\s+/u.test(line) && isRetryHint(line.trim().slice(1).trim())
     && index > 0 && isEditorRule(lines[index - 1]) && index + 1 < lines.length && isEditorRule(lines[index + 1]));
   if (retry >= 0 && hasCurrentApiErrorBeforeRetry(lines, retry, native)) {
     return { status: 'error', detail: t('core.apiError') };
@@ -221,7 +221,7 @@ function classifyLines(allLines: string[]): SessionScreenClassification {
   for (let index = Math.max(lastInput + 1, lines.length - 20); index < lines.length; index++) {
     if (!native[index]) continue;
     const text = lines[index].replace(/^\s*⎿\s*/, '').trim();
-    if (/^API Error:\s*[45]\d\d\b/i.test(text)) return { status: 'error', detail: t('core.apiError') };
+    if (apiErrorText.test(text)) return { status: 'error', detail: t('core.apiError') };
     if (/^(?:Not logged in|Invalid API key|Authentication (?:failed|required))\b.*(?:\/login|Please (?:log|sign) in)/i.test(text)) return { status: 'error', detail: t('core.loginNeeded') };
   }
   if (has(10, /^\s*[❯>]\s*$/)) return { status: 'idle', detail: t('core.waitingMessage') };
