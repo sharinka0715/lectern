@@ -1167,6 +1167,7 @@ function ChatPane({ view, resumes, setResume }: {
       ? startOutgoing(`${workspace.id}:${sessionId}`, sent, snapshot?.messages, `outgoing:${Date.now()}`) : undefined;
     if (pending) setOutgoing(pending);
     setDraft(current => (current === text ? "" : current));
+    // A late send receipt can arrive after the reader has scrolled up.
     transcript.current?.scrollToLatest();
     try {
       if (turnInput && paneId && snapshot?.panePid) {
@@ -1178,7 +1179,6 @@ function ChatPane({ view, resumes, setResume }: {
         selected.current.workspaceId === workspace.id &&
         selected.current.sessionId === sessionId
       ) {
-        transcript.current?.scrollToLatest();
         composerFocus.request();
       }
       // The controller's bubble normally replaces it at once; never leave one behind.

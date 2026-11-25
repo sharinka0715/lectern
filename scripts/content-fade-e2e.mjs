@@ -308,6 +308,14 @@ try {
 
   // 2. An older page: inserted as it is. Only the jump-to-latest button fades in (and out when used).
   const scroll = page.locator(".conversation-scroll");
+  const latest = page.getByRole("button", { name: "滚动到最新消息", exact: true });
+  async function scrollBack() {
+    const distance = await scroll.evaluate(el => Math.floor((el.scrollHeight - el.clientHeight) / 2));
+    assert.ok(distance > 2, `the conversation has room to scroll back (${distance}px)`);
+    await scroll.hover({ position: { x: 30, y: 80 } });
+    await page.mouse.wheel(0, -distance);
+    await latest.waitFor();
+  }
   assert.equal(await scroll.getByText("问题 0", { exact: true }).count(), 0, "the oldest turn is not on the first page");
   await scroll.hover();
   for (let i = 0; i < 40 && !await scroll.getByText("问题 0", { exact: true }).count(); i++) {
@@ -320,7 +328,7 @@ try {
   assert.deepEqual(seen.entered.filter(entry => !entry.el.includes("scroll-latest")), [], "an older page fades nothing in");
   assert.deepEqual((await textFades()).spans, [], "an older page fades no text in");
   assert.ok(seen.entered.some(entry => entry.el.includes("scroll-latest")), "the jump-to-latest button fades in");
-  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
+  await latest.click();
   await page.waitForFunction(() => !document.querySelector(".scroll-latest"));
   seen = await fades();
   assert.deepEqual(seen.leaving.map(entry => [entry.el, entry.mode]), [["button.scroll-latest", "fade"]], "the jump button fades out");
@@ -509,20 +517,18 @@ try {
 
   // 6. Reading older messages while a reply streams in and fades in below: the line being read
   // stays. (Sending goes to the latest message: scroll up once the reply has begun.)
-  await input.fill("继续讲讲");
+  // Hold the first chunk until the older line is in view and the frame recorder is running.
+  const readingPrompt = "继续讲讲 mock-hold";
+  await input.fill(readingPrompt);
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
-  await page.locator('.message-assistant[data-source="preview"]').last().locator(".markdown > p").first().waitFor();
-  await page.evaluate(() => {
-    const v = document.querySelector(".conversation-scroll");
-    v.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 0 }));
-    v.scrollTop = v.scrollHeight / 2;
-  });
-  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).waitFor();
+  await page.locator('.message-assistant[data-source="preview"]').last().getByText("已收到你的消息：继续讲讲", { exact: true }).waitFor();
+  await scrollBack();
   await settle();
   const reading = await readLine();
   await startFrames();
-  await page.waitForFunction(() => [...document.querySelectorAll(".message-assistant")].at(-1)?.getAttribute("data-source") === "jsonl" &&
-    [...document.querySelectorAll(".message-assistant")].at(-1).textContent.includes("已收到你的消息：继续讲讲"), null, { timeout: 30000 });
+  await writeFile(path.join(path.dirname(stateFile), "mock-release"), "");
+  await page.waitForFunction(prompt => [...document.querySelectorAll(".message-assistant")].at(-1)?.getAttribute("data-source") === "jsonl" &&
+    [...document.querySelectorAll(".message-assistant")].at(-1).textContent.includes(`已收到你的消息：${prompt}`), readingPrompt, { timeout: 30000 });
   await settle();
   frames = await stopFrames();
   // The input area also drops when the reply ends (its progress pill fades out): in the same update
@@ -543,7 +549,7 @@ try {
   // Its text faded in too (only opacity changes: the line being read stayed, above).
   report.reading.textFades = (await textFades()).spans.filter(span => span.delay === 0).map(span => span.text);
   assert.ok(report.reading.textFades.length, "text of the new reply faded in meanwhile");
-  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
+  await latest.click();
   await page.waitForFunction(() => !document.querySelector(".scroll-latest"));
   await reset();
 
@@ -592,12 +598,7 @@ try {
   const kept2 = turn("又一个保留的提问", "又一个保留的回复"), rewound2 = turn("第二次回退的提问", "第二次回退的回复：" + "也会淡出。".repeat(40));
   await appendFile(archive.file, [...kept2, ...rewound2].map(record => JSON.stringify(record) + "\n").join(""));
   await page.getByText("第二次回退的提问", { exact: true }).waitFor();
-  await page.evaluate(() => {
-    const v = document.querySelector(".conversation-scroll");
-    v.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 0 }));
-    v.scrollTop = v.scrollHeight / 2;
-  });
-  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).waitFor();
+  await scrollBack();
   await pause(800);
   await readLine();
   await reset();
@@ -612,7 +613,7 @@ try {
   report.rewoundReading = { moved, leaving: (await fades()).leaving.map(entry => entry.mode) };
   assert.deepEqual(report.rewoundReading.leaving, ["collapse", "collapse"]);
   assert.ok(moved <= 1, `the line being read does not move while the rewound turn collapses below (${moved}px)`);
-  await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
+  await latest.click();
   await page.waitForFunction(() => !document.querySelector(".scroll-latest"));
   await reset();
 

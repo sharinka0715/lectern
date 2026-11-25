@@ -125,6 +125,31 @@ async function openingAnimations(trigger, selector) {
   await page.locator(`${selector}:modal`).waitFor({ state: "attached" });
   return page.evaluate(() => window.__openingAnimations);
 }
+async function waitForStableLayout(locator) {
+  await locator.evaluate(el => new Promise((resolve, reject) => {
+    const popup = el.closest("dialog, [popover]");
+    let previous, frame;
+    const timeout = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      reject(new Error("Timed out waiting for the popup layout to settle"));
+    }, 5000);
+    // A transform on the popup also affects the measured bounds of its children.
+    function measure() {
+      const positions = [popup, el].map(node => node.getBoundingClientRect())
+        .flatMap(rect => [rect.x, rect.y, rect.width, rect.height]);
+      const animating = popup.getAnimations({ subtree: true })
+        .some(animation => animation.pending || animation.playState === "running");
+      if (!animating && previous?.every((value, index) => value === positions[index])) {
+        clearTimeout(timeout);
+        resolve();
+        return;
+      }
+      previous = animating ? undefined : positions;
+      frame = requestAnimationFrame(measure);
+    }
+    frame = requestAnimationFrame(measure);
+  }));
+}
 // Rows that follow the interface font size: a sidebar conversation and folder, and one
 // line of reply text in the primary pane. Their heights scale with it, so a smaller font
 // leaves no extra space between the rows.
@@ -163,7 +188,9 @@ async function measureSpacing() {
   measured.line = (await pane("primary").getByText("独立历史回复 0", { exact: true }).boundingBox()).height;
   await row(0).click({ button: "right" });
   const menu = page.locator(".context-menu:popover-open");
-  Object.assign(measured, await menu.getByRole("menuitem").first().evaluate(el => {
+  const menuItem = menu.getByRole("menuitem").first();
+  await waitForStableLayout(menuItem);
+  Object.assign(measured, await menuItem.evaluate(el => {
     const style = getComputedStyle(el);
     return { menu: el.getBoundingClientRect().height, menuFont: parseFloat(style.fontSize),
       menuPad: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) };
@@ -173,7 +200,9 @@ async function measureSpacing() {
   await page.getByRole("button", { name: "界面与连接设置" }).click();
   const dialog = page.getByRole("dialog", { name: "设置", exact: true });
   await dialog.getByRole("button", { name: "外观", exact: true }).click();
-  Object.assign(measured, await dialog.getByRole("slider", { name: "界面行距" }).evaluate(el => {
+  const slider = dialog.getByRole("slider", { name: "界面行距" });
+  await waitForStableLayout(slider.locator(".."));
+  Object.assign(measured, await slider.evaluate(el => {
     const label = el.closest("label");
     return { setting: label.getBoundingClientRect().height, settingFont: parseFloat(getComputedStyle(label).fontSize),
       slider: el.valueAsNumber };
@@ -322,11 +351,13 @@ try {
     "Settings stays opaque throughout its opening animation");
   assert.ok(settingsFrames.some(frame => /translate|scale/.test(frame.transform ?? "")) &&
     new Set(settingsFrames.map(frame => frame.transform)).size > 1, "Settings still moves or scales on entry");
+  await page.emulateMedia({ reducedMotion: null });
   const settings = page.getByRole("dialog", { name: "设置", exact: true });
   // Every tab keeps the same, larger window; long tabs scroll inside the section.
   const tabSizes = [];
   for (const tab of ["外观", "聊天排版", "文件预览", "聊天记录", "会话", "项目目录", "SSH 连接", "回收站", "外观"]) {
     await settings.getByRole("button", { name: tab, exact: true }).click();
+    await waitForStableLayout(settings.locator(".pref-section"));
     tabSizes.push(await settings.evaluate(el => {
       const box = el.getBoundingClientRect(), section = el.querySelector(".pref-section");
       return { width: Math.round(box.width), height: Math.round(box.height), viewport: innerHeight,
@@ -345,12 +376,14 @@ try {
   await settings.getByRole("button", { name: "聊天排版" }).click();
   await checkChatLayout("primary", defaultLayout);
   const preview = settings.locator(".pref-preview-column");
+  await waitForStableLayout(preview);
   const initialPreviewWidth = (await preview.boundingBox()).width;
   await settings.getByRole("slider", { name: "对话行高" }).press("Home");
   await checkChatLayout("secondary", { ...defaultLayout, chat: 120 });
   await settings.getByRole("slider", { name: "输入框行高" }).press("End");
   await settings.getByRole("slider", { name: "工具提示字号" }).press("End");
   await settings.getByRole("slider", { name: "对话正文宽度" }).press("Home");
+  await waitForStableLayout(preview);
   assert.ok((await preview.boundingBox()).width < initialPreviewWidth);
   assert.equal(await preview.locator("summary").evaluate(el => getComputedStyle(el).fontSize), "18px");
   await checkChatLayout("primary", customLayout);
@@ -376,10 +409,12 @@ try {
   await machine.getByText("尚未添加项目文件夹").waitFor();
   assert.equal(await machine.locator(".workspace-row").count(), 0);
   // A folder is added on that machine: the dialog is bound to it.
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const folderMotion = await openingAnimations(
     machine.getByRole("button", { name: "在 开发主机 添加项目文件夹", exact: true }), ".workspace-modal");
   assert.deepEqual(folderMotion.map(animation => animation.name), ["dialog-in"], "Other modals keep the shared animation");
   assert.equal(Number(folderMotion[0].frames[0].opacity), 0, "The shared animation still fades in");
+  await page.emulateMedia({ reducedMotion: null });
   const dialog = page.getByRole("dialog", { name: "添加项目文件夹" });
   assert.equal(await dialog.locator(".machine-endpoint").innerText(), "开发主机");
   assert.equal(await dialog.getByLabel("SSH 主机").count(), 0, "host and port come from the machine");
@@ -500,6 +535,7 @@ try {
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("lectern.desktop.preferences.v1")).rowSpacing), 100);
   await page.emulateMedia({ reducedMotion: "reduce" });
   assert.deepEqual(await openingAnimations(openSettings(), ".desktop-preferences"), [], "Settings honors reduced motion");
+  await page.emulateMedia({ reducedMotion: null });
   await appearance.getByRole("button", { name: "关闭设置" }).click();
   results.rowSpacing = true;
   results.chatLayout = true;

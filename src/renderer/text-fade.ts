@@ -116,7 +116,8 @@ export function planTextFades(shown: string, next: string, fading: readonly Fadi
   if (!kept) return [];
   const plan: Fading[] = [];
   for (const fade of fading) {
-    if (now - fade.at >= duration) continue;
+    // Match the whole milliseconds written to CSS so the carried fade has time left to play.
+    if (Math.round(now - fade.at) >= duration) continue;
     for (const run of kept) {
       const from = Math.max(fade.from, run.from), to = Math.min(fade.to, run.from + run.length);
       if (from < to) plan.push({ from: from - run.from + run.to, to: to - run.from + run.to, at: fade.at });

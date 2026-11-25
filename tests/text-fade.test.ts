@@ -49,6 +49,9 @@ test('a fade still running goes on where its characters are now; one that ended 
   const running: Fading = { from: 3, to: 6, at: 900 }, over: Fading = { from: 0, to: 3, at: 1000 - TEXT_FADE_MS };
   // Text added after it: it goes on from its own start, the new text fades from now.
   assert.deepEqual(planTextFades('abcdef', 'abcdefgh', [over, running], 1000), [{ from: 3, to: 6, at: 900 }, { from: 6, to: 8, at: 1000 }]);
+  // The CSS delay is written in whole milliseconds.
+  assert.deepEqual(planTextFades('abcdef', 'abcdef', [over], 999.4), [over]);
+  assert.deepEqual(planTextFades('abcdef', 'abcdef', [over], 999.8), []);
   // Markup removed before it moves it back; characters of it removed drop out.
   assert.deepEqual(planTextFades('**xyzw', 'xyzw!', [{ from: 2, to: 6, at: 950 }], 1000), [{ from: 0, to: 4, at: 950 }, { from: 4, to: 5, at: 1000 }]);
   assert.deepEqual(planTextFades('abcdef', 'abef', [{ from: 2, to: 6, at: 950 }], 1000), [{ from: 2, to: 4, at: 950 }]);

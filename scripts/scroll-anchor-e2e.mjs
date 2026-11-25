@@ -199,6 +199,48 @@ try {
   await input.fill("");
   await page.getByRole("button", { name: "滚动到最新消息", exact: true }).click();
   await atLatest("back to latest");
+
+  // The preview can arrive before the send IPC completes.
+  const base = await page.evaluate(async sessionId => {
+    const [workspace] = await window.desktop.listWorkspaces();
+    const snapshot = await window.desktop.watchSession(workspace.id, sessionId);
+    await window.desktop.unwatchSession();
+    return snapshot;
+  }, archiveId);
+  const prompt = "继续讲讲", streamed = "这段回复仍在生成。";
+  await app.evaluate(({ BrowserWindow, ipcMain }, { base, prompt, streamed }) => {
+    const channel = "lectern:sendMessage";
+    ipcMain.removeHandler(channel);
+    ipcMain.handle(channel, async (_event, workspace, session, text) => {
+      if (workspace !== base.workspaceId || session !== base.sessionId || text !== prompt) throw new Error("Unexpected send");
+      await new Promise(resolve => {
+        globalThis.releaseScrollAnchorSend = resolve;
+        BrowserWindow.getAllWindows()[0].webContents.send("lectern:snapshot", {
+          ...base, status: "working", turnControls: { ...base.turnControls, running: true, canStop: true },
+          messages: [...base.messages,
+            { id: "test-prompt", role: "user", text: prompt, tools: [], source: "jsonl", status: "complete" },
+            { id: "test-reply", role: "assistant", text: streamed, tools: [], source: "preview", status: "streaming" }],
+        });
+      });
+    });
+  }, { base, prompt, streamed });
+  await input.fill(prompt);
+  await page.getByRole("button", { name: "发送消息", exact: true }).click();
+  await page.locator('.message-assistant[data-source="preview"]').getByText(streamed, { exact: true }).waitFor();
+  const stop = page.locator(".interrupt-button");
+  assert.equal(await stop.isDisabled(), true, "send is still awaiting a receipt");
+  await page.locator(".conversation-scroll").hover({ position: { x: 30, y: 80 } });
+  await page.mouse.wheel(0, -500);
+  const backToLatest = page.getByRole("button", { name: "滚动到最新消息", exact: true });
+  await backToLatest.waitFor();
+  const beforeReceipt = await gap();
+  assert.ok(beforeReceipt >= 490, `the wheel scrolled up (${beforeReceipt}px)`);
+  await app.evaluate(() => globalThis.releaseScrollAnchorSend());
+  await page.waitForFunction(() => !!document.querySelector(".interrupt-button:enabled"));
+  const afterReceipt = await gap();
+  report.sendReceipt = { before: beforeReceipt, after: afterReceipt };
+  assert.ok(Math.abs(afterReceipt - beforeReceipt) <= 2, `send receipt preserves the scroll position (${beforeReceipt} → ${afterReceipt}px)`);
+  assert.equal(await backToLatest.isVisible(), true, "the reader can still jump back to the latest message");
   assert.deepEqual(errors, []);
   await page.screenshot({ path: path.join(output, "done.png") });
   console.log(JSON.stringify({ success: true, report, output }));
