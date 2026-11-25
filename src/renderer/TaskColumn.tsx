@@ -29,6 +29,7 @@ interface Props {
   /** Changes when the activity card asks to show (and focus) an entry. */
   focusToken: number;
   replyDetail: ReplyDetail;
+  showThinkingAsText: boolean;
   sizeMiB: number;
   onSelect(key: string): void;
   onClose(): void;
@@ -97,7 +98,7 @@ export function TaskColumn(props: Props) {
       })}
     </div> : <p className="subagent-note">{t('activity.taskNone')}</p>}
     {entry?.agent && <SubagentDetail entry={entry.agent} now={now} workspace={workspace} sessionId={sessionId} view={view} replyDetail={props.replyDetail}
-      sizeMiB={props.sizeMiB} openArtifact={props.openArtifact} />}
+      showThinkingAsText={props.showThinkingAsText} sizeMiB={props.sizeMiB} openArtifact={props.openArtifact} />}
     {entry?.item && entry.kind !== 'agent' && <TaskOutputDetail key={entry.key} item={entry.item} now={now} workspace={workspace} sessionId={sessionId} view={view}
       openArtifact={props.openArtifact} />}
   </aside>;

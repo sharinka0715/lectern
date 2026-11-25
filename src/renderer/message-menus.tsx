@@ -33,7 +33,7 @@ export function fileEntries(file: string | undefined, onOpenPath: OpenPath, work
 }
 
 export function messageMenu(event: { currentTarget: Element; target: EventTarget | null }, message: ChatMessage, options: {
-  workspaceId?: string; onOpenPath: OpenPath; onRewind?: (uuid: string) => void; onQuote?: (text: string) => void;
+  markdown: string; workspaceId?: string; onOpenPath: OpenPath; onRewind?: (uuid: string) => void; onQuote?: (text: string) => void;
 }): MenuEntry[] {
   const selected = selectionWithin(event.currentTarget).trim();
   const { file, href, code } = pointedContent(event.target);
@@ -45,7 +45,7 @@ export function messageMenu(event: { currentTarget: Element; target: EventTarget
     !!href && { label: t('composer.copyLink'), icon: icon(Link), onSelect: () => copyWithToast(href) },
     !!code && { label: t('composer.copyCodeBlock'), icon: icon(Copy), onSelect: () => copyWithToast(code.replace(/\n$/, "")) },
     "separator",
-    !!message.text && { label: t(user ? 'composer.copyMessage' : 'composer.copyMarkdown'), icon: icon(Copy), onSelect: () => copyWithToast(message.text) },
+    !!options.markdown && { label: t(user ? 'composer.copyMessage' : 'composer.copyMarkdown'), icon: icon(Copy), onSelect: () => copyWithToast(options.markdown) },
     !user && !!plain && { label: t('composer.copyPlain'), icon: icon(FileText), onSelect: () => copyWithToast(plain) },
     !!options.onQuote && !!(selected || message.text) && { label: t('composer.quote'), icon: icon(Quote), onSelect: () => options.onQuote!(selected || message.text) },
     "separator",

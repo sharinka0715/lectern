@@ -11,7 +11,7 @@ import { MessageAttachmentCards, MessageFileChip } from './AttachmentCards';
 import { confirmFile, isAttachedPath, isChipPath } from './attachment-registry';
 import { confirmsMention, messageFileLayout, samePath } from '../shared/attachments';
 import { mentionCandidates } from './composer-chips';
-import { activityExcerpt, replyParts, summarizeActivities, toolDisplayState, type Activity, type LineChanges, type ToolActivity } from './reply-activities';
+import { activityExcerpt, replyMarkdown, replyParts, summarizeActivities, toolDisplayState, type Activity, type LineChanges, type ReplyPart, type ToolActivity } from './reply-activities';
 import './reply-activities.css';
 import { EditDiff } from "./EditDiff";
 import { ToolInput } from "./ToolInput";
@@ -176,12 +176,9 @@ function ActivityGroup({ rows, onOpenPath }: { rows: Activity[]; onOpenPath: Ope
   </details>{rows.map(row => row.kind === 'tool' && toolDisplayState(row.tool) === 'pending' && <LiveShellOutput key={row.key} toolId={row.tool.id} withCommand />)}</>;
 }
 
-type ReplyProps = { message: ChatMessage; replyDetail: ReplyDetail; onOpenPath: OpenPath; onOpenAttachment: (attachment: MessageAttachment) => void };
+type ReplyProps = { message: ChatMessage; onOpenPath: OpenPath; onOpenAttachment: (attachment: MessageAttachment) => void };
 
-function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: ReplyProps) {
-  const compact = replyDetail === 'compact';
-  // Activity verbs and summaries are written in the current language.
-  const locale = useLocale();
+function ReplyContent({ message, parts, compact, onOpenPath, onOpenAttachment }: ReplyProps & { parts: ReplyPart[]; compact: boolean }) {
   // A user message shows the files its @-mentions name as chips in their place, like the input box,
   // with its images (and attached files it does not name) in a row above the text. A mention
   // counts when the transcript recorded the file, Lectern attached or knows it, or the reference
@@ -206,9 +203,6 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   }, located) : undefined, [user, message.text, message.attachments, workspaceId, found, located]);
   // Their mentions pasted into the input box are chips there too.
   useEffect(() => { if (workspaceId) for (const chip of layout?.chips ?? []) if (!isAttachedPath(chip.path)) confirmFile(workspaceId, chip.path); }, [layout, workspaceId]);
-  const shown = useMemo(() => layout ? { ...message, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
-    [message, layout]);
-  const parts = useMemo(() => replyParts(shown, compact), [shown, compact, locale]);
   // A stand-in: the reply's first block that replaces it fades in (content-fade.ts).
   if (!parts.length && message.status === 'streaming') return <div className="markdown" data-fade-placeholder>{t('chat.waitingClaude')}</div>;
   let offset = 0;
@@ -222,7 +216,9 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
         node: <MessageFileChip chip={chip} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} /> }));
       return <div key={part.key} className="user-text"><LinkedUserText text={part.text} chips={chips} onOpen={onOpenPath} /></div>;
     }
-    if (part.kind === 'text') return <div key={part.key} className="markdown"><ReplyCwd cwd={part.cwd}><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></ReplyCwd></div>;
+    if (part.kind === 'text') return <div key={part.key} className={part.thought ? 'markdown reply-thought' : 'markdown'}>
+      <ReplyCwd cwd={part.cwd}><ArtifactMarkdown onOpen={onOpenPath} text={part.text} inlineImages /></ReplyCwd>
+    </div>;
     return part.rows.length === 1 ? <ActivityRow key={part.key} row={part.rows[0]} compact={compact} onOpenPath={onOpenPath} />
       : <ActivityGroup key={part.key} rows={part.rows} onOpenPath={onOpenPath} />;
   });
@@ -230,18 +226,27 @@ function ReplyContent({ message, replyDetail, onOpenPath, onOpenAttachment }: Re
   return <><MessageAttachmentCards cards={layout.row} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />{content}</>;
 }
 
-export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachment, onRewind, onQuote }: ReplyProps & {
+export function MessageDisplay({ message, replyDetail, showThinkingAsText, onOpenPath, onOpenAttachment, onRewind, onQuote }: ReplyProps & {
+  replyDetail: ReplyDetail;
+  showThinkingAsText: boolean;
   onRewind?: (uuid: string) => void;
   onQuote?: (text: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const scope = useArtifactScope();
   const isUser = message.role === "user";
-  // A user message's files are cards above its text (ReplyContent).
+  const compact = replyDetail === 'compact';
+  // Activity verbs and summaries are written in the current language.
+  const locale = useLocale();
+  const showThoughts = !isUser && showThinkingAsText;
+  // ReplyContent shows a user message's files as chips and cards, leaving only inline images here.
+  const parts = useMemo(() => replyParts(isUser ? { ...message, attachments: message.attachments?.filter(file => file.image && !file.path) } : message,
+    compact, showThoughts), [message, message.text, message.attachments, isUser, compact, showThoughts, locale]);
+  const markdown = useMemo(() => showThoughts ? replyMarkdown(parts) : message.text, [showThoughts, parts, message.text]);
   const files = isUser ? undefined : message.attachments?.filter(ref => !ref.image);
   async function copy() {
     try {
-      await window.desktop.copyText(message.text);
+      await window.desktop.copyText(markdown);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch (error) {
@@ -255,7 +260,7 @@ export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachm
       data-message-id={message.id}
       data-source={message.source}
       data-role={message.role}
-      onContextMenu={event => showContextMenu(event, messageMenu(event, message, { workspaceId: scope?.workspaceId, onOpenPath, onRewind, onQuote }), t('chat.messageActions'))}
+      onContextMenu={event => showContextMenu(event, messageMenu(event, message, { markdown, workspaceId: scope?.workspaceId, onOpenPath, onRewind, onQuote }), t('chat.messageActions'))}
     >
       {!isUser && (
         <div className="message-heading">
@@ -274,7 +279,7 @@ export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachm
         </div>
       )}
       <div className="message-content">
-        <ReplyContent message={message} replyDetail={replyDetail} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />
+        <ReplyContent message={message} parts={parts} compact={compact} onOpenPath={onOpenPath} onOpenAttachment={onOpenAttachment} />
         {message.interrupted && <p className="message-interrupted">{t('chat.interrupted')}</p>}
         {!!files?.length && <div className="artifact-attachments">
           {files.map(ref => ref.path
@@ -285,7 +290,7 @@ export function MessageDisplay({ message, replyDetail, onOpenPath, onOpenAttachm
       </div>
       {isUser && onRewind && message.rewindUuid && <button type="button" className="message-rewind" title={t('chat.rewindHereTitle')}
         onClick={() => onRewind(message.rewindUuid!)}><CornerDownLeft size={13}/>{t('chat.rewindHere')}</button>}
-      {!isUser && message.text && (
+      {!isUser && markdown && (
         <div className="message-footer">
           {message.status === "streaming" && (
             <span className="stream-label">

@@ -14,6 +14,7 @@ interface Props {
   workspace?: Workspace;
   sessionId?: string;
   replyDetail: ReplyDetail;
+  showThinkingAsText: boolean;
   messages?: ChatMessage[];
   tasks?: SessionSnapshot['tasks'];
   historyPage?: SessionSnapshot["historyPage"];
@@ -44,6 +45,10 @@ interface ScrollAnchor {
 
 /** A line near the bottom edge of the visible conversation, and its distance above that edge. */
 interface BottomAnchor { element: Element; offset: number }
+
+function replyLayoutChanged(previous: Props, current: Props) {
+  return previous.replyDetail !== current.replyDetail || previous.showThinkingAsText !== current.showThinkingAsText;
+}
 
 /** Messages that already faded in once (a new chat's first message shows again when the chat opens). */
 const introduced = new Set<string>();
@@ -267,7 +272,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     this.measureDock();
     const viewport = this.viewport.current;
     if (!viewport || this.followLatest ||
-      (previous.messages === this.props.messages && previous.replyDetail === this.props.replyDetail && previousState.error === this.state.error)) return null;
+      (previous.messages === this.props.messages && !replyLayoutChanged(previous, this.props) && previousState.error === this.state.error)) return null;
     const messages = viewport.getElementsByClassName("message");
     const top = viewport.getBoundingClientRect().top;
     let first = 0;
@@ -284,16 +289,17 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
   componentDidUpdate(previous: Props, previousState: State, anchor?: ScrollAnchor | null) {
     // Removed elements go back in place to fade out before positions are restored below. An older
     // page (or a fresh read: the page cursor changes, the first saved message too) and another reply
-    // detail are not news: nothing fades. (A new chat's sent message, replaced by the saved one, is.)
+    // layout are not news: nothing fades. (A new chat's sent message, replaced by the saved one, is.)
     const head = (messages?: ChatMessage[]) => messages?.find(message => message.source !== "pending")?.id;
-    const quiet = previous.replyDetail !== this.props.replyDetail || (previous.historyPage?.cursor ?? "") !== (this.props.historyPage?.cursor ?? "") ||
+    const layoutChanged = replyLayoutChanged(previous, this.props);
+    const quiet = layoutChanged || (previous.historyPage?.cursor ?? "") !== (this.props.historyPage?.cursor ?? "") ||
       (head(previous.messages) !== undefined && head(previous.messages) !== head(this.props.messages));
     this.fade?.flush(!quiet);
     this.dockFade?.flush(true);
     this.dockBoxes.clear();
     this.observeDock();
     const viewport = this.viewport.current;
-    if (!viewport || (previous.messages === this.props.messages && previous.replyDetail === this.props.replyDetail && previousState.error === this.state.error)) return;
+    if (!viewport || (previous.messages === this.props.messages && !layoutChanged && previousState.error === this.state.error)) return;
     this.observeContent();
     if (this.followLatest) viewport.scrollTop = viewport.scrollHeight;
     else if (anchor?.message.isConnected) {
@@ -401,7 +407,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
               {error && <span className="history-page-error" role="alert">{error}</span>}
             </div>}
             <ArtifactReferenceScope workspace={workspace} sessionId={this.props.sessionId}>
-              {messages?.map(message => <MessageDisplay key={message.id} message={message} replyDetail={this.props.replyDetail}
+              {messages?.map(message => <MessageDisplay key={message.id} message={message} replyDetail={this.props.replyDetail} showThinkingAsText={this.props.showThinkingAsText}
                 onOpenPath={this.openPath} onOpenAttachment={this.openAttachment} onRewind={this.props.onRewind} onQuote={this.props.onQuote} />)}
             </ArtifactReferenceScope>
             <ConversationTaskList tasks={this.props.tasks} />

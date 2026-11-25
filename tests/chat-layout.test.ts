@@ -18,8 +18,16 @@ test('missing layout settings take their defaults without changing other prefere
   assert.equal(state.fontSize, previous.fontSize);
   assert.equal(state.theme, previous.theme);
   assert.equal(state.replyDetail, previous.replyDetail);
+  assert.equal(state.showThinkingAsText, false);
   assert.equal(state.composerMaxLines, previous.composerMaxLines);
   assert.equal(state.split, previous.split);
+});
+
+test('showing thinking as reply text is off by default and uses a persisted boolean', () => {
+  for (const raw of [null, '{}', '{"showThinkingAsText":false}', '{"showThinkingAsText":"true"}'])
+    assert.equal(read(raw).showThinkingAsText, false);
+  assert.equal(read('{"showThinkingAsText":true}').showThinkingAsText, true);
+  assert.equal(defaultAppearance.showThinkingAsText, false);
 });
 
 test('历史读取大小沿用有效设置，缺省和无效值使用 3 MiB', () => {

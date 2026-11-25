@@ -69,8 +69,8 @@ function useSubagentTranscript(workspaceId: string, sessionId: string, view: Cha
 
 /** The selected subagent's own conversation (prompt, replies, tool calls with results, folded
  * thinking), rendered by the main transcript's components and read while it runs. */
-export function SubagentDetail({ entry, now, workspace, sessionId, view, replyDetail, sizeMiB, openArtifact }: {
-  entry: SubagentEntry; now: number; workspace: Workspace; sessionId: string; view: ChatView; replyDetail: ReplyDetail; sizeMiB: number;
+export function SubagentDetail({ entry, now, workspace, sessionId, view, replyDetail, showThinkingAsText, sizeMiB, openArtifact }: {
+  entry: SubagentEntry; now: number; workspace: Workspace; sessionId: string; view: ChatView; replyDetail: ReplyDetail; showThinkingAsText: boolean; sizeMiB: number;
   openArtifact(target: ArtifactTarget): void;
 }) {
   const [attempt, setAttempt] = useState(0);
@@ -101,7 +101,7 @@ export function SubagentDetail({ entry, now, workspace, sessionId, view, replyDe
     </div>
     {data?.notice && <p className="subagent-notice" role="status">{data.notice}</p>}
     {reading?.error && data?.messages && <p className="subagent-notice" role="alert">{t('activity.subagentFailed', { error: reading.error })}</p>}
-    <ConversationTranscript key={entry.agentId ?? entry.key} workspace={workspace} sessionId={sessionId} replyDetail={replyDetail}
+    <ConversationTranscript key={entry.agentId ?? entry.key} workspace={workspace} sessionId={sessionId} replyDetail={replyDetail} showThinkingAsText={showThinkingAsText}
       messages={entry.agentId ? data?.messages : undefined} historyPage={data?.historyPage} loadEarlier={loadEarlier} onFollowLatest={ignoreFollow} openArtifact={openArtifact}>
       {placeholder}
     </ConversationTranscript>

@@ -38,6 +38,8 @@ export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.4',
     features: [
+      ['外观设置新增「将思考展示为正文」，可在回复原有位置直接阅读和复制折叠的思考。',
+        'Enable “Show thinking as reply text” in Appearance to read folded thinking in place and include it when copying the reply.'],
       ['Lectern 自己的 SSH 连接可以在退出后保留，默认 1 小时，可调整时长或选择退出时断开。',
         "Keep Lectern's own SSH connections after quitting for one hour by default, choose a different duration, or disconnect on quit."],
       ['在侧栏机器右键菜单或 SSH 设置里手动断开连接，之后可以重新连接。',

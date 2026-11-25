@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageDisplay } from '../src/core/message-display';
 import { thinkingPurpose } from '../src/core/thinking';
+import { replyMarkdown, replyParts } from '../src/renderer/reply-activities';
 
 // Shape of Claude Code 2.1.327–2.1.329 records: each content block is its own
 // assistant record sharing message.id. The signature (a base64 protobuf) says
@@ -52,4 +53,10 @@ test('narration appears in the reply; other reasoning is a folded thought in its
   ], 'after the tool and before the final text, in record order');
   assert.ok(reply.tools.indexOf(tool) < reply.tools.indexOf(thoughts[0]));
   assert.ok(thoughts.every(item => item.result !== undefined && !item.isError), 'never a pending tool (permission and question cards look for those)');
+  const parts = replyParts(reply, true, true);
+  assert.deepEqual(parts.map(part => part.kind === 'text' ? part.text : part.key), [
+    '先复现根目录的情况。', 'tool:toolu_1', 'Weighing the two fixes before editing.', 'An older record without a readable signature.', '\n\n已修复。',
+  ]);
+  assert.equal(replyMarkdown(parts), '先复现根目录的情况。\n\nWeighing the two fixes before editing.\n\nAn older record without a readable signature.\n\n已修复。');
+  assert.equal(replyMarkdown(replyParts(reply, true)), reply.text);
 });

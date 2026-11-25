@@ -114,6 +114,7 @@ interface DesktopState extends ChatLayout, PreviewSettings {
   /** The message box grows with its text up to this many lines, then scrolls. */
   composerMaxLines: number;
   replyDetail: ReplyDetail;
+  showThinkingAsText: boolean;
   /** inline: `/model <alias>` / `/effort <level>`, saved as Claude's default for new
    * sessions. menu: the native picker, this session only. */
   settingSwitch: "inline" | "menu";
@@ -152,6 +153,7 @@ export const defaultAppearance = {
   rowSpacing: 100,
   composerMaxLines: 10,
   replyDetail: "compact",
+  showThinkingAsText: false,
   showCacheTtl: true,
   showSubscriptionQuota: true,
   quotaTimeZone: "",
@@ -233,6 +235,7 @@ export function loadDesktopState(storage?: Pick<Storage, "getItem">): DesktopSta
       rowSpacing: stepped(p.rowSpacing, rowSpacingRange, defaultAppearance.rowSpacing),
       composerMaxLines: Math.round(bounded(p.composerMaxLines, composerLineRange.min, composerLineRange.max, defaultAppearance.composerMaxLines)),
       replyDetail: p.replyDetail === "individual" ? "individual" : defaultAppearance.replyDetail,
+      showThinkingAsText: p.showThinkingAsText === true,
       settingSwitch: p.settingSwitch === "menu" ? "menu" : defaultSessionOptions.settingSwitch,
       enableWorkflows: p.enableWorkflows !== false,
       // Development builds of 0.2.2 stored two separate choices; a pair that is a preset carries over.

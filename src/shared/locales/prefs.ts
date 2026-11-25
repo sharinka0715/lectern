@@ -32,6 +32,7 @@ export const prefs = {
   composerMax: ['输入框最大高度', 'Input box maximum height'],
   lines: ['{count} 行', '{count, plural, one {# line} other {# lines}}'],
   replyDetail: ['回复详细程度', 'Reply detail'],
+  showThinkingAsText: ['将思考展示为正文', 'Show thinking as reply text'],
   replyCompact: ['精简（汇总连续操作）', 'Compact (group consecutive actions)'],
   replyIndividual: ['逐条（单独列出工具）', 'Individual (list each tool)'],
   showCacheTtl: ['显示提示缓存剩余时间', 'Show prompt cache time left'],

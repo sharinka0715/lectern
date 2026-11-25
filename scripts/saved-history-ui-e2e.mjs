@@ -8,9 +8,9 @@
 //            (screenshot test-results/task-notice-expanded.png)
 //   archive  archiving a conversation from the sidebar leaves its file untouched, survives a reload
 //            and is restored from Settings → 回收站
-//   render   progress notes (narration thinking) show as text, other thinking folds like Claude
-//            Code's "Thought for Ns", sed -i edits show as diffs, and the activity panel lists
-//            background shells but not foreground ones
+//   render   switch between folded thinking and reply Markdown, check styles, grouping, motion and copy,
+//            show sed -i edits as diffs, and list only background shells in the activity panel
+// Set LECTERN_THINKING_SCREENSHOTS to save a pair of reply screenshots per theme in that directory.
 import { createPrivateTmux } from './fixtures/private-tmux.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -58,6 +58,9 @@ const archiveHistory = (sid, prompt) => [
 
 // ── render: narration and folded thinking, a sed -i edit, a foreground and a background shell ──
 const render = { sid: randomUUID() };
+const narration = '先改样式，再启动开发服务器。';
+const thinking = '**检查结果**\n\n确认 `app.css` 的按钮样式，再运行测试。';
+const answer = '已改成红色。';
 // A thinking signature names its purpose (protobuf field 2 → 1 → 8), as Claude Code reads it.
 function signature(purpose) {
   const field = (number, bytes) => { const out = []; for (let n of [number * 8 + 2, bytes.length]) { while (n > 127) { out.push((n % 128) | 128); n = Math.floor(n / 128); } out.push(n); } return [...out, ...bytes]; };
@@ -75,15 +78,17 @@ function renderHistory() {
   }
   const updates = { thinkingDisplay: 'updates' };
   return [row('user', '把按钮改成红色'),
-    row('assistant', [{ type: 'thinking', thinking: '先改样式，再启动开发服务器。\n\n', signature: signature('narration') }], updates, 'm1'),
+    row('assistant', [{ type: 'thinking', thinking: narration + '\n\n', signature: signature('narration') }], updates, 'm1'),
+    row('assistant', [{ type: 'tool_use', id: 'read1', name: 'Read', input: { file_path: 'app.css' } }], updates, 'm1'),
+    row('user', [{ type: 'tool_result', tool_use_id: 'read1', content: '.button { color: blue; }' }]),
     row('assistant', [{ type: 'tool_use', id: 'sed1', name: 'Bash', input: { command: "sed -i '' -e 's/color: blue/color: red/g' app.css", description: 'Recolor' } }], updates, 'm1'),
     row('user', [{ type: 'tool_result', tool_use_id: 'sed1', content: '' }]),
-    row('assistant', [{ type: 'thinking', thinking: 'Private chain of thought.', signature: signature('thinking') }], { ...updates, thinkingDurationMs: 8300 }, 'm2'),
+    row('assistant', [{ type: 'thinking', thinking, signature: signature('thinking') }], { ...updates, thinkingDurationMs: 8300 }, 'm2'),
     row('assistant', [{ type: 'tool_use', id: 'fg1', name: 'Bash', input: { command: 'npm test', description: 'Run tests' } }], updates, 'm2'),
     row('user', [{ type: 'tool_result', tool_use_id: 'fg1', content: 'ok' }]),
     row('assistant', [{ type: 'tool_use', id: 'bg1', name: 'Bash', input: { command: 'npm run dev', run_in_background: true } }], updates, 'm3'),
     row('user', [{ type: 'tool_result', tool_use_id: 'bg1', content: 'Command running in background with ID: b1' }], { toolUseResult: { backgroundTaskId: 'b1' } }),
-    row('assistant', [{ type: 'text', text: '已改成红色。' }], updates, 'm4')].join('\n') + '\n';
+    row('assistant', [{ type: 'text', text: answer }], updates, 'm4')].join('\n') + '\n';
 }
 
 let app;
@@ -164,28 +169,175 @@ try {
   await part('render', async () => {
     const { sid } = render;
     await page.locator(`[data-session-id="${sid}"]`).first().click();
-    const reply = page.locator('.message-assistant').last();
-    await reply.getByText('已改成红色。').waitFor();
-    assert.ok((await reply.innerText()).includes('先改样式，再启动开发服务器。'), 'progress notes are shown');
-    assert.ok(!(await reply.innerText()).includes('Private chain of thought'), 'other thinking is folded by default');
-    // Compact: the thought joins the neighbouring operations' summary, like "Thought for 8s, …".
-    const group = reply.locator('.activity-group').filter({ hasText: '思考 8 秒' });
-    assert.match(await group.locator(':scope > summary').innerText(), /思考 8 秒/);
-    await group.locator(':scope > summary').click();
-    const folded = group.locator('[data-thought]');
-    assert.match(await folded.locator('summary').innerText(), /思考\s*8 秒/);
-    await folded.locator('summary').click();
-    await folded.getByText('Private chain of thought.').waitFor();
-    // Individual rows: the sed command is an edit of app.css with its substitution.
-    await page.evaluate(() => { const key = 'lectern.desktop.preferences.v1'; const p = JSON.parse(localStorage.getItem(key) ?? '{}'); localStorage.setItem(key, JSON.stringify({ ...p, replyDetail: 'individual' })); });
-    await page.reload();
-    await page.locator(`[data-session-id="${sid}"]`).first().click();
+    const reply = page.locator('.message-assistant:not([data-leaving])').last();
+    const body = reply.locator('.message-content');
+    const paragraph = body.locator(':scope > .markdown.reply-thought');
+    const groups = body.locator(':scope > .activity-group');
+    await reply.getByText(answer).waitFor();
+    assert.ok((await reply.innerText()).includes(narration), 'progress notes are shown');
+    assert.ok(!(await reply.innerText()).includes('检查结果'), 'other thinking is folded by default');
+    assert.equal(await paragraph.count(), 0);
+    const shots = process.env.LECTERN_THINKING_SCREENSHOTS;
+    if (shots) await mkdir(shots, { recursive: true });
+    async function screenshot(theme, state) {
+      if (!shots) return;
+      const latest = page.locator('.scroll-latest:not([data-leaving])');
+      if (await latest.isVisible()) await latest.click();
+      await reply.screenshot({ path: path.join(shots, `thinking-${theme}-${state}.png`) });
+    }
+    async function expandFoldedThought() {
+      // Compact: the thought joins the neighbouring operations' summary, like "Thought for 8s, …".
+      const group = groups.filter({ hasText: '思考 8 秒' });
+      const summary = group.locator(':scope > summary');
+      assert.match(await summary.innerText(), /思考 8 秒/);
+      if (!await group.evaluate(node => node.open)) await summary.click();
+      const folded = group.locator('[data-thought]');
+      assert.match(await folded.locator('summary').innerText(), /思考\s*8 秒/);
+      if (!await folded.evaluate(node => node.open)) await folded.locator('summary').click();
+      await folded.getByText('检查结果', { exact: true }).waitFor();
+      await folded.getByRole('button', { name: 'app.css', exact: true }).waitFor();
+    }
+    async function assertThoughtStyle(theme) {
+      const style = await paragraph.evaluate(node => {
+        const root = document.documentElement;
+        const sample = document.createElement('span');
+        sample.hidden = true;
+        sample.style.cssText = 'color: var(--secondary-text); font-size: var(--text-ui); border-inline-start: 2px solid var(--line-strong)';
+        document.body.append(sample);
+        const expected = getComputedStyle(sample);
+        const thought = getComputedStyle(node);
+        const prose = getComputedStyle(node.parentElement.querySelector(':scope > .markdown:not(.reply-thought)'));
+        const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(channel => Number(channel) / 255)
+          .map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4)
+          .reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
+        const foreground = luminance(thought.color), paper = luminance(getComputedStyle(root).backgroundColor);
+        const result = {
+          theme: root.dataset.theme, font: parseFloat(thought.fontSize), proseFont: parseFloat(prose.fontSize), expectedFont: parseFloat(expected.fontSize),
+          color: thought.color, secondary: expected.color, strong: getComputedStyle(node.querySelector('strong')).color,
+          background: thought.backgroundColor, line: thought.borderInlineStart, expectedLine: expected.borderInlineStart,
+          indent: parseFloat(thought.paddingInlineStart), lineHeight: parseFloat(thought.lineHeight) / parseFloat(thought.fontSize),
+          proseLineHeight: parseFloat(prose.lineHeight) / parseFloat(prose.fontSize),
+          contrast: (Math.max(foreground, paper) + .05) / (Math.min(foreground, paper) + .05),
+        };
+        sample.remove();
+        return result;
+      });
+      assert.equal(style.theme, theme);
+      assert.equal(style.font, style.expectedFont);
+      assert.ok(style.font < style.proseFont);
+      assert.equal(style.color, style.secondary);
+      assert.equal(style.strong, style.secondary);
+      assert.ok(style.contrast >= 4.5, `${theme} thinking contrast: ${style.contrast.toFixed(2)}:1`);
+      assert.equal(style.background, 'rgba(0, 0, 0, 0)');
+      assert.equal(style.line, style.expectedLine);
+      assert.ok(style.indent > 0);
+      assert.ok(Math.abs(style.lineHeight - style.proseLineHeight) < .01, 'thinking and prose use the same line-height setting');
+      return style;
+    }
+
+    const settings = page.getByRole('dialog', { name: '设置', exact: true });
+    const toggle = settings.getByRole('checkbox', { name: '将思考展示为正文' });
+    const theme = settings.getByLabel('界面主题');
+    const openSettings = () => page.getByRole('button', { name: '界面与连接设置' }).click();
+    const closeSettings = () => settings.getByRole('button', { name: '关闭设置' }).click();
+    await openSettings();
+    assert.equal(await toggle.isChecked(), false);
+    await theme.selectOption('light');
+    await closeSettings();
+    await expandFoldedThought();
+    await screenshot('light', 'off');
+    const clipboard = () => app.evaluate(({ clipboard }) => clipboard.readText());
+    const originalClipboard = await clipboard();
+    async function expectCopy(control, expected) {
+      await app.evaluate(({ clipboard }) => clipboard.writeText('clipboard fixture'));
+      await control.click();
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (await clipboard() === expected) return;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(await clipboard(), expected);
+    }
+    const menu = page.locator('.context-menu:popover-open');
+    async function expectMarkdownCopy(expected) {
+      await body.dispatchEvent('contextmenu', { button: 2 });
+      await expectCopy(menu.getByRole('menuitem', { name: '复制全文（Markdown）' }), expected);
+    }
+    try {
+      await expectMarkdownCopy([narration, answer].join('\n\n'));
+      await openSettings();
+      assert.equal(await toggle.isChecked(), false);
+      // Wait past the transcript's first-open settle window so a replay would be observable.
+      await page.waitForTimeout(650);
+      await reply.evaluate(node => {
+        window.thinkingLayout = { reply: node, fades: [] };
+        node.addEventListener('animationstart', event => window.thinkingLayout.fades.push(event.animationName));
+      });
+      async function assertQuietLayout() {
+        const state = await reply.evaluate(async node => {
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return { sameReply: node === window.thinkingLayout.reply,
+            fades: [...window.thinkingLayout.fades, ...node.getAnimations({ subtree: true }).map(animation => animation.animationName)]
+              .filter(name => /^lectern-(?:fade|text)-in$/.test(name)) };
+        });
+        assert.deepEqual(state, { sameReply: true, fades: [] }, 'reflow keeps the existing reply and does not replay fades');
+      }
+      await toggle.check();
+      assert.equal(await paragraph.locator('p > strong').innerText(), '检查结果');
+      assert.equal(await paragraph.locator('p code').innerText(), 'app.css');
+      assert.equal(await body.locator('[data-thought]').count(), 0);
+      const order = await body.locator(':scope > .markdown, :scope > .activity-group').evaluateAll(nodes =>
+        nodes.map(el => el.querySelector(':scope > summary .activity-label, p')?.textContent.trim()));
+      assert.deepEqual(order, [narration, '读取 1 个文件，修改 1 个文件', '检查结果', '执行 2 条命令', answer]);
+      await assertQuietLayout();
+      const light = await assertThoughtStyle('light');
+      await page.waitForFunction(() => JSON.parse(localStorage.getItem('lectern.desktop.preferences.v1')).showThinkingAsText === true);
+      await closeSettings();
+      await paragraph.getByRole('button', { name: 'app.css', exact: true }).waitFor();
+      await screenshot('light', 'on');
+      const expected = [narration, thinking, answer].join('\n\n');
+      await expectCopy(reply.getByRole('button', { name: '复制回复' }), expected);
+      await expectMarkdownCopy(expected);
+
+      await openSettings();
+      assert.equal(await toggle.isChecked(), true);
+      await toggle.uncheck();
+      await paragraph.waitFor({ state: 'detached' });
+      await groups.locator(':scope > summary').filter({ hasText: '思考 8 秒' }).waitFor({ state: 'attached' });
+      await assertQuietLayout();
+      await theme.selectOption('dark');
+      await closeSettings();
+      await expandFoldedThought();
+      await screenshot('dark', 'off');
+
+      await openSettings();
+      await toggle.check();
+      const dark = await assertThoughtStyle('dark');
+      assert.equal(dark.font, light.font, 'theme changes the palette without changing the font size');
+      await closeSettings();
+      await paragraph.getByRole('button', { name: 'app.css', exact: true }).waitFor();
+      await screenshot('dark', 'on');
+
+      await openSettings();
+      await settings.getByRole('slider', { name: '界面字号' }).press('End');
+      await settings.getByRole('button', { name: '聊天排版' }).click();
+      await settings.getByRole('slider', { name: '对话行高' }).press('End');
+      const larger = await assertThoughtStyle('dark');
+      assert.ok(larger.font > dark.font, 'thinking follows the interface font size');
+      assert.ok(larger.lineHeight > dark.lineHeight, 'thinking follows the chat line height');
+      await settings.getByRole('button', { name: '外观' }).click();
+      await toggle.uncheck();
+      // Individual rows still show the thought folded, and the sed command as an edit.
+      await settings.getByLabel('回复详细程度').selectOption('individual');
+      await closeSettings();
+      await expectCopy(reply.getByRole('button', { name: '复制回复' }), [narration, answer].join('\n\n'));
+    } finally {
+      await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), originalClipboard);
+    }
     // Individual rows: the thought is its own folded row.
-    await page.locator('.message-assistant').last().getByText('已改成红色。').waitFor();
-    const thought = page.locator('.message-assistant [data-thought]');
+    const thought = body.locator('[data-thought]');
     assert.equal(await thought.count(), 1);
     assert.equal(await thought.evaluate(node => node.open), false);
-    assert.ok(!(await page.locator('.message-assistant').last().innerText()).includes('Private chain of thought'));
+    assert.ok(!(await reply.innerText()).includes('检查结果'));
     const sed = page.locator('[data-tool-id="sed1"]');
     await sed.locator('summary').click();
     const diff = sed.locator('.edit-diff');
@@ -200,6 +352,7 @@ try {
     await panel.getByRole('button', { name: /^终端/ }).click();
     assert.deepEqual(await panel.locator('[data-activity-id]').evaluateAll(cards => cards.map(card => card.getAttribute('data-activity-id'))), ['bg1'],
       'only the background shell is a task in the panel');
-    console.log('PASS render: ' + JSON.stringify({ progressNotes: true, foldedThought: true, sedDiff: true, panel: ['bg1'] }));
+    console.log('PASS render: ' + JSON.stringify({ progressNotes: true, thinkingToggle: true, themes: ['light', 'dark'], scalesWithSettings: true,
+      quietReflow: true, copy: true, sedDiff: true, panel: ['bg1'] }));
   });
 } finally { await app?.close(); privateServer.killAll(); await rm(root, { recursive: true, force: true }); }

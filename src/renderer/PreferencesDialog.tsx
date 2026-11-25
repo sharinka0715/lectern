@@ -275,6 +275,9 @@ export function PreferencesDialog({
                   <option value="individual">{t('prefs.replyIndividual')}</option>
                 </select>
               </label>
+              <label>{t('prefs.showThinkingAsText')}
+                <input type="checkbox" checked={settings.showThinkingAsText} onChange={e => setDesktop({ showThinkingAsText: e.currentTarget.checked })} />
+              </label>
               <label>{t('prefs.showCacheTtl')}
                 <input type="checkbox" checked={settings.showCacheTtl} onChange={e => setDesktop({ showCacheTtl: e.currentTarget.checked })} />
               </label>

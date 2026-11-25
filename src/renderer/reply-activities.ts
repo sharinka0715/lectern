@@ -12,7 +12,7 @@ export type ToolActivity = {
 };
 export type Activity = ToolActivity | { kind: 'peer'; key: string; peer: PeerMessage; category: 'received' };
 /** `cwd`: the directory Claude Code was in when it wrote the text. */
-export type ReplyPart = { kind: 'text'; key: string; text: string; cwd?: string } |
+export type ReplyPart = { kind: 'text'; key: string; text: string; cwd?: string; thought?: true } |
   { kind: 'image'; key: string; attachment: MessageAttachment } |
   { kind: 'notice'; key: string; notice: ReplyNotice } |
   { kind: 'activities'; key: string; offset: number | null; rows: Activity[] };
@@ -105,7 +105,8 @@ export function toolActivity(tool: ToolBlock): ToolActivity {
 }
 
 /** Interleave using both recorded cursors: a delivery may sit between calls at the very same text offset. */
-export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'taskNotifications' | 'attachments' | 'cwds'>, compact: boolean): ReplyPart[] {
+export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'taskNotifications' | 'attachments' | 'cwds'>,
+  compact: boolean, showThinkingAsText = false): ReplyPart[] {
   const parts: ReplyPart[] = [];
   const cwds = message.cwds ?? [];
   let cursor = 0, nextTool = 0, textKey = 'start';
@@ -131,7 +132,16 @@ export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMe
   function toolsUntil(end: number, fallback: number) {
     while (nextTool < end && nextTool < message.tools.length) {
       const tool = message.tools[nextTool++];
-      add(toolActivity(tool), tool.textOffset, tool.textOffset === null ? 0 : fallback);
+      const position = tool.textOffset === null ? 0 : fallback;
+      if (showThinkingAsText && tool.thought) {
+        // Keep the original tool cursor so images, notices and peer messages stay in order.
+        const text = tool.result?.trim();
+        if (!text) continue;
+        textUntil(Math.min(message.text.length, tool.textOffset ?? position));
+        const key = `tool:${tool.id}`;
+        parts.push({ kind: 'text', key, text, cwd: tool.cwd, thought: true });
+        textKey = `after:${key}`;
+      } else add(toolActivity(tool), tool.textOffset, position);
     }
   }
   const notices = message.taskNotifications ?? [];
@@ -173,6 +183,27 @@ export function replyParts(message: Pick<ChatMessage, 'text' | 'tools' | 'peerMe
   toolsUntil(message.tools.length, message.text.length);
   textUntil(message.text.length);
   return parts;
+}
+
+/** Rejoin text split around tools, keeping inserted thoughts as separate paragraphs. */
+export function replyMarkdown(parts: ReplyPart[]): string {
+  const sections: string[] = [];
+  let text = '';
+  for (const part of parts) {
+    if (part.kind !== 'text') continue;
+    if (part.thought) {
+      if (text.trim()) sections.push(text);
+      sections.push(part.text);
+      text = '';
+    } else text += part.text;
+  }
+  if (!sections.length) return text;
+  if (text.trim()) sections.push(text);
+  return sections.map((section, index) => {
+    if (index > 0) section = section.replace(/^\n+/, '');
+    if (index < sections.length - 1) section = section.replace(/\n+$/, '');
+    return section;
+  }).join('\n\n');
 }
 
 /** Category order follows first appearance; repeated paths count once, never by basename alone. */

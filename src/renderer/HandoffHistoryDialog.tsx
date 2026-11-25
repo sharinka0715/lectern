@@ -8,14 +8,14 @@ import { reportActionError } from './diagnostics';
 import { t } from '../shared/i18n';
 
 interface SourceProps {
-  workspace: Workspace; tipId: string; view: ChatView; sizeMiB: number; replyDetail: ReplyDetail;
+  workspace: Workspace; tipId: string; view: ChatView; sizeMiB: number; replyDetail: ReplyDetail; showThinkingAsText: boolean;
 }
 const errorText = (error: unknown) => error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(error);
 const ignoreFollow = () => {};
 
 // Each source owns its reads, attachments and scroll anchor. Never feed this
 // snapshot into the live watch, even when both panes are showing the same tip.
-function SourceHistory({ workspace, tipId, sourceId, view, sizeMiB, replyDetail }: SourceProps & { sourceId: string }) {
+function SourceHistory({ workspace, tipId, sourceId, view, sizeMiB, replyDetail, showThinkingAsText }: SourceProps & { sourceId: string }) {
   const [page, setPage] = useState<HandoffHistorySnapshot>();
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState('');
@@ -60,7 +60,8 @@ function SourceHistory({ workspace, tipId, sourceId, view, sizeMiB, replyDetail 
       {viewingOther && <p>{t('dialogs.otherPathsNote')}</p>}
     </div>}
     <div className="handoff-body">
-      <ConversationTranscript key={String(viewingOther)} workspace={workspace} sessionId={tipId} messages={viewingOther ? others : page.messages} replyDetail={replyDetail}
+      <ConversationTranscript key={String(viewingOther)} workspace={workspace} sessionId={tipId} messages={viewingOther ? others : page.messages}
+        replyDetail={replyDetail} showThinkingAsText={showThinkingAsText}
         historyPage={{hasOlder: !!page.cursor, cursor: page.cursor ?? ''}} loadEarlier={earlier} onFollowLatest={ignoreFollow} openArtifact={open}>
         <p className="artifact-unavailable">{t('dialogs.noHandoffMessages')}</p>
       </ConversationTranscript>

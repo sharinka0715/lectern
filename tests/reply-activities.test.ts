@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { ChatMessage, ToolBlock } from '../src/shared/types';
-import { replyParts, summarizeActivities, toolActivity } from '../src/renderer/reply-activities';
+import type { ToolBlock } from '../src/shared/types';
+import { replyMarkdown, replyParts, summarizeActivities, toolActivity } from '../src/renderer/reply-activities';
 
 const call = (id: string, name: string, textOffset: number | null | undefined, input = {}, extra: Partial<ToolBlock> = {}): ToolBlock =>
   ({ id, name, input: JSON.stringify(input), textOffset, ...extra });
 const delivered = (id: string, textOffset: number, toolsBefore: number) => ({ id, source: 'agent' as const, text: '核对完毕', textOffset, toolsBefore });
-const layout = (message: Pick<ChatMessage, 'text' | 'tools' | 'peerMessages' | 'taskNotifications' | 'attachments'>, compact = true) => replyParts(message, compact)
+const layout = (message: Parameters<typeof replyParts>[0], compact = true, showThinkingAsText = false) => replyParts(message, compact, showThinkingAsText)
   .map(part => part.kind === 'text' ? part.text : part.kind === 'image' ? part.attachment.name : part.kind === 'notice' ? part.notice.id
     : part.rows.map(row => row.kind === 'peer' ? row.peer.id : row.tool.id));
 
@@ -94,6 +94,29 @@ test('折叠的思考与相邻操作合成一行，像 Claude Code 的「Thought
   assert.equal(toolActivity(tools[0]).subject, '4 秒');
   assert.equal(toolActivity(thought('short', 0, 300)).subject, '1 秒', 'at least one second, as the TUI shows');
   assert.equal(summarizeActivities([toolActivity(tools[0])]).pending, 0, 'a thought is never an operation in progress');
+});
+
+test('思考正文在原位置分隔精简工具组，空思考不显示也不分组', () => {
+  const thought = (id: string, result: string) => call(id, 'Thinking', 0, {}, { result, thought: { durationMs: 2000 }, cwd: '/example' });
+  const command = (id: string) => call(id, 'Bash', 0, { command: 'ls' }, { result: 'ok' });
+  const message = { text: '处理完成。', tools: [
+    thought('before', '先检查文件。'), command('a'), command('b'),
+    thought('middle', '**核对结果**'), thought('next', '继续检查。'), command('c'), command('d'), thought('after', '检查结束。'),
+  ] };
+  assert.deepEqual(layout(message), [['before', 'a', 'b', 'middle', 'next', 'c', 'd', 'after'], '处理完成。']);
+  const groups = (show: boolean) => replyParts(message, true, show)
+    .flatMap(part => part.kind === 'activities' ? [summarizeActivities(part.rows).labels] : []);
+  assert.deepEqual(groups(false), [['思考 8 秒', '执行 4 条命令']]);
+  assert.deepEqual(groups(true), [['执行 2 条命令'], ['执行 2 条命令']]);
+  const compact = ['先检查文件。', ['a', 'b'], '**核对结果**', '继续检查。', ['c', 'd'], '检查结束。', '处理完成。'];
+  assert.deepEqual(layout(message, true, true), compact);
+  const withBlank = { ...message, tools: [...message.tools.slice(0, 2), thought('empty', ' \n '), ...message.tools.slice(2)] };
+  assert.deepEqual(layout(withBlank, true, true), compact);
+  assert.deepEqual(layout(message, false, true), ['先检查文件。', ['a'], ['b'], '**核对结果**', '继续检查。', ['c'], ['d'], '检查结束。', '处理完成。']);
+  const [first] = replyParts(message, true, true);
+  assert.deepEqual(first, { kind: 'text', key: 'tool:before', text: '先检查文件。', cwd: '/example', thought: true });
+  assert.equal(replyMarkdown(replyParts(message, true, true)), '先检查文件。\n\n**核对结果**\n\n继续检查。\n\n检查结束。\n\n处理完成。');
+  assert.equal(replyMarkdown(replyParts(message, true)), message.text);
 });
 
 test('正文按写入时的工作目录分段，工具前后的正文各带自己的目录', () => {

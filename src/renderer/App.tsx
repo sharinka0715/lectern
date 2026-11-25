@@ -1723,7 +1723,8 @@ function ChatPane({ view, resumes, setResume }: {
         {/* The conversation scrolls the full height; the input area floats over its bottom. */}
         <div className="conversation-stage">
         <LiveShells.Provider value={liveShells}>
-        <ConversationTranscript key={selectionGeneration} ref={transcript} dock={composerDock} workspace={workspace} sessionId={snapshot?.sessionId} replyDetail={prefs.replyDetail} onFollowLatest={setFollowingLatest}
+        <ConversationTranscript key={selectionGeneration} ref={transcript} dock={composerDock} workspace={workspace} sessionId={snapshot?.sessionId}
+          replyDetail={prefs.replyDetail} showThinkingAsText={prefs.showThinkingAsText} onFollowLatest={setFollowingLatest}
           tasks={snapshot?.tasks} messages={displayedMessages} historyPage={snapshot?.historyPage} loadEarlier={loadEarlierMessages} openArtifact={openArtifact}
           onRewind={canRewind ? uuid => void actOnTurn({ kind: 'rewindTo', uuid }) : undefined}
           onQuote={snapshot?.sessionId ? quoteIntoComposer : undefined}
@@ -2018,7 +2019,8 @@ function ChatPane({ view, resumes, setResume }: {
       </main>
       {taskShown && workspace && <TaskColumn key={activityScope} workspace={workspace} sessionId={sessionId} view={view} items={items}
         listed={snapshot?.workspaceId === workspaceId && snapshot.sessionId === sessionId && !!snapshot.subagentsListed}
-        selected={taskShown.key} kind={taskShown.kind} focusToken={taskShown.focus} replyDetail={prefs.replyDetail} sizeMiB={prefs.historyPageMiB} openArtifact={openArtifact}
+        selected={taskShown.key} kind={taskShown.kind} focusToken={taskShown.focus} replyDetail={prefs.replyDetail} showThinkingAsText={prefs.showThinkingAsText}
+        sizeMiB={prefs.historyPageMiB} openArtifact={openArtifact}
         onSelect={key => setTaskColumn(previous => previous && { ...previous, key })} onClose={() => setTaskColumn(undefined)} />}
       {/* Each split pane keeps its own file panel beside its chat (the activity card floats inside it). */}
       {drawer && workspace && <ArtifactDrawer key={JSON.stringify([workspace.id, sessionId, drawer.trail.length, drawer.trail.at(-1)])}
@@ -2028,7 +2030,8 @@ function ChatPane({ view, resumes, setResume }: {
       </SplitWorkspace>
       </div>
       {handoffOpen && workspace && session?.historySourceIds?.length ? <HandoffHistoryDialog key={activityScope} workspace={workspace} tipId={sessionId} view={view}
-        sources={session.historySourceIds} replyDetail={prefs.replyDetail} sizeMiB={prefs.historyPageMiB} onClose={() => setHandoffScope(undefined)} /> : null}
+        sources={session.historySourceIds} replyDetail={prefs.replyDetail} showThinkingAsText={prefs.showThinkingAsText}
+        sizeMiB={prefs.historyPageMiB} onClose={() => setHandoffScope(undefined)} /> : null}
       {workspaceModal && !info.demo && (
         <WorkspaceDialog
           workspace={"id" in workspaceModal ? workspaceModal : undefined}
