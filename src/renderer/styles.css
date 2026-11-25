@@ -148,7 +148,7 @@ button { cursor: pointer; color: inherit; border: none; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 button, a, input, textarea, summary { -webkit-tap-highlight-color: transparent; }
 svg.lucide { stroke-width: 1.85; }
-button:focus-visible, a:focus-visible, summary:focus-visible {
+button:focus-visible, a:focus-visible, summary:focus-visible, .artifact-link[role="button"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

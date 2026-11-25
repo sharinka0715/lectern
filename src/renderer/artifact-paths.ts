@@ -80,7 +80,7 @@ export function findPathReferences(text: string, literal = false): PathReference
   function add(start: number, raw: string, quoted: boolean) {
     const clean = raw.replace(/^@/, '').replace(/[.!?:]+$/g, '');
     const path = artifactPath(clean.replace(citation, ''));
-    if (!path || path.length > 4096 || (!explicitPath.test(path) && !fileName.test(path) && !raw.startsWith('@') && !adjacentFileNames(path).length) || path === '.' || path === '..' ||
+    if (!path || path === '/' || path.length > 4096 || (!explicitPath.test(path) && !fileName.test(path) && !raw.startsWith('@') && !adjacentFileNames(path).length) || path === '.' || path === '..' ||
       /[*|<>=]/.test(path) || (!quoted && /\s/.test(path)) || /^[^@\s]+@[^/\s]+\.[a-z]+$/i.test(path) || /^(?:www\.|--?[^/]*=)/i.test(path)) return false;
     const leading = raw.startsWith('@') ? 1 : 0;
     out.push({ start: start + leading, end: start + leading + clean.length, path });

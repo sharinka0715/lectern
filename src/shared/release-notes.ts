@@ -36,6 +36,16 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.5',
+    features: [],
+    fixes: [
+      ['回复中的代码样式文件链接折行时，每行都显示行内代码的底色和描边。',
+        'Wrapped file links in replies now show the inline code background and border on every line.'],
+      ['回复中的孤立斜杠分隔符保持为普通文字。',
+        'Standalone slash separators in replies stay as plain text.'],
+    ],
+  },
+  {
     version: '0.2.4',
     features: [
       ['外观设置新增「将思考展示为正文」，可在回复原有位置直接阅读和复制折叠的思考。',

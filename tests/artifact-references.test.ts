@@ -44,6 +44,19 @@ test('plain and code spans require filename evidence, not numeric ratios, proper
     ['build/clip_v10.mp4', 'clip_v10.srt', 'ckpt/step_60000.safetensors', '/data/run/out.mkv']);
 });
 
+test('slash-only separators stay text while explicit paths still resolve as candidates', () => {
+  for (const text of ['/', '//', '///', '(/), [/].', 'a / b', '5.0 Hz / Google', '`-1` 开 / `+1` 闭', 'a /// b']) {
+    assert.deepEqual(findPathReferences(text), [], text);
+    assert.deepEqual(findPathReferences(text, true), [], text);
+  }
+  for (const path of ['/etc/hosts', 'a/b', './x', '~/x']) {
+    assert.equal(artifactPath(path, true), path, 'an explicit Markdown destination');
+    const mention = path === 'a/b' ? '@' + path : path;
+    assert.deepEqual(findPathReferences(mention), [{ start: mention.length - path.length, end: mention.length, path }]);
+  }
+  assert.equal(artifactPath('/', true), '/', 'an explicit Markdown link can still name the root directory');
+});
+
 test('unverified Markdown, raw prompts and native JSON remain selectable text without buttons or image requests', () => {
   const md = renderToStaticMarkup(createElement(ArtifactMarkdown, { onOpen: noop,
     text: '[Guide](<pdfs/a b.pdf>) ![proof](local.png) ![tracker](https://evil.invalid/a.png) [![thumbnail](a.png)](b.png) and `src/x.ts:7`\n\n```ts\nconst s = "ignore/me";\n```' }));

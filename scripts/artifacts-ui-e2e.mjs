@@ -3,7 +3,7 @@ import { appendFile, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { _electron as electron } from './fixtures/electron.mjs';
+import { _electron as electron, resizeWindow } from './fixtures/electron.mjs';
 import { spawnSync } from 'node:child_process';
 import { ZipFile } from 'yazl';
 
@@ -186,6 +186,87 @@ async function verifyToolGroups(page, row, appendRows) {
   await page.reload();
   await reply.waitFor();
   assert.deepEqual(await layout(), [...compact, end], 'Restoring default appearance also persists');
+}
+
+async function verifyWrappedFileLinks(app, page, row, appendRows, cwd) {
+  const file = 'demo/fixtures/format_examples/example_documentation/nested/example_path.py';
+  const missing = file.replace('example_path', 'example_text');
+  await mkdir(path.dirname(path.join(cwd, file)), { recursive: true });
+  await writeFile(path.join(cwd, file), '# Wrapped path fixture\n');
+  const markdown = [
+    '| 路径 | 示例说明 |',
+    '| --- | --- |',
+    '| `' + file + '` | `-1` 开 / `+1` 闭（Bridge 5.0 Hz / Google Robot 3.0 Hz） |',
+    '| `' + missing + '` | 普通行内代码 |',
+    '',
+    '段落中的路径 `' + file + '`。',
+  ].join('\n');
+  const [width, height] = await page.evaluate(() => [innerWidth, innerHeight]);
+  await resizeWindow(app, page, 920, 760);
+  await appendRows([
+    row('user', { role: 'user', content: '检查示例路径。' }),
+    row('assistant', { id: randomUUID(), role: 'assistant', content: markdown, stop_reason: 'end_turn' }),
+  ]);
+  const reply = page.locator('.message-assistant:not([data-leaving])').filter({ hasText: '段落中的路径' });
+  const table = reply.locator('table');
+  const tableLink = table.getByRole('button', { name: file, exact: true });
+  const paragraphLink = reply.locator('p').getByRole('button', { name: file, exact: true });
+  await tableLink.waitFor();
+  await paragraphLink.waitFor();
+  await reply.locator('[data-fade="in"], [data-text-fade]').first().waitFor({ state: 'hidden' });
+
+  const decoration = locator => locator.evaluate(code => {
+    const style = getComputedStyle(code);
+    const fragments = [...code.getClientRects()];
+    const range = document.createRange();
+    range.selectNodeContents(code.querySelector('[data-file-path]') ?? code);
+    const text = [...range.getClientRects()].filter(rect => rect.width > 0);
+    return {
+      style: [style.backgroundColor, style.boxShadow, style.borderRadius, style.boxDecorationBreak],
+      fragments: fragments.length,
+      lines: new Set(text.map(rect => rect.top)).size,
+      coversText: text.every(rect => fragments.some(box => box.top <= rect.top && box.bottom >= rect.bottom &&
+        box.left <= rect.left + 0.5 && box.right >= rect.right - 0.5)),
+    };
+  });
+  const plain = await decoration(table.locator('td code').filter({ hasText: missing }));
+  assert.notEqual(plain.style[0], 'rgba(0, 0, 0, 0)');
+  assert.notEqual(plain.style[1], 'none');
+  for (const code of [table.locator('td code').filter({ hasText: file }), reply.locator('p code')]) {
+    const decorated = await decoration(code);
+    assert.ok(decorated.lines > 1, 'The code-style file path wraps');
+    assert.equal(decorated.fragments, decorated.lines, 'Each text line gets a decorated code fragment');
+    assert.ok(decorated.coversText, 'The code fragments enclose all lines of text');
+    assert.deepEqual(decorated.style, plain.style, 'The link uses the same code decoration as plain inline code');
+  }
+  const description = table.locator('tbody tr').first().locator('td').last();
+  assert.equal(await description.textContent(), '-1 开 / +1 闭（Bridge 5.0 Hz / Google Robot 3.0 Hz）');
+  assert.equal(await description.locator('[data-file-path]').count(), 0, 'Slash separators stay plain text');
+
+  const drawer = page.getByRole('complementary', { name: '文件预览' });
+  await tableLink.focus();
+  await page.keyboard.press('Tab');
+  assert.equal(await paragraphLink.evaluate(link => link === document.activeElement), true);
+  for (const [link, key] of [[paragraphLink, 'Enter'], [tableLink, 'Space']]) {
+    await link.press(key);
+    await drawer.getByText('# Wrapped path fixture', { exact: true }).waitFor();
+    assert.equal(await drawer.getAttribute('data-artifact-path'), file);
+    await drawer.getByRole('button', { name: '关闭文件预览' }).click();
+    await drawer.waitFor({ state: 'detached' });
+  }
+  assert.ok((await tableLink.getAttribute('title'))?.includes(file));
+  const menu = page.locator('.context-menu:popover-open');
+  await tableLink.dispatchEvent('contextmenu', { button: 2 });
+  await menu.getByRole('menuitem', { name: '预览文件' }).waitFor();
+  await menu.getByRole('menuitem', { name: '复制全文（Markdown）' }).click();
+  const clipboard = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  assert.equal(await clipboard(), markdown);
+  await tableLink.dispatchEvent('contextmenu', { button: 2 });
+  await menu.getByRole('menuitem', { name: '复制纯文本' }).click();
+  const copied = await clipboard();
+  assert.equal(copied.split(file).length - 1, 2, 'Copying plain text preserves both paths verbatim');
+  assert.ok(!copied.includes('`'), 'Plain text excludes Markdown markers');
+  await resizeWindow(app, page, width, height);
 }
 
 let app;
@@ -482,6 +563,7 @@ try {
   await page.keyboard.press('Escape');
   await drawer.waitFor({ state: 'detached' });
   await verifyReplyCwd(page, row, appendRows, cwd);
+  await verifyWrappedFileLinks(app, page, row, appendRows, cwd);
   // Control response order after the filesystem round trips to make late responses deterministic.
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler('lectern:previewArtifact');

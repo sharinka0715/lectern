@@ -13,18 +13,38 @@ import { t } from '../shared/i18n';
 
 type OpenPath = (path: string) => void;
 
-export function FileLink({ path, onOpen, children, prose = false }: { path: string; onOpen: OpenPath; children: ReactNode; explicit?: boolean; prose?: boolean }) {
+export function FileLink({ path, onOpen, children, prose = false, inline = false }: { path: string; onOpen: OpenPath; children: ReactNode; explicit?: boolean; prose?: boolean; inline?: boolean }) {
   const { ref, match } = useArtifactResolution(path);
+  const spacePressed = useRef(false);
   // Links need a verified target, inside the folder or outside it. 'outside' is an explicit
   // path in a macOS privacy folder: not checked in the background, opened on request.
   if (match === 'missing' && prose && typeof children === 'string') {
     return split<ReactNode>(children, adjacentFileNames(children), value => value, (r, value) =>
-      <FileLink key={r.start} path={r.path} onOpen={onOpen}>{value}</FileLink>);
+      <FileLink key={r.start} path={r.path} onOpen={onOpen} inline={inline}>{value}</FileLink>);
   }
   const target = match === 'outside' ? ref : match && typeof match === 'object' ? match.path : undefined;
   if (!target) return <>{children}</>;
-  return <button type="button" className="artifact-link" title={t('files.open', { name: target })} data-file-path={target}
-    onClick={() => onOpen(target)}>{children}</button>;
+  const props = { className: 'artifact-link', title: t('files.open', { name: target }), 'data-file-path': target, onClick: () => onOpen(target) };
+  // Chromium lays out native buttons as atomic boxes even with display: inline.
+  // A non-atomic inline lets code around or inside the link paint on every line.
+  if (inline) return <span {...props} role="button" tabIndex={0}
+    onKeyDown={event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.click();
+      } else if (event.key === ' ') {
+        event.preventDefault();
+        if (!event.repeat) spacePressed.current = true;
+      }
+    }}
+    onKeyUp={event => {
+      if (event.key !== ' ' || !spacePressed.current) return;
+      event.preventDefault();
+      spacePressed.current = false;
+      event.currentTarget.click();
+    }}
+    onBlur={() => { spacePressed.current = false; }}>{children}</span>;
+  return <button type="button" {...props}>{children}</button>;
 }
 
 function split<T>(text: string, refs: PathReference[], plain: (value: string) => T, link: (ref: PathReference, value: string) => T): T[] {
@@ -102,7 +122,7 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, onOpen, i
       },
       a: ({ node, href, children }) => {
         const path = node?.properties.dataArtifactPath ?? (href && artifactPath(href, true));
-        const link = typeof path === 'string' && path ? <FileLink path={path} onOpen={onOpen} prose={!!node?.properties.dataArtifactPath}>{children}</FileLink>
+        const link = typeof path === 'string' && path ? <FileLink path={path} onOpen={onOpen} prose={!!node?.properties.dataArtifactPath} inline>{children}</FileLink>
           : href && /^https?:\/\//i.test(href) ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> : <span>{children}</span>;
         if (!inlineImages || !node) return link;
         // 图片本身可放大，包裹图片的 Markdown 链接仍使用自己的目的地址。
