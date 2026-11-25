@@ -13,8 +13,8 @@ class Reader extends EventEmitter {
   readonly created: Reader[];
   constructor(created: Reader[] = []) { super(); this.created = created; }
   sibling() { const next = new Reader(this.created); this.created.push(next); return next; }
-  async watchSession(workspaceId: string, sessionId: string) {
-    this.currentSnapshot = { workspaceId, sessionId, messages: [], screen: '', status: 'idle' };
+  async watchSession(workspaceId: string, sessionId: string, goal?: SessionSnapshot['goal']) {
+    this.currentSnapshot = { workspaceId, sessionId, messages: [], screen: '', status: 'idle', goal };
     return this.currentSnapshot;
   }
   setBackground(value: boolean) { this.background = value; }
@@ -82,13 +82,17 @@ test('switching back reuses the cached conversation; reopening it in place reloa
   assert.equal(again, a.currentSnapshot);
   assert.equal(a.background, false);
   assert.deepEqual(opened(primary), ['a', 'b'], 'no second read of the first conversation');
-  await views.watch('w', 'a', 'primary');
+  const goal = { status: 'active', source: 'transcript', condition: 'Finish the fixture', checks: 0 } as const;
+  a.currentSnapshot!.goal = goal;
+  assert.deepEqual((await views.watch('w', 'a', 'primary')).goal, goal);
   assert.equal(a.detached, true);
   assert.deepEqual(opened(primary), ['detached', 'b', 'a']);
+  assert.equal((await views.watch('another-workspace', 'a', 'primary')).goal, undefined);
   views.prefetch('w', 'c');
   const c = primary.created.at(-1)!;
   assert.equal(c.background, true);
   assert.equal(c.currentSnapshot?.sessionId, 'c');
+  views.releaseWorkspace('another-workspace');
   views.releaseWorkspace('w');
   assert.ok(primary.created.every(r => r.detached));
 });
@@ -144,6 +148,27 @@ test('sidebar observations survive navigation, stay isolated, and clear when the
   first.emit('sidebar-status', { workspaceId: 'first', sessionId: 'same-id', paneId: '%1', status: 'working' });
   views.replaySidebarStatus();
   assert.equal(updates.length, count);
+});
+
+test('saving the same workspace target keeps only its shown goal during a fresh read', async () => {
+  const primary = new Reader();
+  const views = new SessionViews(primary as unknown as Controller, () => {});
+  const goal = { status: 'active', source: 'probe', condition: 'Finish the fixture', checks: 0 } as const;
+  async function openWithGoal() {
+    const snapshot = await views.watch('w', 'a');
+    snapshot.goal = goal;
+  }
+  await openWithGoal();
+  views.releaseWorkspace('w', true);
+  views.prefetch('w', 'a');
+  assert.equal((await views.watch('w', 'a')).goal, goal);
+  views.releaseWorkspace('w', true);
+  assert.equal((await views.watch('w', 'b')).goal, undefined);
+  assert.equal((await views.watch('w', 'a')).goal, undefined);
+  await openWithGoal();
+  views.releaseWorkspace('w', true);
+  views.releaseWorkspace('w');
+  assert.equal((await views.watch('w', 'a')).goal, undefined);
 });
 
 test('resuming refreshes the reader that already holds the conversation instead of reloading it', async () => {

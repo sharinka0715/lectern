@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { Backend, projectSlug } from '../src/backend';
+import { Backend, projectSlug, type ReadResult } from '../src/backend';
+import type { JsonRecord } from '../src/core/jsonl';
 import { MessageDisplay } from '../src/core/message-display';
+import { Controller } from '../src/main/controller';
+import type { WorkspaceStore } from '../src/main/store';
 import type { Workspace } from '../src/shared/types';
 
 // A goal set long before the first page (the last 128 KiB): the backend reads its last record once,
@@ -89,4 +92,47 @@ test("matrix F1: the first page of a /goal turn begins at the command, past its 
   const kinds = display.getMessages().flatMap(message => message.taskNotifications ?? []).map(notice => notice.goal?.kind);
   assert.deepEqual(kinds, ['set', 'not-met', 'met']);
   assert.deepEqual([display.goal?.source, display.goal?.current?.status], ['transcript', 'met']);
+});
+
+test('a reset keeps the displayed goal only until the new page and its probe can account for it', async t => {
+  const workspace: Workspace = { id: 'project', name: 'Goal', kind: 'local', cwd: '/fixture' };
+  const session = { id: 'session', title: 'Goal', mapping: 'unbound' as const };
+  const set = { sessionId: session.id, type: 'attachment', uuid: 'set', parentUuid: null,
+    attachment: { type: 'goal_status', met: false, sentinel: true, condition: 'Ship the release' } };
+  const prompt = { sessionId: session.id, type: 'user', uuid: 'prompt', parentUuid: 'set',
+    message: { role: 'user', content: 'Question' } };
+  const reply = { sessionId: session.id, type: 'assistant', uuid: 'reply', parentUuid: 'prompt',
+    message: { id: 'answer', role: 'assistant', content: 'Answer', stop_reason: 'end_turn' } };
+  const lines = (...rows: object[]) => Buffer.from(rows.map(row => JSON.stringify(row) + '\n').join(''));
+  const page = (jsonl: Buffer, partial = false): ReadResult => ({
+    session, jsonl, reset: true, active: false, screen: '', hasMore: false,
+    ...(partial && { olderCursor: { before: 128, size: 256, inode: '42' } }),
+  });
+  let next = page(lines(set, prompt, reply));
+  let resolveProbe: (record?: JsonRecord) => void;
+  const backend = {
+    resetRead() {},
+    async readSession() {
+      const result = next;
+      next = { ...result, reset: false, olderCursor: undefined, jsonl: Buffer.alloc(0) };
+      return result;
+    },
+    readGoalBefore: () => new Promise<JsonRecord | undefined>(resolve => { resolveProbe = resolve; }),
+    async dispose() {},
+  } as unknown as Backend;
+  const controller = new Controller({ get: () => workspace } as unknown as WorkspaceStore, backend);
+  t.after(() => controller.dispose());
+  const refresh = async () => (await controller.refresh(workspace.id, session.id))?.goal;
+  const initial = await controller.watchSession(workspace.id, session.id);
+  assert.deepEqual([initial.goal?.status, initial.goal?.source], ['active', 'transcript']);
+
+  next = page(lines(prompt, reply), true);
+  assert.deepEqual(await refresh(), initial.goal, 'the new first page has not reached the goal yet');
+  resolveProbe!(set);
+  assert.deepEqual(await refresh(), { ...initial.goal, source: 'probe' });
+
+  next = page(lines(prompt, reply), true);
+  assert.equal((await refresh())?.source, 'probe', 'a second reset has its own probe');
+  resolveProbe!();
+  assert.equal(await refresh(), undefined, 'a completed lookup found no goal');
 });

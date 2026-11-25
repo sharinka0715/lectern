@@ -10,6 +10,39 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { _electron, resizeWindow } from './fixtures/electron.mjs';
 
+// Record both pushed snapshots and DOM mutations, including a removal undone by the fade observer.
+function traceGoal(sessionId) {
+  const selector = 'details.goal-status';
+  const ids = new WeakMap();
+  let nextId = 0;
+  const snapshots = [], mutations = [];
+  const describe = node => {
+    if (!ids.has(node)) ids.set(node, ++nextId);
+    const { goalStatus, goalSource, goalPhase, goalCondition, leaving } = node.dataset;
+    return { id: ids.get(node), status: goalStatus, source: goalSource, phase: goalPhase, condition: goalCondition, leaving };
+  };
+  const capsules = node => node instanceof Element ? (node.matches(selector) ? [node] : node.querySelectorAll(selector)) : [];
+  const record = (kind, node) => mutations.push({ kind, ...describe(node) });
+  const observe = new MutationObserver(records => {
+    for (const entry of records) {
+      if (entry.type === 'attributes' && entry.target.matches(selector)) {
+        record(entry.attributeName, entry.target);
+      }
+      for (const node of entry.removedNodes) for (const pill of capsules(node)) record('removed', pill);
+      for (const node of entry.addedNodes) for (const pill of capsules(node)) record('added', pill);
+    }
+  });
+  observe.observe(document, { subtree: true, childList: true, attributes: true,
+    attributeFilter: ['data-leaving', 'data-goal-status', 'data-goal-source', 'data-goal-phase', 'data-goal-condition'] });
+  for (const pill of document.querySelectorAll(selector)) record('initial', pill);
+  const unsubscribe = window.desktop.onSnapshot(snapshot => {
+    if (snapshot.sessionId !== sessionId) return;
+    const { status, source, phase, condition } = snapshot.goal ?? {};
+    snapshots.push({ connection: snapshot.status, status: status ?? null, source, phase, condition });
+  });
+  window.goalTrace = () => { observe.disconnect(); unsubscribe(); return { snapshots, mutations }; };
+}
+
 const profile = await mkdtemp(path.join(tmpdir(), 'lectern-goal-ui-'));
 const results = path.resolve('test-results', 'goal-status');
 await mkdir(results, { recursive: true });
@@ -41,10 +74,12 @@ try {
     const button = page.locator('.send-button');
     if (await button.isVisible()) await button.click(); else await input.press('Enter');
   };
-  const pill = page.locator('details.goal-status');
+  const pillSelector = 'details.goal-status:not([data-leaving])';
+  const pill = page.locator(pillSelector);
+  const goal = attrs => pill.and(page.locator(attrs));
   const togglePill = async open => { if ((await pill.getAttribute('open') !== null) !== open) await pill.locator('summary').click();
-    await page.waitForFunction(open => document.querySelector('details.goal-status')?.open === open, open); };
-  const goalEvent = kind => page.locator(`[data-goal-event="${kind}"]`);
+    await page.waitForFunction(([selector, open]) => document.querySelector(selector)?.open === open, [pillSelector, open]); };
+  const goalEvent = kind => page.locator(`[data-goal-event="${kind}"]:not([data-leaving])`);
   // Away from the send button first: its tooltip would cover the pill.
   const shot = async name => { await page.mouse.move(640, 300); await page.waitForTimeout(250); await page.screenshot({ path: path.join(results, `${name}.png`) }); };
   const idle = () => page.waitForFunction(() => !document.querySelector('.interrupt-button') && !!document.querySelector('.send-button'));
@@ -73,10 +108,10 @@ try {
   part = 'met';
   // Not met once ("checking" while the evaluator runs), then met: the pill and the reply's goal rows.
   await send('/goal Finish the two-step task');
-  await page.locator('details.goal-status[data-goal-status="active"][data-goal-condition="Finish the two-step task"]').waitFor();
+  await goal('[data-goal-status="active"][data-goal-condition="Finish the two-step task"]').waitFor();
   assert.equal(await page.locator('.message[data-source="pending"]').count(), 0, 'no sending bubble for /goal');
-  await page.locator('details.goal-status[data-goal-phase="checking"]').waitFor();
-  await page.locator('details.goal-status[data-goal-status="met"]').waitFor();
+  await goal('[data-goal-phase="checking"]').waitFor();
+  await goal('[data-goal-status="met"]').waitFor();
   await page.locator('.message-user', { hasText: '/goal Finish the two-step task' }).waitFor();
   for (const kind of ['set', 'not-met', 'met']) await goalEvent(kind).last().waitFor();
   assert.match(await pill.innerText(), /目标已达成[\s\S]*2 轮/);
@@ -85,16 +120,16 @@ try {
   await shot('met-zh');
   // The next prompt makes it history.
   await send('你好');
-  await page.waitForFunction(() => !document.querySelector('details.goal-status'));
+  await page.waitForFunction(selector => !document.querySelector(selector), pillSelector);
   await idle();
 
   part = 'clear during a reply';
   // The reply goes on after a failed check; the pill opens to its facts, and "Clear goal" (confirmed)
   // sends /goal clear, which Claude Code runs at once: only the cleared record, the reply goes on.
   await send('/goal Keep the reply going goal-hold');
-  await page.locator('details.goal-status[data-goal-phase="not-met"]').waitFor();
+  await goal('[data-goal-phase="not-met"]').waitFor();
   await page.locator('.interrupt-button').waitFor();
-  await page.locator('details.goal-status[data-goal-phase="not-met"] .turn-progress-count').waitFor();
+  await goal('[data-goal-phase="not-met"]').locator('.turn-progress-count').waitFor();
   await togglePill(true);
   const clear = pill.locator('[data-goal-clear]');
   await clear.waitFor();
@@ -105,7 +140,7 @@ try {
   await dialog.waitFor();
   assert.match(await dialog.innerText(), /Keep the reply going goal-hold/);
   await dialog.locator('.danger-button').click();
-  await page.locator('details.goal-status[data-goal-status="cleared"]').waitFor();
+  await goal('[data-goal-status="cleared"]').waitFor();
   await goalEvent('cleared').last().waitFor();
   assert.ok(await page.locator('.interrupt-button').isVisible(), 'the reply goes on (held until released)');
   assert.equal(await page.locator('.message', { hasText: '/goal clear' }).count(), 0, 'no bubble for /goal clear');
@@ -118,24 +153,24 @@ try {
   // The bare command opens the pill's details (the ended goal until the next prompt).
   await togglePill(false);
   await send('/goal');
-  await page.locator('details.goal-status[open][data-goal-status="cleared"]').waitFor();
+  await goal('[open][data-goal-status="cleared"]').waitFor();
   await shot('cleared-zh');
 
   part = 'retry';
   // The check could not complete: Claude Code retries (the matrix's goal-check-error), then a typed clear.
   await send('/goal Evaluator error case goal-retry');
-  await page.locator('details.goal-status[data-goal-status="active"][data-goal-phase="retrying"]').waitFor();
+  await goal('[data-goal-status="active"][data-goal-phase="retrying"]').waitFor();
   await goalEvent('retry').last().waitFor();
   await idle();
   await send('/goal clear');
-  await page.locator('details.goal-status[data-goal-status="cleared"][data-goal-condition="Evaluator error case goal-retry"]').waitFor();
+  await goal('[data-goal-status="cleared"][data-goal-condition="Evaluator error case goal-retry"]').waitFor();
   await page.waitForTimeout(600);
   assert.equal(await page.locator('.message[data-source="pending"]').count(), 0, 'no sending bubble for /goal clear');
 
   part = 'check-in';
   // Background work holds the check back; Claude Code's check-in lists it.
   await send('/goal Background work goal-checkin');
-  await page.locator('details.goal-status[data-goal-phase="deferred"]').waitFor();
+  await goal('[data-goal-phase="deferred"]').waitFor();
   const checkin = goalEvent('checkin').last();
   await checkin.locator('summary').click();
   await checkin.locator('.goal-notice-content').waitFor();
@@ -151,7 +186,7 @@ try {
   part = 'paused';
   // Claude paused the goal itself: "◎ /goal paused" on the screen.
   await send('/goal Needs a decision goal-pausetool');
-  await page.locator('details.goal-status[data-goal-phase="paused"][data-goal-condition="Needs a decision goal-pausetool"]').waitFor();
+  await goal('[data-goal-phase="paused"][data-goal-condition="Needs a decision goal-pausetool"]').waitFor();
   await goalEvent('paused').last().waitFor();
   await idle();
 
@@ -176,11 +211,86 @@ try {
   await page.locator('.interrupt-button:not(:disabled)').waitFor();
   await page.locator('.interrupt-button').click();
   await idle();
-  assert.equal(await page.locator('details.goal-status[data-goal-status="active"]').count(), 1);
+  assert.equal(await goal('[data-goal-status="active"]').count(), 1);
+
+  const condition = 'Needs a decision goal-pausetool';
+  const active = goal(`[data-goal-status="active"][data-goal-condition="${condition}"]`);
+  const pausedFrom = source => active.and(page.locator(`[data-goal-source="${source}"][data-goal-phase="paused"]`));
+  const traces = [];
+  const startTrace = () => page.evaluate(traceGoal, session.id);
+  const endTrace = async name => traces.push({ name, ...await page.evaluate(() => window.goalTrace()) });
+  const row = id => page.locator(`.session-row[data-session-id="${id}"]`);
+  const pane = view => page.locator(`.desk-pane[data-view="${view}"]`);
+  // Only the target has a goal. Put it in each pane using the same sidebar actions as the user.
+  part = 'switch and split fixture';
+  await page.locator('.new-chat-button').click();
+  await send('另一段对话');
+  await page.locator('.session-row[aria-current="page"]').waitFor();
+  const other = await page.locator('.session-row[aria-current="page"]').getAttribute('data-session-id');
+  assert.notEqual(other, session.id);
+  await idle();
+  assert.equal(await pill.count(), 0, 'a different conversation has no goal');
+  await row(session.id).click();
+  await pausedFrom('transcript').waitFor();
+  async function switchAndSplit(source) {
+    part = `switch and split (${source})`;
+    await row(other).click();
+    await row(other).and(page.locator('[aria-current="page"]')).waitFor();
+    await pill.waitFor({ state: 'detached' });
+    await startTrace();
+    await row(session.id).click();
+    await pausedFrom(source).waitFor();
+    await endTrace(`switch back (${source})`);
+    await row(other).click();
+    await pill.waitFor({ state: 'detached' });
+    await startTrace();
+    await row(session.id).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: '在旁边分屏打开' }).click();
+    await pane('secondary').locator(pausedFrom(source)).waitFor();
+    assert.equal(await pane('primary').locator(pill).count(), 0, 'no goal in the other split');
+    await pane('primary').locator('textarea').click();
+    await row(session.id).click();
+    await pane('secondary').and(page.locator('[data-active="true"]')).waitFor();
+    await endTrace(`open in split and focus again (${source})`);
+    await pane('secondary').getByRole('button', { name: '关闭此分屏' }).click();
+    await row(session.id).click();
+    await pausedFrom(source).waitFor();
+  }
+  async function retry(source) {
+    part = `retry (${source})`;
+    await app.evaluate(() => { process.env.LECTERN_DEMO_FAIL_TAG = 'session.poll'; });
+    const button = page.locator('.error-banner').getByRole('button', { name: '重试', exact: true });
+    await button.waitFor();
+    await active.waitFor();
+    await startTrace();
+    await app.evaluate(() => {
+      delete process.env.LECTERN_DEMO_FAIL_TAG;
+      process.env.LECTERN_DEMO_LATENCY_MS = '150';
+    });
+    try {
+      await button.click();
+      await button.waitFor({ state: 'detached' });
+      await pausedFrom(source).waitFor();
+      await ready();
+      await endTrace(part);
+    } finally {
+      await app.evaluate(() => { delete process.env.LECTERN_DEMO_LATENCY_MS; });
+    }
+  }
+  async function reload(source) {
+    part = `renderer reload (${source})`;
+    await page.reload();
+    await pausedFrom(source).waitFor();
+    await endTrace(part);
+  }
+
+  await switchAndSplit('transcript');
+  await retry('transcript');
+  await page.addInitScript(traceGoal, session.id);
+  await reload('transcript');
 
   part = 'reopen and page back';
-  // The goal was set long before the newest page: reopened, the first page has none of its records
-  // (the record before it is read once); paged back to the start, the records say the same.
+  // The goal was set long before the newest page: the first page has none of its records.
   let last = (await records()).filter(record => record.uuid).at(-1).uuid;
   const filler = [];
   for (let i = 0; i < 200; i++) for (const [type, content] of [['user', `填充提问 ${i}`], ['assistant', [{ type: 'text', text: '填充回复。'.repeat(60) + i }]]]) {
@@ -190,12 +300,11 @@ try {
     last = uuid;
   }
   await appendFile(session.path, filler.join(''));
-  await page.reload();
-  await page.locator('.session-row.active[data-session-live="true"]').waitFor();
-  const reopened = page.locator('details.goal-status[data-goal-status="active"][data-goal-condition="Needs a decision goal-pausetool"]');
-  await reopened.waitFor();
-  assert.equal(await reopened.getAttribute('data-goal-source'), 'probe');
-  assert.equal(await reopened.getAttribute('data-goal-phase'), 'paused');
+  await page.locator('.message-user', { hasText: '填充提问 199' }).waitFor();
+  await pausedFrom('transcript').waitFor();
+  await retry('probe');
+  await switchAndSplit('probe');
+  await startTrace();
   // "Load earlier messages" until the start of the conversation.
   const older = page.locator('.history-page-control button');
   for (let i = 0; i < 60 && await older.count(); i++) {
@@ -203,27 +312,39 @@ try {
     await page.waitForTimeout(150);
   }
   assert.equal(await older.count(), 0, 'paged back to the start');
-  await page.locator('details.goal-status[data-goal-source="transcript"][data-goal-phase="paused"][data-goal-condition="Needs a decision goal-pausetool"]').waitFor();
+  await pausedFrom('transcript').waitFor();
   await goalEvent('set').first().waitFor({ state: 'attached' });
+  await endTrace('page back (probe to transcript)');
+  // A renderer reload has no existing DOM, but its first observation may still come from the cached reader.
+  await reload('probe');
+
+  part = 'goal continuity';
+  const discontinuities = traces.filter(({ name, snapshots, mutations }) => {
+    const first = name.startsWith('retry') ? 0 : snapshots.findIndex(s => s.condition === condition);
+    return (first >= 0 && snapshots.slice(first).some(s => s.status !== 'active' || s.condition !== condition))
+      || new Set(mutations.map(m => m.id)).size !== 1 || mutations.some(m => m.kind === 'removed' || m.kind === 'data-leaving');
+  });
+  if (discontinuities.length) console.log(JSON.stringify(traces, null, 2));
+  assert.deepEqual(discontinuities.map(({ name }) => name), [], 'the goal capsule stays mounted once shown');
 
   part = 'english';
   await page.evaluate(() => window.desktop.setLocalePreference('en'));
-  await page.locator('details.goal-status .goal-status-label', { hasText: 'Goal active' }).waitFor();
+  await pill.locator('.goal-status-label', { hasText: 'Goal active' }).waitFor();
   await togglePill(true);
   await page.locator('[data-goal-clear]', { hasText: 'Clear goal' }).waitFor();
   await shot('paused-details-en');
   await togglePill(false);
   await page.evaluate(() => window.desktop.setLocalePreference('zh-CN'));
-  await page.locator('details.goal-status .goal-status-label', { hasText: '目标进行中' }).waitFor();
+  await pill.locator('.goal-status-label', { hasText: '目标进行中' }).waitFor();
 
   part = 'impossible';
   await send('/goal Impossible case goal-impossible');
-  await page.locator('details.goal-status[data-goal-status="failed"][data-goal-condition="Impossible case goal-impossible"]').waitFor();
+  await goal('[data-goal-status="failed"][data-goal-condition="Impossible case goal-impossible"]').waitFor();
   await goalEvent('failed').last().waitFor();
   await idle();
   await shot('failed-zh');
   await page.evaluate(() => window.desktop.setLocalePreference('en'));
-  await page.locator('details.goal-status .goal-status-label', { hasText: "Goal can't be met" }).waitFor();
+  await pill.locator('.goal-status-label', { hasText: "Goal can't be met" }).waitFor();
   await goalEvent('failed').last().locator('summary').click();
   await shot('failed-en');
   await page.evaluate(() => window.desktop.setLocalePreference('zh-CN'));

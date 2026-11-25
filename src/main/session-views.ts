@@ -26,6 +26,8 @@ const key = (workspace: string, session: string) => JSON.stringify([workspace, s
 // they share its JSONL cursor, input lock and terminal-control token.
 export class SessionViews {
   private readonly readers = new Map<string, Reader>();
+  // A folder save drops its readers. Keep only the goals of attached views when the target stayed the same.
+  private readonly reopeningGoals = new Map<ChatView, { workspace: string; key: string; goal: NonNullable<SessionSnapshot['goal']> }>();
   private clock = 0;
 
   constructor(private readonly primary: Controller, private readonly emit: (snapshot: SessionSnapshot) => void,
@@ -104,7 +106,7 @@ export class SessionViews {
   replaySidebarStatus() {
     for (const reader of this.readers.values()) if (reader.sidebarStatus) this.emitSidebarStatus(reader.sidebarStatus);
   }
-  private create(workspace: string, session: string, background: boolean) {
+  private create(workspace: string, session: string, background: boolean, previousGoal?: SessionSnapshot['goal']) {
     const controller = this.primary.sibling();
     const reader: Reader = { key: key(workspace, session), controller, views: new Set(), terminals: new Set(), shownAt: ++this.clock };
     controller.on('snapshot', (snapshot: SessionSnapshot) => { if (reader.views.size) this.emit(snapshot); });
@@ -112,7 +114,12 @@ export class SessionViews {
     controller.on('terminal-frame', (event: TerminalFrameEvent) => { if (reader.views.size) this.emitFrame(event); });
     controller.setBackground(background);
     this.readers.set(reader.key, reader);
-    const opening = controller.watchSession(workspace, session);
+    for (const [view, reopening] of this.reopeningGoals) {
+      if (reopening.key !== reader.key) continue;
+      previousGoal ??= reopening.goal;
+      this.reopeningGoals.delete(view);
+    }
+    const opening = controller.watchSession(workspace, session, previousGoal);
     reader.opening = opening;
     const clear = () => { if (reader.opening === opening) reader.opening = undefined; };
     opening.then(clear, () => { clear(); if (!reader.views.size) this.forget(reader); });
@@ -120,10 +127,14 @@ export class SessionViews {
   }
   watch(workspace: string, session: string, view: ChatView = 'primary') {
     this.view(view);
-    const existing = this.readers.get(key(workspace, session));
+    const readerKey = key(workspace, session), existing = this.readers.get(readerKey);
+    const reopening = this.reopeningGoals.get(view);
+    this.reopeningGoals.delete(view);
+    let previousGoal = reopening?.key === readerKey ? reopening.goal : undefined;
     // Opening the conversation that is already alone in this pane is an
     // explicit reload (retry, bind): start a fresh read. Resume refreshes instead.
     if (existing && existing.views.has(view) && existing.views.size === 1) {
+      previousGoal = existing.controller.currentSnapshot?.goal;
       this.release(view);
       this.forget(existing);
     } else if (existing) {
@@ -134,7 +145,7 @@ export class SessionViews {
       existing.controller.setBackground(false);
       return existing.opening ?? Promise.resolve(existing.controller.currentSnapshot!);
     } else this.release(view);
-    const reader = this.create(workspace, session, false);
+    const reader = this.create(workspace, session, false, previousGoal);
     reader.views.add(view);
     return reader.opening!;
   }
@@ -151,6 +162,7 @@ export class SessionViews {
   }
   release(view: ChatView = 'primary') {
     this.view(view);
+    this.reopeningGoals.delete(view);
     for (const reader of this.readers.values()) {
       if (!reader.views.delete(view)) continue;
       reader.controller.releaseHandoffHistory(view);
@@ -189,10 +201,19 @@ export class SessionViews {
   relocalize() {
     for (const reader of this.readers.values()) if (reader.views.size) reader.controller.relocalize();
   }
-  releaseWorkspace(workspace: string) {
+  releaseWorkspace(workspace: string, sameTarget = false) {
+    if (!sameTarget) {
+      for (const [view, reopening] of this.reopeningGoals) {
+        if (reopening.workspace === workspace) this.reopeningGoals.delete(view);
+      }
+    }
     for (const reader of [...this.readers.values()]) {
-      if (reader.controller.currentSnapshot?.workspaceId !== workspace) continue;
-      for (const view of [...reader.views]) this.release(view);
+      const snapshot = reader.controller.currentSnapshot;
+      if (snapshot?.workspaceId !== workspace) continue;
+      for (const view of [...reader.views]) {
+        this.release(view);
+        if (sameTarget && snapshot.goal) this.reopeningGoals.set(view, { workspace, key: reader.key, goal: snapshot.goal });
+      }
       this.forget(reader);
     }
   }

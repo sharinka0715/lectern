@@ -6,6 +6,8 @@ export interface GoalInputs {
    * them (Backend.readGoalBefore) together with the records read after it. */
   records?: Omit<GoalObservation, 'source'>;
   source?: 'transcript' | 'probe';
+  /** An active goal already shown for this conversation while the new page's prefix is unknown. */
+  previous?: GoalObservation;
   /** A live Claude Code shows this conversation (its pane, the latest page read). */
   live: boolean;
   /** The indicator above its input box; `present` counts reads in a row that showed it, `absent`
@@ -26,6 +28,10 @@ export interface GoalInputs {
  */
 export function observeGoal(input: GoalInputs): GoalObservation | undefined {
   let goal: GoalObservation | undefined = input.records ? { ...input.records, source: input.source ?? 'transcript' } : undefined;
+  if (!goal && !input.source && input.previous?.status === 'active') {
+    const { screen: _screen, history: _history, ...previous } = input.previous;
+    goal = previous;
+  }
   if (!input.live) return goal?.status === 'active' ? { ...goal, history: true } : goal;
   const { indicator } = input;
   // Twice in a row: the indicator can outlast a goal's end by a repaint.

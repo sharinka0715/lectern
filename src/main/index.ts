@@ -28,6 +28,7 @@ import { QuitSettings } from './quit-settings';
 import { SshSettings } from './ssh-settings';
 import { quitActivityText, quitAnswers, quitGroups, quitTitle, type QuitAnswer, type QuitPrompt } from '../shared/quit';
 import type { MenuAction, RendererDiagnostic, SessionSnapshot, Workspace } from '../shared/types';
+import { sessionSettingsTarget } from '../shared/session-setting-ticket';
 import { maxAttachmentBytes } from '../shared/attachments';
 import { sshOnly, sshOnlyMessage } from '../shared/supported-targets';
 import { launchPreferences } from '../shared/prompt-cache';
@@ -445,7 +446,8 @@ async function boot() {
       if (sshOnly(process.platform) && w.kind !== 'ssh') throw new Error(sshOnlyMessage());
       artifactAccess.reset();
       attachmentThumbnails.clear();
-      controllers.releaseWorkspace(w.id);
+      const previous = controller.store.list().find(workspace => workspace.id === w.id);
+      controllers.releaseWorkspace(w.id, !!previous && sessionSettingsTarget(previous) === sessionSettingsTarget(w));
       return controller.saveWorkspace(w);
     },
     removeWorkspace: id => {

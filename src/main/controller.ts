@@ -8,9 +8,8 @@ import type { TurnAction } from '../shared/turn-controls';
 import { checkpointPosition, RewindRecordChanged, type RewindTarget } from '../backend/native-turn-controls';
 import { canInterruptTurn, readRewind, turnComposer } from '../core/turn-controls';
 import { Backend, validateWorkspace, type HistoryCursor, type HistoryPage } from '../backend';
-import type { JsonRecord } from '../core/jsonl';
 import { parseGoalIndicator, runningStopHook } from '../core/goal-screen';
-import { observeGoal } from './goal-observation';
+import { observeGoal, type GoalInputs } from './goal-observation';
 import { repairSlices } from '../backend/transcript-pages';
 import { observedSessionStatus } from '../core/observed-status';
 import { backgroundCounts, backgroundSummary } from '../core/background-work';
@@ -44,7 +43,7 @@ import { ModelCatalogs } from './model-catalogs';
 import { sightQuota, type QuotaSighting } from './quota-as-of';
 import { effortsFor, isEffortLevel, isModelValue, type LaunchChoices, type ModelCatalogState } from '../shared/model-catalog';
 import { sessionSettingsTarget } from '../shared/session-setting-ticket';
-import type { DirectoryTrustDecision, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, SubagentListing, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
+import type { DirectoryTrustDecision, GoalObservation, ReplyBaselines, SessionSettingKind, SessionSettingSnapshot, SettingSwitchMode, SessionSnapshot, SubagentListing, TerminalControl, TerminalInput, TerminalKey, Workspace } from '../shared/types';
 import { WorkspaceStore } from './store';
 import { commandPolicy } from '../shared/native-commands';
 import { samePrompt } from '../shared/native-prompt';
@@ -79,8 +78,8 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
    * from a Lectern pane (`paneLive`), else from the native record of a process elsewhere. */
   live?: SessionLiveness; nativeStartedAt?: number; paneLive?: boolean;
   rewindInstance?: string;
-  /** The last goal record before the first page, read once per opening (Backend.readGoalBefore). */
-  goalProbe?: { record?: JsonRecord };
+  /** A previous sighting while the prefix is unknown, or a result waiting to be published. */
+  goalProbe?: { previous?: GoalObservation; settled?: boolean };
   /** Reads in a row with the goal indicator above the input box, and with the input box but no indicator. */
   goalPresent?: number; goalAbsent?: number;
   /** The recording hooks' state as last logged (controller.hooks.status). */
@@ -118,6 +117,12 @@ const looksElsewhere = (watch: Watch, listing: boolean) =>
 
 function historyPage(watch: Watch) {
   return { hasOlder: !!watch.older, cursor: watch.older?.ticket ?? '' };
+}
+
+function goalRecords(watch: Watch): Pick<GoalInputs, 'records' | 'source' | 'previous'> {
+  const goal = watch.display.goal;
+  return { records: goal?.current, source: goal?.source,
+    previous: !goal && watch.older && !watch.goalProbe?.settled ? watch.goalProbe?.previous : undefined };
 }
 
 /** JSON.stringify({ messages, status, paneId, notice, error }) given the serialized messages. */
@@ -365,7 +370,7 @@ export class Controller extends EventEmitter {
     await this.backend.bindSession(workspace, sessionId, paneId);
     this.catalogs.warm(workspace);
   }
-  async watchSession(workspaceId: string, sessionId: string): Promise<SessionSnapshot> {
+  async watchSession(workspaceId: string, sessionId: string, previousGoal?: GoalObservation): Promise<SessionSnapshot> {
     this.unwatchSession();
     const workspace = this.store.get(workspaceId);
     this.backend.resetRead(workspaceId, sessionId);
@@ -374,7 +379,7 @@ export class Controller extends EventEmitter {
       const watch: Watch = {
         id: watchId, polls: 0, workspace, sessionId, display: new MessageDisplay(sessionId), compactSamples: new CompactSamples(), failures: 0,
         manualRecovery: this.manualRecoveries.has(this.recoveryKey(workspace, sessionId)),
-        snapshot: { workspaceId, sessionId, messages: [], screen: '', status: 'connecting' },
+        snapshot: { workspaceId, sessionId, messages: [], screen: '', status: 'connecting', goal: previousGoal },
       };
       this.watch = watch;
       diagnostic.event('controller.watch.start', { watchId, workspaceId, sessionId });
@@ -504,9 +509,9 @@ export class Controller extends EventEmitter {
       lastCompact: watch.compactSamples.receipt(watch.display.activity.currentCompact),
       activity, subagentsListed: listed || undefined,
       // The records now reach further back; the screen part is the last poll's.
-      goal: watch.display.goal ? observeGoal({ records: watch.display.goal.current, source: watch.display.goal.source,
+      goal: observeGoal({ ...goalRecords(watch),
         live: !!watch.snapshot.paneId && !watch.inactiveHistory, indicator: watch.snapshot.goal?.screen, present: watch.goalPresent ?? 0,
-        absent: watch.goalAbsent ?? 0, checking: watch.snapshot.goal?.phase === 'checking' }) : watch.snapshot.goal,
+        absent: watch.goalAbsent ?? 0, checking: watch.snapshot.goal?.phase === 'checking' }),
     };
     this.publish(watch, 'history-prepend', watch.inactiveHistory);
     return watch.snapshot;
@@ -577,16 +582,20 @@ export class Controller extends EventEmitter {
   /** A goal set before the first page read is still the session's goal if nothing after it ended it:
    * read its last record once, in the background (goal-observation.ts). */
   private probeGoal(watch: Watch, cursor: HistoryCursor) {
-    const probe: NonNullable<Watch['goalProbe']> = {};
-    watch.goalProbe = probe;
     if (typeof this.backend.readGoalBefore !== 'function') return;
+    const previous = watch.snapshot.goal;
+    const probe: NonNullable<Watch['goalProbe']> = { previous: previous?.status === 'active' ? previous : undefined };
+    watch.goalProbe = probe;
     this.backend.readGoalBefore(watch.workspace, watch.sessionId, cursor).then(record => {
-      if (this.watch !== watch || watch.goalProbe !== probe || !record) return;
-      probe.record = record;
+      if (this.watch !== watch || watch.goalProbe !== probe) return;
+      probe.settled = true;
       watch.display.seedGoal(record);
-      diagnostic.event('controller.goal.probe', { watchId: watch.id, sessionId: watch.sessionId, found: true });
-      if (this.timer) this.schedulePoll(watch, 0);
-    }, error => diagnostic.event('controller.goal.probe_failed', { watchId: watch.id, error: errorDetails(error) }, 'warn'));
+      diagnostic.event('controller.goal.probe', { watchId: watch.id, sessionId: watch.sessionId, found: !!record });
+      if (this.timer || !watch.reading) this.schedulePoll(watch, 0);
+    }, error => {
+      // A failed lookup tells us nothing about the known goal. The screen and loaded records still take priority.
+      diagnostic.event('controller.goal.probe_failed', { watchId: watch.id, error: errorDetails(error) }, 'warn');
+    });
   }
   setTerminalVisible(workspaceId: string, sessionId: string, visible: boolean): void {
     if (typeof visible !== 'boolean') return;
@@ -782,7 +791,7 @@ export class Controller extends EventEmitter {
       watch.live = live;
       watch.nativeStartedAt = since;
       watch.paneLive = result.active;
-      if (watch.inactiveHistory && !result.active && !result.reset && !result.hasMore && !result.jsonl.length && !subagentsChanged && !liveChanged &&
+      if (watch.inactiveHistory && !result.active && !result.reset && !result.hasMore && !result.jsonl.length && !subagentsChanged && !liveChanged && !watch.goalProbe?.settled &&
           !watch.failures && watch.snapshot.endpointBilling === result.endpointBilling && watch.snapshot.status === 'idle' && watch.snapshot.settingBusy === settingBusy &&
           watch.snapshot.trustBusy === trustBusy && watch.snapshot.navigationStatus === result.session.status &&
           watch.snapshot.navigationStatusDetail === result.session.statusDetail && watch.snapshot.screen === result.screen) {
@@ -930,15 +939,17 @@ export class Controller extends EventEmitter {
       // Claude Code's native /goal: the records read, the record before them, the live indicator (goal-observation.ts).
       const goalLive = result.active && !result.hasMore && !result.directoryTrust;
       const indicator = goalLive && result.viewport ? parseGoalIndicator(result.viewport) : undefined;
+      const goalPage = goalRecords(watch);
       if (goalLive && result.viewport) {
-        // Counted only while the records say a goal runs: one just set may not show its indicator yet.
-        const running = watch.display.goal?.current?.status === 'active';
+        // A goal just set may not show its indicator yet, even if the records already have it.
+        const running = (goalPage.records ?? goalPage.previous)?.status === 'active';
         watch.goalPresent = indicator ? (watch.goalPresent ?? 0) + 1 : 0;
         watch.goalAbsent = indicator || !running ? 0 : editor ? (watch.goalAbsent ?? 0) + 1 : watch.goalAbsent ?? 0;
       }
-      const goal = observeGoal({ records: watch.display.goal?.current, source: watch.display.goal?.source,
+      const goal = observeGoal({ ...goalPage,
         live: goalLive, indicator, present: watch.goalPresent ?? 0, absent: watch.goalAbsent ?? 0,
         checking: !!turnProgress?.detail && runningStopHook.test(turnProgress.detail) });
+      if (watch.goalProbe?.settled) watch.goalProbe = undefined;
       if (result.reset) watch.compactSamples = new CompactSamples();
       else if (!progressFrame || previousHandle !== handle) watch.compactSamples.interrupt();
       if (progressFrame && (turnProgress?.compactPhase || watch.compactSamples.awaitingReceipt)) {

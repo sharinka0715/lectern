@@ -295,6 +295,20 @@ test('the input area: records first, the record before the page when none was re
     { status: 'active', phase: 'set', condition: '', checks: 0, source: 'screen', screen: { state: 'active', elapsed: '3m' } });
 });
 
+test('a previous goal bridges a pending prefix probe and yields to current records and the live screen', () => {
+  const active = { status: 'active' as const, phase: 'not-met' as const, condition: 'Ship it', checks: 2 };
+  const previous = { ...active, source: 'transcript' as const, history: true, screen: { state: 'active' as const, elapsed: '3m' } };
+  const input = { live: true, present: 0, absent: 0, checking: false, previous };
+  assert.deepEqual(observeGoal({ ...input, absent: 1 }), { ...active, source: 'transcript' });
+  assert.equal(observeGoal({ ...input, indicator: { state: 'paused' }, checking: true })?.phase, 'paused');
+  assert.equal(observeGoal({ ...input, absent: 2 }), undefined);
+  assert.equal(observeGoal({ ...input, source: 'transcript' }), undefined, 'the loaded records already dismissed the goal');
+  for (const status of ['cleared', 'met'] as const) {
+    assert.equal(observeGoal({ ...input, records: { ...active, status } })?.status, status);
+  }
+  assert.equal(observeGoal({ ...input, source: 'probe', records: { ...active, condition: 'New goal' } })?.condition, 'New goal');
+});
+
 // Matrix finding F1: Claude Code writes the set record just before the /goal command, and the turn's
 // prompt snapshots push the file past the first page, so a read from the end starts at the command
 // (sized-session.jsonl: the CLI's own records, the unshown big ones as stubs of their original size).

@@ -98,6 +98,7 @@ import { closeConfirmation } from "./close-confirmation";
 import type { SidebarMenuActions } from "./sidebar-menus";
 import { HandoffHistoryDialog } from "./HandoffHistoryDialog";
 import { findImportedWorkspace } from "./history-import";
+import { sessionSettingsTarget } from "../shared/session-setting-ticket";
 import {
   reportActionError,
   reportSnapshotApplied,
@@ -575,7 +576,7 @@ function ChatPane({ view, resumes, setResume }: {
   }, [workspaceId,sessionId,draft]);
   // `reveal`: open its folder in the sidebar's tree (see useWorkspaceTree's expand).
   const openSession = useCallback(
-    async (wsId: string, id: string, reveal = true) => {
+    async (wsId: string, id: string, { reveal = true, workspaceChanged = false } = {}) => {
       const request = ++sessionRequest.current;
       const revision = snapshotRevision.current;
       selected.current = { workspaceId: wsId, sessionId: id };
@@ -590,7 +591,10 @@ function ChatPane({ view, resumes, setResume }: {
       if (targetWorkspace) expandWorkspace(targetWorkspace, reveal);
       setSessionId(id);
       setArtifact(undefined);
-      setSnapshot(undefined);
+      // While retrying this chat, keep its goal visible but wait for fresh data before enabling actions.
+      setSnapshot(current => !workspaceChanged && current?.workspaceId === wsId && current.sessionId === id && current.goal
+        ? { workspaceId: wsId, sessionId: id, messages: [], screen: "", status: "connecting", goal: current.goal }
+        : undefined);
       setError("");
       setDraft(unsentDrafts.get(draftKey(wsId,id)) || "");
       try {
@@ -639,7 +643,7 @@ function ChatPane({ view, resumes, setResume }: {
       void refresh(ws.id).then((result) => {
         if (sessionRequest.current !== request || selected.current.workspaceId !== ws.id || selected.current.sessionId) return;
         setFolderState(undefined);
-        if (result?.sessions.length && !selected.current.draft) void openSession(ws.id, result.sessions[0].id, reveal);
+        if (result?.sessions.length && !selected.current.draft) void openSession(ws.id, result.sessions[0].id, { reveal });
       }, () => { if (sessionRequest.current === request) setFolderState(undefined); });
     },
     [expandWorkspace, refresh, openSession,view],
@@ -689,7 +693,7 @@ function ChatPane({ view, resumes, setResume }: {
         const reveal = !sidebarFoldsKept;
         if (restored && restoredWorkspace) {
           workspacesRef.current = list;
-          if (restored.sessionId) void openSession(restored.workspaceId, restored.sessionId, reveal);
+          if (restored.sessionId) void openSession(restored.workspaceId, restored.sessionId, { reveal });
           else if (restored.draft) enterDraft(restoredWorkspace, reveal);
           else selectWorkspace(restoredWorkspace, reveal);
         } else {
@@ -764,11 +768,14 @@ function ChatPane({ view, resumes, setResume }: {
     const sync = (event: Event) => {
       const detail = (event as CustomEvent<{source:ChatView; saved?:string; open?:ChatView}>).detail;
       void window.desktop.listWorkspaces().then(list => {
+        const previous = workspacesRef.current.find(item => item.id === detail?.saved);
+        const saved = list.find(item => item.id === detail?.saved);
         workspacesRef.current=list; setWorkspaces(list);
-        const opened = detail?.open === view && list.find(item => item.id === detail.saved);
-        if (opened) selectWorkspace(opened);
+        if (detail?.open === view && saved) selectWorkspace(saved);
         else if (detail?.saved && detail.source !== view && selected.current.workspaceId === detail.saved && selected.current.sessionId)
-          void openSession(detail.saved,selected.current.sessionId);
+          void openSession(detail.saved,selected.current.sessionId, {
+            workspaceChanged: !previous || !saved || sessionSettingsTarget(previous) !== sessionSettingsTarget(saved),
+          });
       }).catch(error=>reportActionError(error,"同步项目失败"));
     };
     window.addEventListener("lectern-projects-updated",sync);
@@ -1838,7 +1845,7 @@ function ChatPane({ view, resumes, setResume }: {
           )}
           {!question && <>
           <TurnPanel state={controls} busy={sending || terminalLocked || busy} act={action => void actOnTurn(action)}/>
-          {snapshot?.goal && snapshot.sessionId === sessionId && <GoalStatus key={`goal:${settingScope}`} goal={snapshot.goal} open={goalOpen}
+          {snapshot?.goal && snapshot.workspaceId === workspaceId && snapshot.sessionId === sessionId && <GoalStatus key={`goal:${activityScope}`} goal={snapshot.goal} open={goalOpen}
             onOpenChange={setGoalOpen} canClear={canSend && !sending && !!paneId && !snapshot.goal.history} onClear={() => void clearGoal()} />}
           <TurnProgress snapshot={snapshot} />
           <form
