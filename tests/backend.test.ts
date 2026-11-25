@@ -327,9 +327,10 @@ test('default launches preserve Claude config environment without exporting a co
   const cwd = join(root, 'workspace'), inherited = join(root, 'inherited-config');
   await mkdir(cwd);
   const mock = join(root, 'config-fixture.mjs');
+  // The report appears whole (written aside, then renamed): the test polls for it and must never read it half-written.
   await writeFile(mock, `import fs from 'node:fs'; import path from 'node:path';
 const output=process.argv[2], id=process.argv.at(-1), config=process.env.CLAUDE_CONFIG_DIR;
-fs.writeFileSync(path.join(output,id+'.json'),JSON.stringify({present:Object.hasOwn(process.env,'CLAUDE_CONFIG_DIR'),value:config}));
+const report=path.join(output,id+'.json');fs.writeFileSync(report+'.tmp',JSON.stringify({present:Object.hasOwn(process.env,'CLAUDE_CONFIG_DIR'),value:config}));fs.renameSync(report+'.tmp',report);
 if(config){const dir=path.join(config,'projects',process.cwd().replace(/[^A-Za-z0-9]/g,'-'));fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,id+'.jsonl'),JSON.stringify({type:'user',uuid:'fixture',sessionId:id,cwd:process.cwd(),message:{role:'user',content:'config fixture'}})+'\\n');}
 process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('Ready\\n');
 `);
