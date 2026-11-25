@@ -13,7 +13,8 @@ import { _electron } from './fixtures/electron.mjs';
 const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-status-'));
 const results = path.resolve('test-results');
 await mkdir(results, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'logs') };
+const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: path.join(root, 'logs'),
+  LECTERN_TEST_SSH_CONTROL_ROOT: root };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const sessions = { alpha: randomUUID(), beta: randomUUID() };
 let app;
@@ -55,6 +56,8 @@ try {
     replace('unwatchSession', async () => {});
     replace('resolveArtifactReferences', async () => []);
     replace('prefetchSession', async () => {});
+    replace('prefetchFileIndex', async () => {});
+    replace('gitChanges', async () => ({ kind: 'none' }));
     replace('modelCatalog', async () => ({ status: 'failed', error: 'synthetic: no model list' }));
     // Before launching, the app reads the settings files on the target: on a machine that is
     // not logged in that read fails the same way the launch would.

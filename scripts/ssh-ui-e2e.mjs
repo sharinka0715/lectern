@@ -2,6 +2,7 @@
 // synthetic records. No SSH process, remote input, or model request is allowed.
 import assert from 'node:assert/strict';
 import { _electron } from './fixtures/electron.mjs';
+import { waitUntil } from './fixtures/loopback-ssh.mjs';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,8 @@ const root = await mkdtemp(path.join(tmpdir(), 'lectern-ssh-ui-'));
 const resultDirectory = path.resolve('test-results', `ssh-ui-${Date.now()}`);
 const diagnostics = path.join(resultDirectory, 'diagnostics');
 await mkdir(resultDirectory, { recursive: true });
-const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: diagnostics };
+const env = { ...process.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: path.join(root, 'profile'), LECTERN_LOG_DIR: diagnostics,
+  LECTERN_TEST_SSH_CONTROL_ROOT: root };
 delete env.ELECTRON_RUN_AS_NODE; delete env.LECTERN_DEV_URL;
 const host = 'synthetic-ssh-alias';
 const port = 2244;
@@ -89,6 +91,9 @@ try {
     // Showing a conversation indexes its folder for @ completion; record it instead of scanning.
     fixture.prefetches = [];
     replace('prefetchFileIndex', async (_event, workspaceId) => { fixture.prefetches.push(workspaceId); });
+    // Hovering a sidebar session starts its own reader in the main process.
+    fixture.sessionPrefetches = [];
+    replace('prefetchSession', async (_event, workspaceId, sessionId) => { fixture.sessionPrefetches.push({ workspaceId, sessionId }); });
     replace('discoverHistoryProjects', async (_event, target) => {
       fixture.scans.push(target);
       if (fixture.scanFail) throw new Error('Synthetic SSH: Permission denied (publickey).');
@@ -196,6 +201,13 @@ try {
   assert.equal(await machine.locator('.workspace-row').count(), 2);
   assert.equal(await page.getByRole('region', { name: '本地', exact: true }).locator('.workspace-row').count(), 0);
   assert.equal(await composer.isDisabled(), true);
+  const prefetchTarget = { workspaceId: stored[0].id, sessionId: ids[0] };
+  await machine.locator(`.session-row[data-session-id="${prefetchTarget.sessionId}"]`).hover();
+  await waitUntil(
+    () => app.evaluate((_electron, target) => globalThis.__sshUI.sessionPrefetches.some(
+      ({ workspaceId, sessionId }) => workspaceId === target.workspaceId && sessionId === target.sessionId), prefetchTarget),
+    'Hovering a sidebar session should prefetch its history',
+  );
   const folder = await addFolder(paths[0]);
   await folder.getByRole('alert').waitFor();
   await folder.getByRole('button', { name: '取消', exact: true }).click();
@@ -444,7 +456,10 @@ try {
   await app.close(); app = undefined;
   const events = (await Promise.all((await readdir(diagnostics)).filter(name => name.endsWith('.jsonl')).map(name => readFile(path.join(diagnostics, name), 'utf8'))))
     .join('\n').split('\n').filter(Boolean).map(line => JSON.parse(line));
-  assert.ok(!events.some(event => event.event.startsWith('transport.command')), 'This UI test must never launch SSH or any native backend command');
+  const commands = events.filter(event => event.event.startsWith('transport.command')).map(({ event, context, data }) => JSON.stringify({
+    event, commandTag: context?.commandTag, workspaceId: context?.workspaceId, script: data?.script, traceId: context?.traceId,
+  }));
+  assert.equal(commands.length, 0, `This UI test must never launch SSH or any native backend command\n${commands.join('\n')}`);
   const report = { success: true, scope: 'renderer SSH workflow only; local synthetic IPC', manualFolderScope: true, noScanOnMachineRegistration: true, configInheritancePreserved: true, noDuplicateFolders: true, createRemoteFolder: true,
  initialConnectionErrorsVisible: true, watchErrorsRetriable: true, movedResumeErrorRetriable: true, readonlyTerminal: true, noNativeCommandsOrModelRequests: true, scans: fixture.scans.length };
   await writeFile(path.join(resultDirectory, 'report.json'), JSON.stringify(report, null, 2) + '\n');
