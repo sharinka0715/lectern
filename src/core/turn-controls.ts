@@ -65,8 +65,11 @@ function composerPlaceholder(text: string, rows: string[], painted: string[], vi
       const cell = row.cells[i];
       // Ink paints the first placeholder character as the cursor, without dim.
       // A draft can have the same cursor cell, but its other characters are normal.
+      // Told the terminal lost focus (tmux focus-events), Claude Code paints no cursor
+      // until the next key: the first character is then dim like the rest.
+      const cursor = characters === 0 && index === 0 && i === 2 && cell.inverse;
       if (cell.bg || cell.fg || cell.bold || cell.italic || cell.underline ||
-          !(characters === 0 && index === 0 && i === 2 ? cell.inverse : (cursorOnly || cell.dim) && !cell.inverse)) return;
+          !cursor && !((cursorOnly || cell.dim) && !cell.inverse)) return;
       characters++;
     }
   }

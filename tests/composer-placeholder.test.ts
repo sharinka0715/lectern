@@ -35,6 +35,30 @@ test('native welcome, error and queue hints never become suggestions', () => {
     assert.equal(turnComposer(frames[name])?.text, '', name);
 });
 
+test('a pane told the terminal lost focus paints no cursor: an all-dim hint is still empty', () => {
+  // Real frames: tmux sent focus-out (focus-events on) before the first key reached the pane.
+  for (const name of ['2.1.300-unfocused-try', '2.1.331-unfocused-try']) {
+    const frame = frames[name], plain = stripTerminalEscapes(frame), editor = turnComposer(plain, frame);
+    assert.match(editor?.text ?? '', /^Try "/, name);
+    assert.equal(editor?.empty, true, name);
+    assert.equal(editor?.placeholder, 'fixed', name);
+    assert.equal(editor?.suggestion, undefined, name);
+    assert.equal(isIdleEmptyComposer(plain, frame), true, name);
+    // The same words typed by hand are not dim, with or without a cursor cell.
+    const typed = frame.replace('\x1b[2mTry "', 'Try "');
+    assert.equal(turnComposer(plain, typed)?.empty, false, name);
+    assert.equal(turnComposer(plain, typed.replace('❯ Try', '❯ \x1b[7mT\x1b[0mry'))?.empty, false, name);
+    assert.equal(isIdleEmptyComposer(plain, typed), false, name);
+  }
+  const unfocused = (name: string) => frames[name].replace(/\x1b\[7m(\S)\x1b\[0;2m/, '\x1b[2m$1');
+  const suggestionFrame = unfocused('2.1.331-suggestion');
+  assert.equal(turnComposer(stripTerminalEscapes(suggestionFrame), suggestionFrame)?.suggestion, suggestion);
+  const retryFrame = unfocused('2.1.331-stream-error');
+  assert.equal(turnComposer(stripTerminalEscapes(retryFrame), retryFrame)?.empty, true);
+  // A typed draft loses its cursor cell too, and stays a draft.
+  assert.equal(turnComposer(frames['2.1.331-typed-same-text'].replace('\x1b[7mn\x1b[0m', 'n'))?.empty, false);
+});
+
 test('style mismatch and ordinary drafts with a reverse video cursor stay occupied', () => {
   const retry = frames['2.1.331-stream-error'], plain = stripTerminalEscapes(retry);
   assert.equal(turnComposer(plain, retry)?.empty, true);

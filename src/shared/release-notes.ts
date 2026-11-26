@@ -36,6 +36,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.6',
+    features: [],
+    fixes: [
+      ['tmux 开启焦点事件（focus-events）时，新对话输入框里的「Try "…"」等灰字不再被当成草稿，首条消息能正常发出。',
+        'With tmux focus-events on, grey hints such as Try "..." in a new conversation\'s input box are no longer taken for a draft, so the first message goes through.'],
+    ],
+  },
+  {
     version: '0.2.5',
     features: [
       ["Lectern 的输入框会显示 Claude Code 的提示建议，按 Tab 填入草稿。",
