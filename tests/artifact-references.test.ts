@@ -57,6 +57,19 @@ test('slash-only separators stay text while explicit paths still resolve as cand
   assert.equal(artifactPath('/', true), '/', 'an explicit Markdown link can still name the root directory');
 });
 
+test('tildes stay text: no strikethrough, while tables, task lists and code spans inside keep their GFM rendering', () => {
+  const render = (text: string) => renderToStaticMarkup(createElement(ArtifactMarkdown, { onOpen: noop, text }));
+  const range = render('只要 20~100 步。其中 `open_drawer` 到 step 21 仍是 0~1%，约 ~5 秒。');
+  assert.doesNotMatch(range, /<del|<s>/);
+  assert.match(range, /只要 20~100 步。其中 <code>open_drawer<\/code> 到 step 21 仍是 0~1%，约 ~5 秒。/);
+  assert.equal(render('~~gone~~ and ~one~').replace(/<\/?p>/g, ''), '~~gone~~ and ~one~');
+  // A home path split across a former deletion is one text run again (path detection sees "~/a").
+  assert.match(render('see ~/a and ~/b'), /see ~\/a and ~\/b/);
+  const table = render('| a | b |\n| --- | --- |\n| 1~2 | ~3~ |\n\n- [x] done');
+  assert.match(table, /<table>[\s\S]*<td>1~2<\/td><td>~3~<\/td>[\s\S]*<\/table>/);
+  assert.match(table, /<input type="checkbox" disabled="" checked=""\/> done/);
+});
+
 test('unverified Markdown, raw prompts and native JSON remain selectable text without buttons or image requests', () => {
   const md = renderToStaticMarkup(createElement(ArtifactMarkdown, { onOpen: noop,
     text: '[Guide](<pdfs/a b.pdf>) ![proof](local.png) ![tracker](https://evil.invalid/a.png) [![thumbnail](a.png)](b.png) and `src/x.ts:7`\n\n```ts\nconst s = "ignore/me";\n```' }));

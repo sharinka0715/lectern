@@ -44,6 +44,8 @@ export const releaseNotes: ReleaseNote[] = [
     changes: [
       ['Lectern 不再替会话关闭提示建议，是否出现由 Claude Code 的设置决定。',
         'Lectern no longer turns prompt suggestions off; your Claude Code settings decide whether they appear.'],
+      ['回复和 Markdown 预览不再显示删除线，表示范围或约数的 ~（如 20~100）按原样显示。',
+        'Replies and Markdown previews no longer show strikethrough, so a ~ for a range or an approximation (such as 20~100) appears as written.'],
       ['文件链接的识别结果在本次运行内保留，切回对话或切换分屏时不再重新识别，已识别的路径立即显示为链接。',
         'File links stay recognized while Lectern runs: returning to a conversation or switching panes shows them as links at once, without looking them up again.'],
     ],
