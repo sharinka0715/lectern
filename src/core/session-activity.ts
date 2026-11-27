@@ -57,7 +57,8 @@ export class SessionActivityStore {
   private readStart = 0;
   // A historical operation receipt, never a claim that the current turn compacted.
   lastCompact?: CompactReceipt;
-  /** A prompt followed the latest compaction: its receipt is history, as in the TUI. */
+  /** A prompt or a reply followed the latest compaction: its receipt is history, as in the TUI.
+   * An automatic compaction comes after the prompt that set it off and before its reply. */
   private promptAfterCompact = false;
   /** The latest compaction while it is still the latest event of the conversation. */
   get currentCompact(): CompactReceipt | undefined { return this.promptAfterCompact ? undefined : this.lastCompact; }
@@ -130,8 +131,9 @@ export class SessionActivityStore {
           this.compactIds.add(receipt.id);
           this.lastCompact = receipt;
         }
-      } else if (this.lastCompact && !this.promptAfterCompact && isTranscriptTurnStart(r, this.sessionId)
-          && !/<command-name>\/compact<\/command-name>/u.test(JSON.stringify(object(r.message).content ?? ''))) {
+      } else if (this.lastCompact && !this.promptAfterCompact && (isTranscriptTurnStart(r, this.sessionId)
+          && !/<command-name>\/compact<\/command-name>/u.test(JSON.stringify(object(r.message).content ?? ''))
+          || r.type === 'assistant' && object(r.message).model !== '<synthetic>' && !r.isApiErrorMessage)) {
         this.promptAfterCompact = true;
       }
       const at = timestamp(r.timestamp);

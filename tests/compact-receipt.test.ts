@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { SessionActivityStore } from '../src/core/session-activity';
 
 // Claude Code 2.1.328 after a manual /compact: boundary, summary, caveat,
@@ -37,5 +38,34 @@ test('a queued prompt also ends it; other sessions and tool results do not', () 
   store.ingest([boundary('b1'), user('r', [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }]), { ...prompt('other'), sessionId: 'other' }]);
   assert.equal(store.currentCompact?.id, 'b1');
   store.ingest([{ type: 'attachment', uuid: 'q', sessionId: S, attachment: { type: 'queued_command', prompt: '继续', humanTurn: true, commandMode: 'prompt', origin: { kind: 'human' } } }]);
+  assert.equal(store.currentCompact, undefined);
+});
+
+test('an automatic compaction comes after its prompt: the reply that follows ends the receipt (2.1.300, 2.1.321, 2.1.331)', () => {
+  for (const version of ['2.1.300', '2.1.321', '2.1.331']) {
+    const rows = readFileSync(new URL(`./fixtures/rewind-compact-${version}/auto.jsonl`, import.meta.url), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
+    const at = rows.findIndex(row => row.subtype === 'compact_boundary'), store = new SessionActivityStore(rows[at].sessionId);
+    assert.equal(rows[at].compactMetadata.trigger, 'auto', version);
+    assert.ok(rows.slice(at + 1).every(row => !(row.type === 'user' && row.origin?.kind === 'human')), `${version}: no prompt after it`);
+    store.ingest(rows.slice(0, at + 2));
+    assert.equal(store.currentCompact?.id, rows[at].uuid, `${version}: shown while the summary is the last thing`);
+    store.ingest(rows.slice(at + 2));
+    assert.equal(store.currentCompact, undefined, `${version}: its reply ends it`);
+  }
+  // A synthetic or API-error message is not a reply.
+  const store = new SessionActivityStore(S);
+  store.ingest([boundary('b1'), ...afterCompact,
+    { type: 'assistant', uuid: 'syn', sessionId: S, message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } },
+    { type: 'assistant', uuid: 'err', sessionId: S, isApiErrorMessage: true, message: { role: 'assistant', model: 'claude', content: [{ type: 'text', text: 'API Error' }] } }]);
+  assert.equal(store.currentCompact?.id, 'b1');
+});
+
+test('a manual compaction followed by replies to background task notifications, no prompt: the first reply ends it (2.1.332 shape)', () => {
+  const store = new SessionActivityStore(S);
+  const notice = (uuid: string) => user(uuid, '<task-notification>done</task-notification>', { origin: { kind: 'task-notification' }, promptSource: 'system' });
+  const queuedNotice = { type: 'attachment', uuid: 'qn', sessionId: S, attachment: { type: 'queued_command', prompt: 'done', commandMode: 'task-notification', origin: { kind: 'task-notification' } } };
+  store.ingest([boundary('b1'), ...afterCompact, notice('n1'), notice('n2'), queuedNotice]);
+  assert.equal(store.currentCompact?.id, 'b1', 'notifications alone are not the conversation moving on');
+  store.ingest([{ type: 'assistant', uuid: 'a1', sessionId: S, message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'Both runs finished.' }] } }]);
   assert.equal(store.currentCompact, undefined);
 });

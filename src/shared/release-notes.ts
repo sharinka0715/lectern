@@ -43,6 +43,8 @@ export const releaseNotes: ReleaseNote[] = [
         'In a folder whose history is not scanned, running conversations show their own titles and renames instead of New conversation.'],
       ['点「扫描所有对话」后，已打开的对话不再反复提示「Workspace changed while scanning」，同目录的 @ 文件补全也不再失效。',
         'After Scan all conversations, open conversations no longer keep showing Workspace changed while scanning, and @ file completion in that folder works again.'],
+      ['压缩后 Claude 已经接着回复（自动压缩或后台任务触发）时，输入框上方不再一直显示「上次压缩完成」。',
+        'Last compaction finished no longer stays above the input box once Claude has replied after the compaction, as after an automatic one or a background task.'],
     ],
   },
   {
