@@ -190,7 +190,9 @@ process.stdin.on('data',data=>{const text=data.toString();fs.appendFileSync(repo
       const result = await original(target, script, options);
       if (!edited && sendsKey(script, replacement!.paneId!, 'Down')) {
         edited = true;
-        await backend.discover({ ...workspace, name: 'Edited workspace configuration' });
+        // Saving an edited folder invalidates it (Controller.saveWorkspace). Its name or scan
+        // choice alone is not part of the folder's identity (workspaceSignature).
+        backend.invalidateWorkspace(workspace.id);
       }
       return result;
     };

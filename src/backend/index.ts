@@ -108,6 +108,12 @@ export interface ReadResult { /** Asked for with `listSubagents`: every subagent
 export class SessionMappingError extends Error {
   constructor(message: string) { super(message); this.name = 'SessionMappingError'; }
 }
+/** What a folder's sessions, bindings and caches depend on: its machine and directory. Its
+ * name and history-scan choice are not: enabling the scan keeps open conversations, which
+ * still hold the folder as it was, and those must not count as an edit (invalidateWorkspace). */
+function workspaceSignature({ id, kind, host, port, cwd }: Workspace): string {
+  return JSON.stringify({ id, kind, host, port, cwd });
+}
 export class WorkspaceChangedError extends Error {
   constructor() { super('Workspace changed while scanning; refresh to use the current session bindings'); }
 }
@@ -231,14 +237,14 @@ export class Backend {
   private configRevision(workspaceId: string): number { return this.workspaceConfigRevisions.get(workspaceId) ?? 0; }
   private touchWorkspace(workspaceId: string): void { this.workspaceRevisions.set(workspaceId, this.revision(workspaceId) + 1); }
   private assertCurrentWorkspace(workspace: Workspace, revision: number): void {
-    if (this.revision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== JSON.stringify(workspace)) throw new WorkspaceChangedError();
+    if (this.revision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== workspaceSignature(workspace)) throw new WorkspaceChangedError();
   }
   private assertCurrentWorkspaceConfiguration(workspace: Workspace, revision: number): void {
-    if (this.configRevision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== JSON.stringify(workspace)) throw new DirectoryTrustError(t('backend.workspaceConfigChanged'));
+    if (this.configRevision(workspace.id) !== revision || this.workspaceSignatures.get(workspace.id) !== workspaceSignature(workspace)) throw new DirectoryTrustError(t('backend.workspaceConfigChanged'));
   }
   private async locate(workspace: Workspace, verifyTools = true): Promise<Location> {
     validateWorkspace(workspace);
-    const signature = JSON.stringify(workspace);
+    const signature = workspaceSignature(workspace);
     if (this.workspaceSignatures.has(workspace.id) && this.workspaceSignatures.get(workspace.id) !== signature) this.invalidateWorkspace(workspace.id);
     this.workspaceSignatures.set(workspace.id, signature);
     const revision = this.revision(workspace.id);
@@ -785,7 +791,7 @@ exit 1`;
     // A new or resumed conversation needs both: refuse with what to install, not a shell error.
     await this.requireTools(workspace, ['tmux', 'claude']);
     const location = await this.locate(workspace);
-    const runtimeKey = JSON.stringify(workspace);
+    const runtimeKey = workspaceSignature(workspace);
     if (getDiagnosticsInfo().enabled && !this.loggedRuntimes.has(runtimeKey)) {
       this.loggedRuntimes.add(runtimeKey);
       if (this.options.claudeCommand) diagnostic.event('backend.runtime', { workspaceId: workspace.id, executable: this.options.claudeCommand, customExecutable: true, versionProbeSkipped: true });
@@ -1452,7 +1458,7 @@ ${after}`;
     if (pane && capturedAt && !viewportError) this.rememberNavigation(workspace, pane, { status: currentSession.status!, statusDetail: currentSession.statusDetail, background: currentSession.background }, capturedAt);
     diagnostic.event('backend.jsonl.read', { workspaceId: workspace.id, sessionId, path: session.path ?? candidates[0], pathInferred: !session.path, inode, offset, windowBytes: window.data.length, selectedBytes: jsonl.length, fileSize: size, olderBefore: page?.olderCursor?.before, ...summarize(jsonl), reset, hasMore: nextOffset < size, generation, cursorCommitted: this.readGenerations.get(key) === generation }, 'debug');
     if (this.sessions.get(key) === session) this.sessions.set(key, currentSession);
-    const directoryTrust = this.directoryTrust.observe({ workspaceId: workspace.id, sessionId, targetKey: `${JSON.stringify(workspace)}:${this.configRevision(workspace.id)}` }, { paneId: pane?.id, active: !!pane?.active && !viewportError, viewport, cwdAliases: location.cwdAliases });
+    const directoryTrust = this.directoryTrust.observe({ workspaceId: workspace.id, sessionId, targetKey: `${workspaceSignature(workspace)}:${this.configRevision(workspace.id)}` }, { paneId: pane?.id, active: !!pane?.active && !viewportError, viewport, cwdAliases: location.cwdAliases });
     if (pane?.active && pane.managed && !viewportError && viewport && parseAutoModeNudge(viewport)) this.declineAutoModeNudge(workspace, sessionId, pane.id);
     // These fields survive a desktop restart but change on a new native
     // registration, tmux server, pane or resolved target.
@@ -2079,13 +2085,13 @@ sleep 0.1`, false, undefined, true), async () => {
   async getDirectoryTrust(workspace: Workspace, sessionId: string): Promise<DirectoryTrustSnapshot | undefined> {
     return this.withInput(workspace, sessionId, async () => {
       const location = await this.locate(workspace), session = await this.getSession(workspace, sessionId), revision = this.configRevision(workspace.id);
-      return this.directoryTrust.get(this.directoryTrustDriver(workspace, session, location, revision), { workspaceId: workspace.id, sessionId, targetKey: `${JSON.stringify(workspace)}:${revision}` });
+      return this.directoryTrust.get(this.directoryTrustDriver(workspace, session, location, revision), { workspaceId: workspace.id, sessionId, targetKey: `${workspaceSignature(workspace)}:${revision}` });
     });
   }
   async respondDirectoryTrust(workspace: Workspace, sessionId: string, token: string, decision: DirectoryTrustDecision): Promise<DirectoryTrustResult> {
     return this.withInput(workspace, sessionId, async () => {
       const location = await this.locate(workspace), session = await this.getSession(workspace, sessionId), revision = this.configRevision(workspace.id);
-      return this.directoryTrust.respond(this.directoryTrustDriver(workspace, session, location, revision), { workspaceId: workspace.id, sessionId, targetKey: `${JSON.stringify(workspace)}:${revision}` }, token, decision);
+      return this.directoryTrust.respond(this.directoryTrustDriver(workspace, session, location, revision), { workspaceId: workspace.id, sessionId, targetKey: `${workspaceSignature(workspace)}:${revision}` }, token, decision);
     });
   }
   async dispose(): Promise<void> { this.completions.reset(); await this.transport.dispose(); await this.options.historyIndexStore?.flush(); }

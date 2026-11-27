@@ -41,6 +41,8 @@ export const releaseNotes: ReleaseNote[] = [
     fixes: [
       ['未扫描历史的目录里，运行中的对话按自己的记录显示标题和改名，不再一律显示「新对话」。',
         'In a folder whose history is not scanned, running conversations show their own titles and renames instead of New conversation.'],
+      ['点「扫描所有对话」后，已打开的对话不再反复提示「Workspace changed while scanning」，历史也不再被反复重扫。',
+        'After Scan all conversations, open conversations no longer keep showing Workspace changed while scanning, and history is no longer rescanned over and over.'],
     ],
   },
   {

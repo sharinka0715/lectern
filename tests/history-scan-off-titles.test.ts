@@ -46,6 +46,15 @@ test('a folder without a history scan titles its running conversations from thei
     await writeFile(join(project, `${old}.jsonl`), JSON.stringify({ type: 'user', uuid: randomUUID(), sessionId: old, cwd, timestamp: new Date().toISOString(), message: { role: 'user', content: 'An old conversation' } }) + '\n');
     const listed = (await backend.discover(workspace)).sessions.map(item => item.id);
     assert.deepEqual(listed, [session.id]);
+    // "Scan all conversations" saves the folder without the flag, while the open conversation keeps
+    // reading with the folder it was opened with: neither is an edit (WorkspaceChangedError, lost caches).
+    const { historyScan: _, ...scanned } = workspace;
+    let invalidations = 0;
+    const invalidate = backend.invalidateWorkspace.bind(backend);
+    backend.invalidateWorkspace = id => { invalidations++; invalidate(id); };
+    for (let i = 0; i < 3; i++) await Promise.all([backend.readSession(workspace, session.id), backend.discover(scanned)]);
+    assert.equal(invalidations, 0);
+    assert.deepEqual((await backend.discover(scanned)).sessions.map(item => item.id).sort(), [session.id, old].sort());
   } finally {
     await backend.dispose();
     privateServer.cleanup();
