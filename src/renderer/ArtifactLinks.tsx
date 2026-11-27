@@ -2,6 +2,10 @@ import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } 
 import { useLocale } from './i18n';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import type { PluggableList } from 'unified';
+import { dollarMath, isKatex, katexOptions } from './markdown-math';
 import type { Element, ElementContent, Root } from 'hast';
 import type { Parent as MdastParent, Root as MdastRoot, RootContent as MdastContent } from 'mdast';
 import { Check, Copy, Image as ImageIcon } from 'lucide-react';
@@ -64,6 +68,8 @@ function split<T>(text: string, refs: PathReference[], plain: (value: string) =>
 function linkFileText() {
   return (root: Root) => {
     function walk(parent: Root | Element) {
+      // A formula's text is TeX output, not prose that names files.
+      if (parent.type === 'element' && isKatex(parent)) return;
       if (parent.type === 'element' && parent.tagName === 'a') {
         for (const child of parent.children) {
           if (child.type === 'element' && child.tagName === 'img') child.properties.dataLinkImage = true;
@@ -134,8 +140,9 @@ function keepTildes() {
   };
 }
 
-const markdownPlugins = [remarkGfm, keepTildes];
-const filePlugins = [linkFileText];
+// Formulas: `$…$` and `$$…$$` (remark-math, guarded by dollarMath), set by KaTeX before files are linked.
+const markdownPlugins: PluggableList = [remarkGfm, remarkMath, [dollarMath, { also: [keepTildes()] }], keepTildes];
+const filePlugins: PluggableList = [[rehypeKatex, katexOptions], linkFileText];
 
 export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, onOpen, inlineImages = false }: { text: string; onOpen: OpenPath; inlineImages?: boolean }) {
   // Memoized: re-render on a language switch for its image and copy labels.

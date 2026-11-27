@@ -37,7 +37,10 @@ export function isLaterVersion(a: string, b: string): boolean {
 export const releaseNotes: ReleaseNote[] = [
   {
     version: '0.2.7',
-    features: [],
+    features: [
+      ['回复和 Markdown 预览会排版显示 $…$ 与 $$…$$ 数学公式，复制时得到公式原文，美元金额和 shell 变量仍按原文显示。',
+        'Replies and Markdown previews typeset $...$ and $$...$$ formulas and copy them as their TeX, while prices and shell variables stay as written.'],
+    ],
     fixes: [
       ['未扫描历史的目录里，运行中的对话按自己的记录显示标题和改名，不再一律显示「新对话」。',
         'In a folder whose history is not scanned, running conversations show their own titles and renames instead of New conversation.'],

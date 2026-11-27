@@ -163,7 +163,9 @@ function replyText(message: Element) {
   const runs: TextRun[] = [];
   let text = '';
   for (const block of message.querySelectorAll(REPLY_TEXT)) {
-    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    // A formula (KaTeX) is laid out from its own spans: splitting its text would break it.
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT,
+      { acceptNode: node => node.parentElement?.closest('.katex, .katex-error') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
     for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
       const visible = visibleText(node.data);
       if (!visible) continue;

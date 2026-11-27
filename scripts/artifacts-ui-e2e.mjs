@@ -270,6 +270,56 @@ async function verifyWrappedFileLinks(app, page, row, appendRows, cwd) {
   await resizeWindow(app, page, width, height);
 }
 
+/** Formulas: KaTeX's fonts load, `$$…$$` alone is a display formula that scrolls on its own, a path in
+ * a formula is not a file link, and copying gives each formula's TeX once (Ctrl+C and the menu). */
+async function verifyFormulas(app, page, row, appendRows, cwd) {
+  const file = 'demo/formula-input.txt';
+  await mkdir(path.join(cwd, 'demo'), { recursive: true });
+  await writeFile(path.join(cwd, file), 'formula input\n');
+  const display = String.raw`g=\frac1N\sum_i \hat A_i\sum_{t,k}\Big[\underbrace{\nabla_\theta\log\pi_\theta(y^k_{i,t}\mid c^k_{i,t})}_{\text{第一项：实际采到的 token 的 score}}-\underbrace{\mathbb E_{v\sim\mu(\cdot\mid c^k_{i,t})}\nabla_\theta\log\pi_\theta(v\mid c^k_{i,t})}_{\text{第二项：score 在 rollout 策略 }\mu\text{ 下的期望}}\Big]`;
+  const markdown = ['论文公式 (2) 是：', '', '$$ ' + display + ' $$', '',
+    String.raw`第二项是 $\nabla_\theta \log \pi_\theta$ 在 $\mu$ 下的期望，输入写在 $` + file + '$ 和 ' + file + '，费用 $5 到 $10。'].join('\n');
+  await appendRows([
+    row('user', { role: 'user', content: '解释公式。' }),
+    row('assistant', { id: randomUUID(), role: 'assistant', content: markdown, stop_reason: 'end_turn' }),
+  ]);
+  const reply = page.locator('.message-assistant:not([data-leaving])').filter({ hasText: '论文公式 (2) 是' });
+  await reply.locator('.katex-display').waitFor();
+  await reply.getByRole('button', { name: file, exact: true }).waitFor();
+  await reply.locator('[data-fade="in"], [data-text-fade]').first().waitFor({ state: 'hidden' });
+  const shape = await reply.evaluate(node => {
+    const content = node.querySelector('.message-content'), block = node.querySelector('.katex-display');
+    return { formulas: node.querySelectorAll('.katex').length, displays: node.querySelectorAll('.katex-display').length,
+      emphasis: node.querySelectorAll('.katex-display em, p em').length, linksInFormulas: node.querySelectorAll('.katex [data-file-path]').length,
+      overflow: getComputedStyle(block).overflowX, contentFits: content.scrollWidth <= content.clientWidth + 1,
+      katexFonts: [...document.fonts].filter(face => face.family.includes('KaTeX') && face.status === 'loaded').length };
+  });
+  assert.deepEqual({ ...shape, katexFonts: shape.katexFonts > 0 },
+    { formulas: 4, displays: 1, emphasis: 0, linksInFormulas: 0, overflow: 'auto', contentFits: true, katexFonts: true });
+  await reply.screenshot({ path: path.join(results, 'desktop-formula.png') });
+  const clipboard = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  // Ctrl+C on a selection from the first paragraph through the formula into the next paragraph.
+  await reply.evaluate(node => {
+    const paragraphs = node.querySelectorAll('.message-content p'), range = document.createRange();
+    range.setStart(paragraphs[0].firstChild, 0);
+    range.setEnd(paragraphs[paragraphs.length - 1].firstChild, 3);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+C' : 'Control+C');
+  await page.waitForFunction(() => true);
+  const copied = await clipboard();
+  assert.equal(copied.trim().split('\n').filter(Boolean).join('\n'), '论文公式 (2) 是：\n$$' + display + '$$\n第二项', copied);
+  const menu = page.locator('.context-menu:popover-open');
+  await reply.locator('.message-content p').last().dispatchEvent('contextmenu', { button: 2 });
+  await menu.getByRole('menuitem', { name: '复制纯文本' }).click();
+  const plain = await clipboard();
+  assert.equal(plain.split(display).length - 1, 1, 'The display formula once, as TeX');
+  assert.ok(plain.includes(String.raw`$\nabla_\theta \log \pi_\theta$`) && plain.includes('$' + file + '$') && plain.includes('费用 $5 到 $10'), plain);
+  assert.ok(!/[∑∇μ]/u.test(plain), 'No KaTeX glyphs or MathML text');
+  await page.evaluate(() => getSelection().removeAllRanges());
+}
+
 async function verifyCachedLinks(app, page, workspace, project) {
   const file = 'cached-example.md', marker = '缓存链接示例';
   const [first, second] = [randomUUID(), randomUUID()];
@@ -619,6 +669,7 @@ try {
   await drawer.waitFor({ state: 'detached' });
   await verifyReplyCwd(page, row, appendRows, cwd);
   await verifyWrappedFileLinks(app, page, row, appendRows, cwd);
+  await verifyFormulas(app, page, row, appendRows, cwd);
   // Control response order after the filesystem round trips to make late responses deterministic.
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler('lectern:previewArtifact');

@@ -661,6 +661,15 @@ code, pre, kbd { font-family: var(--font-mono); }
   font-size: .86em;
 }
 .markdown pre code { color: var(--text); }
+/* Formulas (KaTeX): a little larger than the prose; a wide display formula scrolls on its own. */
+.markdown .katex { font-size: 1.1em; }
+.markdown .katex-display {
+  margin: calc(10 * var(--ui-px)) 0;
+  padding: calc(2 * var(--ui-px)) 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.markdown .katex-error { color: var(--secondary-text); font-family: var(--font-mono); font-size: .86em; }
 .markdown a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); text-underline-offset: 3px; }
 .markdown a:hover { text-decoration-color: currentColor; }
 .markdown table { display: block; width: 100%; margin: 1em 0; overflow: auto; border-collapse: collapse; font-size: var(--text-ui); }

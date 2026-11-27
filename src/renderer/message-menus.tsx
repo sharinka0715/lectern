@@ -2,6 +2,7 @@ import { ChevronsDownUp, Copy, CornerDownLeft, Download, FileText, Link, Quote, 
 import type { ChatMessage, ToolBlock } from "../shared/types";
 import { copyWithToast, type MenuEntry } from "./ContextMenu";
 import { t } from '../shared/i18n';
+import { selectionWithFormulas, textWithFormulas } from "./markdown-math";
 
 type OpenPath = (path: string) => void;
 const icon = (Icon: typeof Copy) => <Icon size={14} />;
@@ -10,7 +11,7 @@ const icon = (Icon: typeof Copy) => <Icon size={14} />;
 export function selectionWithin(element: Element): string {
   const selection = globalThis.getSelection?.();
   if (!selection || selection.isCollapsed || !selection.anchorNode || !element.contains(selection.anchorNode)) return "";
-  return selection.toString();
+  return selectionWithFormulas(selection);
 }
 
 /** What sits under the pointer: a verified file reference, a link or a code block. */
@@ -38,7 +39,8 @@ export function messageMenu(event: { currentTarget: Element; target: EventTarget
   const selected = selectionWithin(event.currentTarget).trim();
   const { file, href, code } = pointedContent(event.target);
   const user = message.role === "user";
-  const plain = (event.currentTarget.querySelector(".message-content") as HTMLElement | null)?.innerText.trim() ?? message.text;
+  const content = event.currentTarget.querySelector(".message-content") as HTMLElement | null;
+  const plain = content ? textWithFormulas(content).trim() : message.text;
   return [
     !!selected && { label: t('composer.copySelection'), icon: icon(TextSelect), onSelect: () => copyWithToast(selected) },
     ...fileEntries(file, options.onOpenPath, options.workspaceId),

@@ -5,9 +5,13 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { installRendererDiagnostics } from "./diagnostics";
 import { applyLocale, useLocale } from "./i18n";
 import { systemLocale } from "../shared/i18n";
+import "katex/dist/katex.min.css";
+import { installFormulaCopy } from "./markdown-math";
 import "./styles.css";
 
 installRendererDiagnostics();
+// Copying a selection with a formula gives its TeX source as text.
+installFormulaCopy();
 
 /** Re-renders the whole workbench in place (state kept) when the language changes. */
 function Root() {
