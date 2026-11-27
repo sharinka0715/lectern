@@ -36,6 +36,14 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.7',
+    features: [],
+    fixes: [
+      ['未扫描历史的目录里，运行中的对话按自己的记录显示标题和改名，不再一律显示「新对话」。',
+        'In a folder whose history is not scanned, running conversations show their own titles and renames instead of New conversation.'],
+    ],
+  },
+  {
     version: '0.2.6',
     features: [],
     fixes: [

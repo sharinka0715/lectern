@@ -43,7 +43,7 @@ export const sel = {
 /** Workspaces the app starts with: one per folder, all on this machine, sharing
  * the sandbox's Claude configuration directory. */
 export async function writeWorkspaces(sandbox, folders) {
-  const entries = folders.map(folder => ({ id: folder.id, name: folder.name, kind: 'local', cwd: folder.cwd }));
+  const entries = folders.map(folder => ({ id: folder.id, name: folder.name, kind: 'local', cwd: folder.cwd, ...(folder.historyScan === false && { historyScan: false }) }));
   await writeFile(path.join(sandbox.profile, 'workspaces.json'), JSON.stringify(entries, null, 2));
   return entries;
 }

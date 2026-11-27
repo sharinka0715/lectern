@@ -251,8 +251,11 @@ export class HistoryIndex {
   // remote reads, but must not resurrect the old disk snapshot.
   invalidate() { this.revision++; }
 
-  async scan(transport: Transport, workspace: Workspace, dirs: string[], aliases = [workspace.cwd]) {
+  /** `sessions` limits the scan to those session IDs' transcripts (a folder without a
+   * history scan still titles its running conversations); otherwise every transcript. */
+  async scan(transport: Transport, workspace: Workspace, dirs: string[], aliases = [workspace.cwd], sessions?: readonly string[]) {
     const revision = ++this.revision;
+    const names = sessions ? sessions.map(id => q(`${id}.jsonl`)).join(' ') : '*.jsonl';
     const cache = this.files ?? (this.disk ? await (this.hydration ??= this.disk.read()) : new Map<string, IndexedFile>());
     const script = `set -eu
 count=0; index=0
@@ -261,7 +264,7 @@ for dir in ${dirs.map(q).join(' ')}; do
  printf '@%s\\n' "$index"; index=$((index + 1))
  [ -d "$dir" ] && [ ! -L "$dir" ] && [ ! -L "\${dir%/*}" ] || continue
  cd "$dir"; set --
- for file in *.jsonl; do
+ for file in ${names}; do
   case "$file" in (????????-????-????-????-????????????.jsonl) ;; (*) continue;; esac
   case "\${file%.jsonl}" in (*[!a-fA-F0-9-]*) continue;; esac
   [ -f "$file" ] && [ ! -L "$file" ] || continue

@@ -185,6 +185,7 @@ export class Backend {
   // unrelated UUID's in-flight trust confirmation. Only config changes do so.
   private readonly workspaceConfigRevisions = new Map<string, number>();
   private readonly historyIndexes = new Map<string, HistoryIndex>();
+  private readonly runningHistoryIndexes = new Map<string, HistoryIndex>();
   private readonly physicalPages = new Map<string, PhysicalHistoryPages>();
   private readonly sessions = new Map<string, SessionInfo>();
   private readonly cursors = new Map<string, LiveCursor>();
@@ -554,9 +555,18 @@ exit 1`;
     this.assertCurrentWorkspace(workspace, revision);
     let index = this.historyIndexes.get(workspace.id);
     if (!index) { index = new HistoryIndex(this.options.historyIndexStore?.forWorkspace(workspace, location)); this.historyIndexes.set(workspace.id, index); }
-    // A folder whose history the user has not asked for lists only running Lectern panes.
-    const [history, machinePanes] = await Promise.all([workspace.historyScan === false ? { files: [] as Awaited<ReturnType<HistoryIndex['scan']>>['files'], truncated: false, limited: false }
-      : index.scan(this.transport, workspace, location.projectDirs, location.cwdAliases), this.probe(workspace)]);
+    // A folder whose history the user has not asked for lists only running Lectern panes,
+    // titled from their own transcripts: a separate index of just those, never saved.
+    let history: Awaited<ReturnType<HistoryIndex['scan']>>, machinePanes: InternalPane[];
+    if (workspace.historyScan === false) {
+      machinePanes = await this.probe(workspace);
+      const running = [...new Set(machinePanes.flatMap(p => p.active || p.identityError ? [p.sessionId, p.boundSessionId] : []))]
+        .filter((id): id is string => !!id);
+      let runningIndex = this.runningHistoryIndexes.get(workspace.id);
+      if (!runningIndex) { runningIndex = new HistoryIndex(); this.runningHistoryIndexes.set(workspace.id, runningIndex); }
+      history = running.length ? await runningIndex.scan(this.transport, workspace, location.projectDirs, location.cwdAliases, running)
+        : { files: [], truncated: false, limited: false };
+    } else [history, machinePanes] = await Promise.all([index.scan(this.transport, workspace, location.projectDirs, location.cwdAliases), this.probe(workspace)]);
     const allPanes = machinePanes;
     const found = new Map<string, SessionInfo>();
     const unknownDirectories = history.files.filter(f => !f.metadata.cwd).length;
@@ -1153,6 +1163,8 @@ remaining=$(list_target)
     this.completions.reset(workspaceId);
     this.historyIndexes.get(workspaceId)?.invalidate();
     this.historyIndexes.delete(workspaceId);
+    this.runningHistoryIndexes.get(workspaceId)?.invalidate();
+    this.runningHistoryIndexes.delete(workspaceId);
     for (const key of this.physicalPages.keys()) if (key.startsWith(workspaceId + ':')) this.physicalPages.delete(key);
     void this.options.historyIndexStore?.remove(workspaceId);
     for (const key of this.navigationCache.keys()) if (key.startsWith(workspaceId + ':')) this.navigationCache.delete(key);

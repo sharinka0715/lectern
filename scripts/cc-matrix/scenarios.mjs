@@ -32,6 +32,7 @@ export const FEATURES = [
   { id: 'auto-mode-unavailable', title: "Auto mode can't check actions (server check not passed through, 2.1.321+): card, stay, then the tool's own permission card" },
   { id: 'auto-mode-unavailable-leave', title: "Auto mode can't check actions: leave for accept edits mode from the card, the session goes on" },
   { id: 'trust-card', title: 'Directory trust prompt answered from the trust card' },
+  { id: 'title-unscanned', title: 'A folder added without a history scan titles its running chat from its transcript, and after a rename' },
   { id: 'onboarding', title: 'Fresh config: first message waits for API-key approval and trust' },
   { id: 'streaming-preview', title: 'Streaming preview from the screen, then the JSONL reply' },
   { id: 'running-state', title: 'Running state detected (stop button, busy row)' },
@@ -231,7 +232,8 @@ export async function prepareFolders(sandbox, phase = 'main') {
   return {
     main: { id: 'ccm-main', name: 'ccm-main', cwd: main },
     perm: { id: 'ccm-perm', name: 'ccm-perm', cwd: perm },
-    fresh: { id: 'ccm-fresh', name: 'ccm-fresh', cwd: fresh },
+    // Added the way the app adds a folder: running chats only, no history scan.
+    fresh: { id: 'ccm-fresh', name: 'ccm-fresh', cwd: fresh, historyScan: false },
     tasks: { id: 'ccm-tasks', name: 'ccm-tasks', cwd: tasks },
   };
 }
@@ -416,7 +418,7 @@ export const SCENARIOS = [
   },
   {
     id: 'trust',
-    features: ['trust-card'],
+    features: ['trust-card', 'title-unscanned'],
     timeoutMs: 120_000,
     async run({ ui, page, api, sandbox, folders, check }) {
       api.script('trust', () => ({ text: 'Answered in a newly trusted folder (ccm-trust-reply).' }));
@@ -430,6 +432,22 @@ export const SCENARIOS = [
         await ui.waitReply('ccm-trust-reply', { timeout: 60_000 });
         const config = JSON.parse(await readFile(path.join(sandbox.config, '.claude.json'), 'utf8'));
         assert.equal(config.projects?.[folders.fresh.cwd]?.hasTrustDialogAccepted, true, 'Claude Code saved the trust decision');
+      });
+      await check('title-unscanned', async () => {
+        // The folder lists only its running chats; their titles still come from their own transcripts.
+        const id = await ui.activeSessionId(), title = `${sel.row(id)} .session-title`;
+        const shows = (text, timeout = 30_000) => page.waitForFunction(([selector, text]) => {
+          const shown = document.querySelector(selector)?.textContent?.trim() ?? '';
+          return text ? shown.includes(text) : !!shown && !/^(新对话|New conversation)$/.test(shown);
+        }, [title, text], { timeout });
+        await shows('');
+        await page.locator(sel.row(id)).hover();
+        await page.locator(`.session-row-wrap:has(${sel.row(id)}) .session-rename`).click();
+        const dialog = page.locator('dialog.session-rename-dialog');
+        await dialog.locator('input').fill('Unscanned folder chat');
+        await dialog.locator('button[type="submit"]').click();
+        await dialog.waitFor({ state: 'hidden', timeout: 40_000 });
+        await shows('Unscanned folder chat');
       });
     },
   },
