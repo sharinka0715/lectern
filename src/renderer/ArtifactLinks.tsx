@@ -5,9 +5,9 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import type { PluggableList } from 'unified';
-import { dollarMath, isKatex, katexOptions } from './markdown-math';
+import { isKatex, katexOptions } from './markdown-math';
+import { replySyntax } from './markdown-syntax';
 import type { Element, ElementContent, Root } from 'hast';
-import type { Parent as MdastParent, Root as MdastRoot, RootContent as MdastContent } from 'mdast';
 import { Check, Copy, Image as ImageIcon } from 'lucide-react';
 import { reportActionError } from './diagnostics';
 import { adjacentFileNames, artifactPath, findPathReferences, pathBasename, type PathReference } from './artifact-paths';
@@ -111,37 +111,8 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   </div>;
 }
 
-/** GFM strikethrough off. Models write "~" for ranges and approximations ("20~100 steps",
- * "~5%"), which remark-gfm reads as a deletion. Each deletion goes back to its own tildes
- * from the source and its children stay as parsed (code spans, links). Adjacent text is
- * merged again so a path such as "~/a" is still one text node for linkFileText. */
-function keepTildes() {
-  return (tree: MdastRoot, file: { value?: unknown }) => {
-    const source = String(file.value ?? '');
-    function walk(parent: MdastParent) {
-      const children = parent.children.flatMap((child): MdastContent[] => {
-        if ('children' in child) walk(child);
-        if (child.type !== 'delete') return [child];
-        const raw = source.slice(child.position?.start.offset ?? 0, child.position?.end.offset ?? 0);
-        const open = /^~+/.exec(raw)?.[0] ?? '~', close = /~+$/.exec(raw)?.[0] ?? open;
-        return [{ type: 'text', value: open }, ...child.children, { type: 'text', value: close }];
-      });
-      const merged: MdastContent[] = [];
-      for (const child of children) {
-        const last = merged.at(-1);
-        if (last?.type === 'text' && child.type === 'text') {
-          merged[merged.length - 1] = { type: 'text', value: last.value + child.value,
-            position: last.position && child.position && { start: last.position.start, end: child.position.end } };
-        } else merged.push(child);
-      }
-      parent.children = merged as typeof parent.children;
-    }
-    walk(tree);
-  };
-}
-
-// Formulas: `$…$` and `$$…$$` (remark-math, guarded by dollarMath), set by KaTeX before files are linked.
-const markdownPlugins: PluggableList = [remarkGfm, remarkMath, [dollarMath, { also: [keepTildes()] }], keepTildes];
+// GFM and formulas (`$…$`, `$$…$$`), then the reply's own fix-ups (replySyntax); KaTeX sets formulas before files are linked.
+const markdownPlugins: PluggableList = [remarkGfm, remarkMath, replySyntax];
 const filePlugins: PluggableList = [[rehypeKatex, katexOptions], linkFileText];
 
 export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, onOpen, inlineImages = false }: { text: string; onOpen: OpenPath; inlineImages?: boolean }) {

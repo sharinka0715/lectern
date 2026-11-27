@@ -48,6 +48,8 @@ export const releaseNotes: ReleaseNote[] = [
         'After Scan all conversations, open conversations no longer keep showing Workspace changed while scanning, and @ file completion in that folder works again.'],
       ['压缩后 Claude 已经接着回复（自动压缩或后台任务触发）时，输入框上方不再一直显示「上次压缩完成」。',
         'Last compaction finished no longer stays above the input box once Claude has replied after the compaction, as after an automatic one or a background task.'],
+      ['回复里紧跟中文标点的网址到标点为止，不再吞掉后面的文字和闭合粗体的 **。',
+        'A bare link followed by CJK punctuation now ends there instead of taking the text after it and the ** that closes its bold.'],
     ],
   },
   {

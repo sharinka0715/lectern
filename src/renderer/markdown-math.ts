@@ -1,6 +1,4 @@
 import type { Element } from 'hast';
-import type { Parent, PhrasingContent, Root, RootContent } from 'mdast';
-import type { Processor } from 'unified';
 // KaTeX's styles load once from main.tsx, which also installs installFormulaCopy (the tests import this file in Node).
 
 /** KaTeX: an invalid formula shows its source, `\href` and other trusted commands stay off. */
@@ -12,81 +10,6 @@ export function isKatex(element: Element) {
   const classes = element.properties.className;
   return Array.isArray(classes) && classes.some(name => katexClasses.has(String(name)));
 }
-type Position = { start: { offset?: number }; end: { offset?: number } };
-const offsets = (node: { position?: Position }) => {
-  const start = node.position?.start.offset, end = node.position?.end.offset;
-  return start === undefined || end === undefined ? undefined : [start, end] as const;
-};
-function withoutPositions<T>(node: T): T {
-  if (node && typeof node === 'object') {
-    delete (node as { position?: unknown }).position;
-    for (const child of (node as { children?: unknown[] }).children ?? []) withoutPositions(child);
-  }
-  return node;
-}
-
-/**
- * remark-math reads every `$…$` as a formula, but replies also write prices and shell variables
- * ("costs $5 and $10", "$HOME and $PATH"). One `$` opens a formula only as Pandoc reads it: no
- * space just inside either `$`, and no digit right after the closing one. Otherwise that `$` is
- * text and the rest of its parent is read again from after it (a later `$x$` stays a formula).
- * `$$…$$` is always a formula; alone in a paragraph it is set as a display formula.
- */
-type Transform = (tree: Root, file: { value?: unknown }) => void;
-/** `also`: the remark transforms after this one, applied to text read again here (the parser
- * already knows GFM and math syntax; the processor's run would go on to HTML). */
-export function dollarMath(this: Processor, { also = [] }: { also?: Transform[] } = {}) {
-  const processor = this;
-  const transform: Transform = (tree, file) => {
-    const source = String(file.value ?? '');
-    function reread(parent: Parent, index: number, from: number) {
-      const last = offsets(parent.children.at(-1) as RootContent), to = last?.[1] ?? from;
-      const rest = source.slice(from, to);
-      let replacement: RootContent[] = [{ type: 'text', value: source.slice(from - 1, to) }];
-      if (!rest.trim()) replacement = [{ type: 'text', value: '$' + rest }];
-      else if (parent.type !== 'link' && parent.type !== 'linkReference') {
-        // Read as the middle of a line: a zero-width space first (as a character reference, so it
-        // counts as punctuation for `_` emphasis) keeps "5. Then" or "# x" from starting a block.
-        const text = '&#8203;' + rest, read = processor.parse(text) as Root;
-        for (const step of [transform, ...also]) step(read, { value: text });
-        const [only] = read.children;
-        if (read.children.length === 1 && only.type === 'paragraph') {
-          const first = only.children[0];
-          if (first?.type === 'text' && first.value.startsWith('\u200b')) {
-            first.value = first.value.slice(1);
-            if (!first.value) only.children.shift();
-            replacement = [{ type: 'text', value: '$' }, ...withoutPositions(only).children as PhrasingContent[]];
-          }
-        }
-      }
-      parent.children.splice(index, parent.children.length - index, ...replacement as never[]);
-    }
-    function walk(parent: Parent) {
-      for (let i = 0; i < parent.children.length; i++) {
-        const child = parent.children[i];
-        if (child.type === 'inlineMath') {
-          const at = offsets(child);
-          if (!at || source.startsWith('$$', at[0])) continue;
-          const inner = source.slice(at[0] + 1, at[1] - 1);
-          if (inner && !/^\s|\s$/u.test(inner) && !/\d/u.test(source[at[1]] ?? '')) continue;
-          reread(parent, i, at[0] + 1);
-          return;
-        }
-        if ('children' in child) walk(child);
-      }
-      if (parent.type === 'paragraph') {
-        const shown = parent.children.filter(child => child.type !== 'text' || child.value.trim());
-        const [only] = shown, at = only && offsets(only);
-        if (shown.length === 1 && only.type === 'inlineMath' && at && source.startsWith('$$', at[0])) {
-          only.data = { ...only.data, hProperties: { ...only.data?.hProperties, className: ['language-math', 'math-display'] } };
-        }
-      }
-    }
-    walk(tree);
-  };
-  return transform;
-}
-
 /** The formula (its display block, if it has one) holding `node`. */
 function formulaAround(node: Node | null) {
   const element = node instanceof Element ? node : node?.parentElement;
