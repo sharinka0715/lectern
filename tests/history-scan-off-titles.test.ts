@@ -17,6 +17,7 @@ test('a folder without a history scan titles its running conversations from thei
   const root = await realpath(await mkdtemp(join(tmpdir(), 'lectern-scan-off-')));
   const config = join(root, 'config'), cwd = join(root, 'work');
   await mkdir(cwd, { recursive: true });
+  await writeFile(join(cwd, 'notes.md'), '# Notes\n');
   const workspace: Workspace = { id: 'scan-off-' + randomUUID().slice(0, 6), name: 'Work', kind: 'local', cwd, historyScan: false };
   fixtureClaudeConfig(config);
   const socket = 'scan-off-' + randomUUID().slice(0, 8);
@@ -55,6 +56,11 @@ test('a folder without a history scan titles its running conversations from thei
     for (let i = 0; i < 3; i++) await Promise.all([backend.readSession(workspace, session.id), backend.discover(scanned)]);
     assert.equal(invalidations, 0);
     assert.deepEqual((await backend.discover(scanned)).sessions.map(item => item.id).sort(), [session.id, old].sort());
+    // A new chat's @ list in the same folder meanwhile: invalidating the folder cancelled it and dropped its file index.
+    for (let i = 0; i < 3; i++) {
+      const [files] = await Promise.all([backend.completions.query(scanned, 'primary', `mention-${i}`, { kind: 'mention', prefix: 'no' }), backend.readSession(workspace, session.id)]);
+      assert.deepEqual(files.map(item => item.value), ['notes.md']);
+    }
   } finally {
     await backend.dispose();
     privateServer.cleanup();
