@@ -252,8 +252,11 @@ function ChatPane({ view, resumes, setResume }: {
     setArtifact(previous => {
       const trail = previous?.workspaceId === workspaceId && previous.sessionId === sessionId ? previous.trail : [];
       const last = trail.at(-1);
-      if (last && (('path' in last && 'path' in target && last.path === target.path) ||
-        ('attachment' in last && 'attachment' in target && last.attachment.id === target.attachment.id))) return previous;
+      // The file already shown: a citation moves it to those lines, otherwise nothing changes.
+      if (last && 'path' in last && 'path' in target && last.path === target.path) {
+        return target.lines && JSON.stringify(target.lines) !== JSON.stringify(last.lines) ? { workspaceId, sessionId, trail: [...trail.slice(0, -1), target] } : previous;
+      }
+      if (last && 'attachment' in last && 'attachment' in target && last.attachment.id === target.attachment.id) return previous;
       return { workspaceId, sessionId, trail: [...trail, target] };
     });
   }
@@ -1841,7 +1844,7 @@ function ChatPane({ view, resumes, setResume }: {
             <div className="resume-bar"><span>{t('app.permissionInTerminal')}</span><button onClick={() => setTerminalOpen(true)}>{t('app.viewTerminal')}</button></div> :
             <PermissionCard key={JSON.stringify([workspaceId, sessionId, paneId, snapshot?.panePid, permission.cardId, permission.kind])}
               permission={permission} unconfirmed={snapshot?.permissionUnconfirmed} busy={permissionBusy || busy || sending || settingUIBusy || !!snapshot?.settingBusy || !!snapshot?.trustBusy}
-              onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} onOpenPath={path => openArtifact({ path })} />)}
+              onAction={answerPermission} onViewTerminal={() => setTerminalOpen(true)} onOpenPath={(path, lines) => openArtifact({ path, lines })} />)}
           {directoryTrust && (
             <DirectoryTrustCard
               key={`${workspaceId}:${sessionId}:${directoryTrust.paneId}:${directoryTrust.cwd}`}
@@ -2039,7 +2042,7 @@ function ChatPane({ view, resumes, setResume }: {
       {/* Each split pane keeps its own file panel beside its chat (the activity card floats inside it). */}
       {drawer && workspace && <ArtifactDrawer key={JSON.stringify([workspace.id, sessionId, drawer.trail.length, drawer.trail.at(-1)])}
         workspace={workspace} sessionId={sessionId} target={drawer.trail.at(-1)!} canGoBack={drawer.trail.length > 1}
-        onClose={closeArtifact} onOpen={path => openArtifact({ path })}
+        onClose={closeArtifact} onOpen={(path, lines) => openArtifact({ path, lines })}
         onBack={() => setArtifact(previous => previous && previous.trail.length > 1 ? { ...previous, trail: previous.trail.slice(0, -1) } : previous)} />}
       </SplitWorkspace>
       </div>

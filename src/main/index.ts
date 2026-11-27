@@ -455,7 +455,7 @@ async function boot() {
     previewInlineImageThumbnail: (id, reference) => artifactAccess.previewInlineImageThumbnail(id, reference),
     resolveArtifactReferences: (id, references, identity) => artifactAccess.resolve(id, references, identity),
     listArtifactDirectory: (id, reference, offset) => artifactAccess.list(id, reference, offset),
-    previewArtifact: (id, reference) => artifactAccess.preview(id, reference),
+    previewArtifact: (id, reference, whole) => artifactAccess.preview(id, reference, whole === true),
     downloadArtifact: (id, reference) => artifactAccess.download(id, reference),
     saveWorkspace: w => {
       if (demo) throw new Error(t('main.demoIsolatedOnly'));

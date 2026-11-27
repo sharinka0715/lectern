@@ -66,7 +66,7 @@ function SourceHistory({ workspace, tipId, sourceId, view, sizeMiB, replyDetail,
         <p className="artifact-unavailable">{t('dialogs.noHandoffMessages')}</p>
       </ConversationTranscript>
       {trail.length > 0 && <ArtifactDrawer key={trail.length} workspace={workspace} sessionId={tipId} target={trail[trail.length - 1]}
-        canGoBack={trail.length > 1} onBack={() => setTrail(t => t.slice(0, -1))} onClose={() => setTrail([])} onOpen={path => open({path})} />}
+        canGoBack={trail.length > 1} onBack={() => setTrail(t => t.slice(0, -1))} onClose={() => setTrail([])} onOpen={(path, lines) => open({ path, lines })} />}
     </div>
   </>;
 }

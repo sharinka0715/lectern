@@ -1,5 +1,5 @@
 import { Fragment, useMemo, type ReactNode } from "react";
-import { findPathReferences } from "./artifact-paths";
+import { findPathReferences, type OpenPath } from "./artifact-paths";
 import { FileLink } from "./ArtifactLinks";
 import { shellTokens } from "./shell-tokens";
 
@@ -7,7 +7,7 @@ import { shellTokens } from "./shell-tokens";
  * A shell command with its parts coloured (command, flags, variables, strings,
  * operators). With `onOpen`, file paths in it stay links, as in other tool text.
  */
-export function ShellCode({ text, onOpen, className }: { text: string; onOpen?: (path: string) => void; className?: string }) {
+export function ShellCode({ text, onOpen, className }: { text: string; onOpen?: OpenPath; className?: string }) {
   const nodes = useMemo(() => {
     const refs = onOpen ? findPathReferences(text) : [];
     // Cut tokens at link edges so a link may span several coloured pieces.
@@ -29,7 +29,7 @@ export function ShellCode({ text, onOpen, className }: { text: string; onOpen?: 
       while (index < pieces.length && pieces[index].start < ref.start) out.push(piece(pieces[index++]));
       const inside: ReactNode[] = [];
       while (index < pieces.length && pieces[index].start < ref.end) inside.push(piece(pieces[index++]));
-      out.push(<FileLink key={`link-${ref.start}`} path={ref.path} onOpen={onOpen!}>{inside}</FileLink>);
+      out.push(<FileLink key={`link-${ref.start}`} path={ref.path} lines={ref.lines} onOpen={onOpen!}>{inside}</FileLink>);
     }
     while (index < pieces.length) out.push(piece(pieces[index++]));
     return out;

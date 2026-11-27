@@ -5,7 +5,7 @@ import { diagnostic } from '../diagnostics';
 
 /** What the endpoint's artifact policy lets `@` completion list. */
 export interface FileScope {
-  locate(reference: string): { absolute: string; base: string; external: boolean; documents?: string; protectedRoots: string[]; privacyRoots?: string[] };
+  locate(reference: string): { absolute: string; base: string; external: boolean; hidden: boolean; hiddenRoots: string[]; privacyRoots?: string[] };
   /** Never listed or entered (credentials, keys, VCS metadata): `find -iname` globs. */
   secrets: string[];
   /** Listed but entered only when the user `@`s into them (dependency and build trees): literal names. */
@@ -126,8 +126,8 @@ function scanScript(base: string, parts: string[], target: ReturnType<FileScope[
   const env = {
     LECTERN_LIMITS: [limits.maxEntries, limits.maxBytes, limits.maxDepth, limits.fanout, limits.scanSeconds].join(' '),
     LECTERN_PRUNE: prune, LECTERN_NAME: filter, LECTERN_HEAVY: scope.heavy.map(name => name.toLowerCase()).join('\n'),
-    // Protected roots (Claude configuration) are hidden; macOS privacy folders are listed, never read.
-    LECTERN_HIDE: below(target.protectedRoots).join('\n'), LECTERN_KEEP: below(target.privacyRoots ?? []).join('\n'),
+    // Hidden roots (Claude configuration) are not listed; macOS privacy folders are listed, never read.
+    LECTERN_HIDE: below(target.hiddenRoots).join('\n'), LECTERN_KEEP: below(target.privacyRoots ?? []).join('\n'),
   };
   const enter = (part: string, i: number) => `[ ! -L ${q('./' + part)} ] && cd -P ${q('./' + part)} && [ "$(pwd -P)" = ${q(posix.join(base, ...parts.slice(0, i + 1)))} ] || { echo E; exit 0; }\n`;
   return `set -f\nPATH=/usr/bin:/bin; export PATH; unset CDPATH; LC_ALL=C; export LC_ALL\n`
@@ -238,7 +238,7 @@ export class FileIndex {
     const wsKey = fileIndexWorkspaceKey(ws), scope = await abortable(this.scope(ws, wsKey), signal);
     let root, dir;
     try { root = scope.locate('.'); dir = scope.locate(parts.join('/') || '.'); } catch { return []; }
-    if (root.external || dir.external || root.documents || dir.documents) return [];
+    if (root.external || dir.external || root.hidden || dir.hidden) return [];
     const found = await this.source(ws, wsKey, parts.join('/'), signal);
     if (!found) return [];
     const top: Candidate[] = [];
@@ -316,7 +316,7 @@ export class FileIndex {
       failed(ws, error);
     });
   }
-  /** The endpoint's policy (physical folder, protected roots), cached like an index. */
+  /** The endpoint's policy (physical folder, hidden roots), cached like an index. */
   private scope(ws: Workspace, wsKey: string): Promise<FileScope> {
     const now = this.limits.now(), hit = this.scopes.get(wsKey);
     if (hit && now - hit.at < this.limits.ttlMs) return hit.scope;
@@ -371,7 +371,7 @@ export class FileIndex {
   private async walk(ws: Workspace, wsKey: string, key: string, dir: string, filter?: string): Promise<DirIndex> {
     const scope = await this.scope(ws, wsKey), started = performance.now(), scannedAt = this.limits.now();
     const parts = dir ? dir.split('/') : [], root = scope.locate('.'), target = scope.locate(dir || '.');
-    if (root.external || target.external || root.documents || target.documents)
+    if (root.external || target.external || root.hidden || target.hidden)
       return { key, dir, filter, paths: [], leaves: [], dirs: new Set(), listed: new Set(['']), truncated: false, scannedAt };
     // A name-filtered listing reads one folder; the endpoint matches the longest ASCII run
     // byte for byte (folding differs there), the full name is matched here.

@@ -105,7 +105,7 @@ test('attached images outside the folder get bounded thumbnails, decoded once un
   assert.equal(await decodes(), 3);
 });
 
-test('attached thumbnails cache failures, skip oversized files and still refuse links and protected paths', posix, async t => {
+test('attached thumbnails cache failures, skip oversized files and read links and dotfolders like any file', posix, async t => {
   const { base, cwd, outside, workspace, access, bodies, decodes } = await counted(t);
   const text = join(outside, 'notes.png'), huge = join(outside, 'huge.png');
   await writeFile(text, 'not an image');
@@ -119,9 +119,10 @@ test('attached thumbnails cache failures, skip oversized files and still refuse 
   await writeFile(join(base, 'real.png'), png(4, 4, () => [1, 2, 3]));
   await symlink(join(base, 'real.png'), join(outside, 'link.png'));
   await mkdir(join(outside, '.ssh')); await writeFile(join(outside, '.ssh', 'key.png'), png(4, 4, () => [1, 2, 3]));
-  for (const path of [join(outside, 'link.png'), join(outside, '.ssh', 'key.png'), join(cwd, '.claude', 'x.png'), '/etc/shadow']) {
-    await assert.rejects(() => access.attachmentThumbnail(workspace.id, path));
+  for (const path of [join(outside, 'link.png'), join(outside, '.ssh', 'key.png')]) {
+    assert.equal((await access.attachmentThumbnail(workspace.id, path)).path, path);
   }
+  await assert.rejects(() => access.attachmentThumbnail(workspace.id, join(cwd, '.claude', 'missing.png')));
   // The chat's automatic thumbnails still read only inside the folder.
   await writeFile(join(outside, 'ok.png'), png(4, 4, () => [1, 2, 3]));
   await assert.rejects(() => access.previewInlineImageThumbnail(workspace.id, join(outside, 'ok.png')));

@@ -41,7 +41,7 @@ Nothing extra is installed on the remote machine. Claude Code there keeps its ow
 - **Host check.** Lectern checks each machine for tmux and Claude Code and, when one is missing, shows install commands for that system.
 - **Update check.** Lectern looks for new releases on GitHub and asks before downloading. Downloads are verified against `SHA256SUMS` and never installed automatically.
 - **English and Simplified Chinese.** Lectern follows the system language; switch it any time in Settings › Appearance.
-- **Private.** No telemetry. Apart from the update check on GitHub, Lectern only talks to your own machines. Lectern does not read Claude's credential store, and remote images in Markdown are not loaded.
+- **Private.** No telemetry. Apart from the update check on GitHub, Lectern only talks to your own machines. Lectern never reads Claude's credential store on its own (only a file you open yourself in the file preview), and remote images in Markdown are not loaded.
 - **Conversation sorting.** Browse chats by project, or sort chats across all local and SSH projects by last update. The active-first view puts replies, confirmations, and background work ahead of other chats.
 
 ## Screenshots

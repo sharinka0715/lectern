@@ -5,7 +5,7 @@ import { ReplyCwd, useArtifactResolutions, useArtifactScope } from "./ArtifactRe
 import { showContextMenu } from "./ContextMenu";
 import { messageMenu, toolMenu } from "./message-menus";
 import { ArtifactMarkdown, FileLink, LinkedToolText, LinkedUserText } from "./ArtifactLinks";
-import { isRelativePath, pathBasename, pathFromCwd } from "./artifact-paths";
+import { isRelativePath, pathBasename, pathFromCwd, type OpenPath } from "./artifact-paths";
 import { AttachmentImage } from './ChatImage';
 import { MessageAttachmentCards, MessageFileChip } from './AttachmentCards';
 import { confirmFile, isAttachedPath, isChipPath } from './attachment-registry';
@@ -22,7 +22,6 @@ import type { ReplyDetail } from "./desktop-state";
 import { formatNumber, t } from '../shared/i18n';
 import { goalDurationText } from './GoalStatus';
 
-type OpenPath = (path: string) => void;
 
 /** Foreground shells still running, keyed by tool_use id (App supplies them). */
 export const LiveShells = createContext<ReadonlyMap<string, LiveShell>>(new Map());

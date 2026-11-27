@@ -158,11 +158,13 @@ test('redirect files: read windows of a growing file under the attachment rules'
   await writeFile(path.join(outside, 'out.log'), 'outside\n');
   const away = await backend.artifacts.readWindow(workspace, path.join(outside, 'out.log'), { limit: 100 });
   assert.ok(!away.unchanged && away.bytes.toString() === 'outside\n');
-  // Links, credentials, the Claude configuration, system paths and folders are refused.
+  // Any file reads like the others, links, dotfiles and the Claude configuration included; a folder is refused.
   await symlink(log, path.join(cwd, 'link.log'));
   await writeFile(path.join(cwd, '.env'), 'SECRET=1\n');
   await writeFile(path.join(config, 'settings.json'), '{}');
-  for (const refused of [path.join(cwd, 'link.log'), path.join(cwd, '.env'), path.join(config, 'settings.json'), '/proc/self/environ', path.join(cwd, 'logs')]) {
-    await assert.rejects(() => backend.artifacts.readWindow(workspace, refused, { limit: 100 }), Error, refused);
+  for (const [file, text] of [[path.join(cwd, 'link.log'), 'epoch 1\nepoch 2\nepoch 3\n'], [path.join(cwd, '.env'), 'SECRET=1\n'], [path.join(config, 'settings.json'), '{}']]) {
+    const window = await backend.artifacts.readWindow(workspace, file, { limit: 100 });
+    assert.ok(!window.unchanged && window.bytes.toString() === text, file);
   }
+  await assert.rejects(() => backend.artifacts.readWindow(workspace, path.join(cwd, 'logs'), { limit: 100 }));
 });

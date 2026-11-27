@@ -1,4 +1,5 @@
-import { memo, useEffect, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
+import type { LineRange } from './artifact-paths';
 import type { Segment } from './syntax-highlight';
 
 const byExtension: Record<string, string> = {
@@ -27,11 +28,17 @@ const highlighter = () => loader ??= import('./syntax-highlight');
 /**
  * Source text with optional highlighting, line numbers and wrapping. The plain lines show at once;
  * highlighted lines replace them when the grammar has loaded. Line numbers are generated
- * content, so selecting and copying returns the file's own text.
+ * content, so selecting and copying returns the file's own text. `focus` (a citation such as
+ * a.ts:12-20) marks those lines and scrolls the first of them to the middle of the view.
  */
-export const CodePreview = memo(function CodePreview({ text, name, highlight, lineNumbers, wrap, className = '' }: {
-  text: string; name: string; highlight: boolean; lineNumbers: boolean; wrap: boolean; className?: string;
+export const CodePreview = memo(function CodePreview({ text, name, highlight, lineNumbers, wrap, focus, className = '' }: {
+  text: string; name: string; highlight: boolean; lineNumbers: boolean; wrap: boolean; focus?: LineRange; className?: string;
 }) {
+  const pre = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const line = focus && pre.current?.querySelector('code')?.children[Math.max(0, focus.start - 1)];
+    line?.scrollIntoView({ block: 'center', inline: 'nearest' });
+  }, [focus, text]);
   const language = highlight ? codeLanguage(name) : undefined;
   const [highlighted, setHighlighted] = useState<{ text: string; language: string; lines: Segment[][] }>();
   useEffect(() => {
@@ -48,10 +55,11 @@ export const CodePreview = memo(function CodePreview({ text, name, highlight, li
   // A final newline ends the last line rather than starting an empty one.
   const last = source.at(-1);
   const lines = source.length > 1 && (typeof last === 'string' ? !last : !last?.length) ? source.slice(0, -1) : source;
-  return <pre className={`code-preview ${className}`.trim()} data-wrap={wrap} data-line-numbers={lineNumbers}
+  const focused = (index: number) => !!focus && index + 1 >= focus.start && index + 1 <= focus.end || undefined;
+  return <pre ref={pre} className={`code-preview ${className}`.trim()} data-wrap={wrap} data-line-numbers={lineNumbers}
     data-language={language} data-highlighted={!!current || undefined}
     style={{ '--line-digits': String(Math.max(2, String(lines.length).length)) } as CSSProperties}>
-    <code>{lines.map((line, index) => <span className="code-line" key={index}><span className="code-text">
+    <code>{lines.map((line, index) => <span className="code-line" key={index} data-focus={focused(index)}><span className="code-text">
       {typeof line === 'string' ? line : line.map((segment, at) => segment.className
         ? <span key={at} className={segment.className}>{segment.text}</span> : segment.text)}
       {'\n'}

@@ -110,7 +110,7 @@ export function TaskOutputDetail({ item, now, workspace, sessionId, view, openAr
       <div className="task-detail-label"><span>{t('activity.command')}</span>
         {item.command && <button type="button" className="icon-button" aria-label={t('activity.copyCommand')} title={t('activity.copyCommand')}
           onClick={() => void copyWithToast(item.command!)}><Copy size={12} /></button>}</div>
-      {item.command ? <ShellCode className="task-command" text={item.command} onOpen={path => openArtifact({ path })} /> : <p className="subagent-note">{t('activity.noCommand')}</p>}
+      {item.command ? <ShellCode className="task-command" text={item.command} onOpen={(path, lines) => openArtifact({ path, lines })} /> : <p className="subagent-note">{t('activity.noCommand')}</p>}
       {item.cwd && <p className="task-cwd" title={item.cwd}>{t('activity.workingDirectory', { path: item.cwd })}</p>}
     </div>
     {data && data.sources.length > 1 && <div className="task-sources" role="group" aria-label={t('activity.outputSources')}>

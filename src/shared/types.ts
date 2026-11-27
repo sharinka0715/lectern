@@ -68,6 +68,8 @@ export type ArtifactPreview = {
   notice?: string;
   text?: string;
   data?: Uint8Array;
+  /** A text file too large to open at once: nothing was read, the user chooses to open or download it. */
+  large?: boolean;
 } & (
   | { kind: 'directory'; entries: ArtifactEntry[]; nextOffset?: number }
   | { kind: 'text' | 'markdown' | 'code' | 'image' | 'pdf' | 'video' | 'audio' | 'document' | 'binary' }
@@ -627,7 +629,8 @@ export interface DesktopAPI {
   downloadMessageAttachment(workspaceId: string, sessionId: string, id: string): Promise<boolean>;
   resolveArtifactReferences(workspaceId: string, references: ArtifactReference[], workspaceIdentity?: string): Promise<ArtifactReferenceResult[]>;
   listArtifactDirectory(workspaceId: string, path?: string, offset?: number): Promise<ArtifactDirectory>;
-  previewArtifact(workspaceId: string, path: string): Promise<ArtifactPreview>;
+  /** `whole`: a text file over the open-at-once bound (`large`) is read anyway, up to its own bound. */
+  previewArtifact(workspaceId: string, path: string, whole?: boolean): Promise<ArtifactPreview>;
   downloadArtifact(workspaceId: string, path: string): Promise<boolean>;
   /** Undefined means the scan was superseded by a change to this folder or its bindings. */
   discover(workspaceId: string, baselines?: ReplyBaselines): Promise<WorkspaceDiscovery | undefined>;

@@ -3,6 +3,7 @@ import { Coins, MessageSquareWarning, ShieldAlert, ShieldQuestion, Terminal, X }
 import type { NativePermissionOption, PermissionAction, PermissionSnapshot } from '../shared/native-permission';
 import { LinkedText } from './LinkedText';
 import { ToolInput } from './ToolInput';
+import type { OpenPath } from './artifact-paths';
 import './question-card.css';
 import { t } from '../shared/i18n';
 
@@ -13,7 +14,7 @@ interface Props {
   onAction(action: PermissionAction): Promise<void>;
   onViewTerminal(): void;
   /** Opens a file named in the call's input (read with the recording hook). */
-  onOpenPath?(path: string): void;
+  onOpenPath?: OpenPath;
 }
 
 /** Diff rows in Claude Code's edit dialog: "  12 -old" / "  12 +new". */

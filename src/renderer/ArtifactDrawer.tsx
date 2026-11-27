@@ -6,11 +6,12 @@ import type { ArtifactDirectory, ArtifactPreview, MessageAttachment, Workspace }
 import { ArtifactMarkdown } from './ArtifactLinks';
 import { CodePreview } from './CodePreview';
 import { useDesktopState } from './desktop-state';
-import { parentPath, pathBasename } from './artifact-paths';
+import { parentPath, pathBasename, type LineRange, type OpenPath } from './artifact-paths';
 import { ArtifactReferenceScope } from './ArtifactReferenceScope';
 import { t } from '../shared/i18n';
+import { LARGE_TEXT_BYTES, TEXT_OPEN_BYTES } from '../shared/preview-limits';
 
-export type ArtifactTarget = { path: string } | { attachment: MessageAttachment };
+export type ArtifactTarget = { path: string; lines?: LineRange } | { attachment: MessageAttachment };
 
 // The panel width is the user's choice, kept across files, sessions and restarts.
 // Without one the stylesheet's responsive default applies.
@@ -114,7 +115,7 @@ interface DrawerProps {
   canGoBack: boolean;
   onBack: () => void;
   onClose: () => void;
-  onOpen: (path: string) => void;
+  onOpen: OpenPath;
 }
 
 /** Mounted with a fresh key on every navigation. Late reads and saves can only update the retired view. */
@@ -125,7 +126,12 @@ export function ArtifactDrawer({ workspace, sessionId, target, canGoBack, onBack
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const [source, setSource] = useState(false);
+  const [chosenSource, setSource] = useState<boolean>();
+  /** The user chose to open a file too large to open at once. */
+  const [whole, setWhole] = useState(false);
+  const lines = 'path' in target ? target.lines : undefined;
+  // Cited lines are lines of the source; a large file is not rendered as Markdown unless asked.
+  const source = chosenSource ?? (!!lines || (preview?.size ?? 0) > TEXT_OPEN_BYTES);
   const prefs = useDesktopState();
   const request = useRef<{ attempt: number; value: Promise<ArtifactPreview> }>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -142,12 +148,12 @@ export function ArtifactDrawer({ workspace, sessionId, target, canGoBack, onBack
     let active = true;
     // React StrictMode replays effects. Reuse this navigation's IPC read, including its native access prompt.
     if (!request.current || request.current.attempt !== attempt) request.current = {
-      attempt, value: 'path' in target ? window.desktop.previewArtifact(workspace.id, target.path)
+      attempt, value: 'path' in target ? window.desktop.previewArtifact(workspace.id, target.path, whole)
         : window.desktop.previewMessageAttachment(workspace.id, sessionId, target.attachment.id),
     };
     request.current.value.then(value => { if (active) setPreview(value); }, error => { if (active) setError(errorText(error)); });
     return () => { active = false; };
-  }, [workspace.id, sessionId, target, attempt]);
+  }, [workspace.id, sessionId, target, attempt, whole]);
   useEffect(() => {
     closeButton.current?.focus({ preventScroll: true });
     function escape(event: KeyboardEvent) {
@@ -265,12 +271,20 @@ export function ArtifactDrawer({ workspace, sessionId, target, canGoBack, onBack
         <button className="secondary-button" onClick={() => { setError(''); setAttempt(value => value + 1); }}><RefreshCw size={13} />{t('files.retry')}</button>
       </div> : !preview ? <div className="artifact-loading" role="status"><Loader2 size={17} className="rotating" />{t('files.reading')}</div> : <>
         {preview.notice && <p className="artifact-note">{preview.notice}</p>}
-        {preview.kind === 'directory' ? <DirectoryView initial={preview} workspaceId={workspace.id} onOpen={onOpen} />
+        {preview.large ? <div className="artifact-unavailable artifact-large" role="group" aria-label={t('files.largeTitle', { size: sizeLabel(preview.size) })}>
+          <FileText size={27} /><strong>{t('files.largeTitle', { size: sizeLabel(preview.size) })}</strong>
+          <p>{preview.size > LARGE_TEXT_BYTES ? t('files.largeOpensPart', { limit: LARGE_TEXT_BYTES / 1024 / 1024 }) : t('files.largeOpensSlowly')}</p>
+          <div className="artifact-large-actions">
+            <button type="button" className="primary-button" onClick={() => { setWhole(true); setPreview(undefined); setAttempt(value => value + 1); }}>{t('files.openAnyway')}</button>
+            <button type="button" className="secondary-button" disabled={saving} onClick={() => void download()}><Download size={13} />{t('files.downloadToComputer')}</button>
+          </div>
+        </div>
+        : preview.kind === 'directory' ? <DirectoryView initial={preview} workspaceId={workspace.id} onOpen={onOpen} />
           : preview.kind === 'markdown' && preview.text !== undefined && !source ? <div className="markdown artifact-markdown"><ArtifactReferenceScope workspace={workspace} file={'path' in target ? preview.path : undefined}>
             <ArtifactMarkdown text={preview.text} onOpen={onOpen} inlineImages={'path' in target} /></ArtifactReferenceScope></div>
           : preview.text === '' ? <p className="artifact-note">{t('files.emptyFile')}</p>
           : preview.text !== undefined && preview.kind !== 'document' ? <CodePreview className="artifact-text" text={preview.text} name={preview.name}
-            highlight={prefs.previewHighlight && preview.kind !== 'text'} lineNumbers={prefs.previewLineNumbers} wrap={prefs.previewWrap} />
+            highlight={prefs.previewHighlight && preview.kind !== 'text' && preview.size <= TEXT_OPEN_BYTES} lineNumbers={prefs.previewLineNumbers} wrap={prefs.previewWrap} focus={lines} />
           : preview.text !== undefined ? <pre className="artifact-text artifact-document">{preview.text}</pre>
           : (preview.kind === 'image' || preview.kind === 'pdf' || preview.kind === 'video' || preview.kind === 'audio') && preview.data ? <MediaPreview preview={preview} />
           : <div className="artifact-unavailable"><FileQuestion size={29} /><strong>{t(preview.truncated ? 'files.tooLarge' : 'files.unsupported')}</strong>

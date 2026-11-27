@@ -1,4 +1,8 @@
-export interface PathReference { start: number; end: number; path: string }
+/** Lines a citation names, 1-based and inclusive. */
+export interface LineRange { start: number; end: number }
+export interface PathReference { start: number; end: number; path: string; lines?: LineRange }
+/** Opens a file, at the cited lines when there are any. */
+export type OpenPath = (path: string, lines?: LineRange) => void;
 
 const drive = /^[a-z]:[\\/]/i;
 const scheme = /^[a-z][a-z\d+.-]*:/i;
@@ -8,6 +12,14 @@ const citation = /(?:#L\d+(?:C\d+)?(?:-L?\d+(?:C\d+)?)?|:\d+(?::\d+)?(?:-\d+)?)$
 // A slash between two ordinary words/numbers and a dotted property are not paths.
 const explicitPath = /^(?:\.{1,2}[\\/]|~[\\/]|\/|[a-z]:[\\/])/i;
 const fileName = /(?:^|[\\/])(?:README|LICENSE|NOTICE|Makefile|Dockerfile|Gemfile|Rakefile|Procfile|Jenkinsfile|CMakeLists\.txt|\.gitignore)$|\.(?:[cm]?[jt]sx?|css|scss|less|html?|vue|svelte|astro|wasm|c|cc|cpp|cxx|h|hh|hpp|m|mm|cs|fs|go|rs|rb|pyi?|java|kt|kts|swift|scala|php|pl|lua|r|dart|zig|exs?|sh|fish|zsh|bash|ps1|bat|cmd|sql|proto|graphql|md|mdx|markdown|mdown|txt|rst|tex|bib|jsonc?|jsonl|ya?ml|toml|xml|ini|conf|cfg|properties|lock|csv|tsv|log|diff|patch|ipynb|pdf|docx?|xlsx?|pptx?|odt|rtf|svg|png|jpe?g|gif|webp|avif|ico|bmp|mp[34]|m4[av]|wav|flac|ogg|opus|aac|mov|mkv|webm|avi|srt|vtt|ass|heic|tiff?|ttf|otf|woff2?|npy|npz|pt|pth|ckpt|safetensors|onnx|h5|hdf5|parquet|pkl|zip|tar|gz|tgz|bz2|xz|7z|bin)$/i;
+
+/** The lines a path's citation names: `a.ts:12`, `a.ts:12-20`, `a.ts:12:5`, `a.ts#L12-L20`. */
+export function citedLines(value: string): LineRange | undefined {
+  const m = /(?:#L(\d+)(?:C\d+)?(?:-L?(\d+)(?:C\d+)?)?|:(\d+)(?::\d+)?(?:-(\d+))?)$/i.exec(value);
+  const start = Number(m?.[1] ?? m?.[3]), end = Number(m?.[2] ?? m?.[4] ?? start);
+  if (!m || !Number.isSafeInteger(start) || start < 1 || !Number.isSafeInteger(end)) return;
+  return { start, end: Math.max(start, end) };
+}
 
 /** URL decoding belongs only to Markdown destinations. Literal paths may contain percent signs. */
 export function artifactPath(value: string, fromUrl = false): string | undefined {
@@ -82,8 +94,8 @@ export function findPathReferences(text: string, literal = false): PathReference
     const path = artifactPath(clean.replace(citation, ''));
     if (!path || path === '/' || path.length > 4096 || (!explicitPath.test(path) && !fileName.test(path) && !raw.startsWith('@') && !adjacentFileNames(path).length) || path === '.' || path === '..' ||
       /[*|<>=]/.test(path) || (!quoted && /\s/.test(path)) || /^[^@\s]+@[^/\s]+\.[a-z]+$/i.test(path) || /^(?:www\.|--?[^/]*=)/i.test(path)) return false;
-    const leading = raw.startsWith('@') ? 1 : 0;
-    out.push({ start: start + leading, end: start + leading + clean.length, path });
+    const leading = raw.startsWith('@') ? 1 : 0, lines = citedLines(clean);
+    out.push({ start: start + leading, end: start + leading + clean.length, path, ...lines && { lines } });
     return true;
   }
   if (literal && (!/\s/.test(text) || /[\\/]/.test(text)) && !/[\n\r=;`'"]/.test(text) && !/^(?:\S+\s+)(?:[-/]|\.\/)/.test(text) &&

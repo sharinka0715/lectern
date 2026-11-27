@@ -58,9 +58,9 @@ export class ArtifactAccess {
     request.remember('directory');
     return result;
   }
-  async preview(id: string, path: string) {
+  async preview(id: string, path: string, whole = false) {
     const request = this.context(id);
-    const result = await this.artifacts.preview(request.workspace, path, request.authorize);
+    const result = await this.artifacts.preview(request.workspace, path, request.authorize, whole);
     request.remember(result.kind === 'directory' ? 'directory' : 'file');
     return result;
   }

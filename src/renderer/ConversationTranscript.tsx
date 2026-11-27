@@ -2,6 +2,7 @@ import { Component, createRef, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Laptop, Server } from "lucide-react";
 import type { ChatMessage, MessageAttachment, SessionSnapshot, Workspace } from "../shared/types";
 import type { ArtifactTarget } from "./ArtifactDrawer";
+import type { LineRange } from "./artifact-paths";
 import { ArtifactReferenceScope } from "./ArtifactReferenceScope";
 import { MessageDisplay } from "./MessageDisplay";
 import { ConversationTaskList } from './ConversationTaskList';
@@ -364,7 +365,7 @@ export class ConversationTranscript extends Component<Props, State, ScrollAnchor
     if (upwards && top < 120) void this.loadEarlier();
   };
 
-  private openPath = (path: string) => this.props.openArtifact({ path });
+  private openPath = (path: string, lines?: LineRange) => this.props.openArtifact({ path, lines });
   private openAttachment = (attachment: MessageAttachment) =>
     this.props.openArtifact(attachment.path ? { path: attachment.path } : { attachment });
 

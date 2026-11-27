@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { adjacentFileNames, artifactPath, findPathReferences, parentPath, pathFromCwd, relativeToFile } from '../src/renderer/artifact-paths';
+import { adjacentFileNames, artifactPath, citedLines, findPathReferences, parentPath, pathFromCwd, relativeToFile } from '../src/renderer/artifact-paths';
 import { ArtifactMarkdown, LinkedToolText, LinkedUserText } from '../src/renderer/ArtifactLinks';
 import { MessageDisplay } from '../src/core/message-display';
 import { workingDirectory } from '../src/main/controller';
@@ -13,6 +13,13 @@ const noop = () => {};
 test('workspace paths support Unicode, literal percent, quoted names, file URLs, native mentions and source locations', () => {
   const text = 'See @assets, /repo/x.ts:4:8, ./src/a.md#L22-L24, "assets/图 100%.png" or https://host/x.png, me@example.org.';
   assert.deepEqual(findPathReferences(text).map(ref => ref.path), ['assets', '/repo/x.ts', './src/a.md', 'assets/图 100%.png']);
+  // A source location opens the file at those lines.
+  assert.deepEqual(findPathReferences(text).map(ref => ref.lines), [undefined, { start: 4, end: 4 }, { start: 22, end: 24 }, undefined]);
+  assert.deepEqual(findPathReferences('`src/backend/artifacts.ts:262-281`', true).map(({ path, lines }) => [path, lines]),
+    [['src/backend/artifacts.ts', { start: 262, end: 281 }]]);
+  assert.deepEqual(findPathReferences('见 src/a.ts:12。').map(({ path, lines }) => [path, lines]), [['src/a.ts', { start: 12, end: 12 }]]);
+  assert.deepEqual(['a.ts#L5', 'a.ts#L5C2-L9C1', 'a.ts:7:3', 'a.ts:9-3', 'a.ts', 'a.ts:0'].map(citedLines),
+    [{ start: 5, end: 5 }, { start: 5, end: 9 }, { start: 7, end: 7 }, { start: 9, end: 9 }, undefined, undefined]);
   assert.equal(artifactPath('a%2525.md#head', true), 'a%25.md');
   assert.equal(artifactPath('file://localhost/tmp/中文%20a.png'), '/tmp/中文 a.png');
   assert.equal(artifactPath('file:///C:/Project/a.ts'), 'C:/Project/a.ts');

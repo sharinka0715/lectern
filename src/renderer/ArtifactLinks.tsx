@@ -10,15 +10,13 @@ import { replySyntax } from './markdown-syntax';
 import type { Element, ElementContent, Root } from 'hast';
 import { Check, Copy, Image as ImageIcon } from 'lucide-react';
 import { reportActionError } from './diagnostics';
-import { adjacentFileNames, artifactPath, findPathReferences, pathBasename, type PathReference } from './artifact-paths';
+import { adjacentFileNames, artifactPath, citedLines, findPathReferences, pathBasename, type LineRange, type OpenPath, type PathReference } from './artifact-paths';
 
 import { useArtifactResolution } from './ArtifactReferenceScope';
 import { WorkspaceImage } from './ChatImage';
 import { t } from '../shared/i18n';
 
-type OpenPath = (path: string) => void;
-
-export function FileLink({ path, onOpen, children, prose = false, inline = false }: { path: string; onOpen: OpenPath; children: ReactNode; explicit?: boolean; prose?: boolean; inline?: boolean }) {
+export function FileLink({ path, lines, onOpen, children, prose = false, inline = false }: { path: string; lines?: LineRange; onOpen: OpenPath; children: ReactNode; explicit?: boolean; prose?: boolean; inline?: boolean }) {
   const { ref, match } = useArtifactResolution(path);
   const spacePressed = useRef(false);
   // Links need a verified target, inside the folder or outside it. 'outside' is an explicit
@@ -29,7 +27,9 @@ export function FileLink({ path, onOpen, children, prose = false, inline = false
   }
   const target = match === 'outside' ? ref : match && typeof match === 'object' ? match.path : undefined;
   if (!target) return <>{children}</>;
-  const props = { className: 'artifact-link', title: t('files.open', { name: target }), 'data-file-path': target, onClick: () => onOpen(target) };
+  const cited = lines && (lines.end > lines.start ? `${lines.start}-${lines.end}` : String(lines.start));
+  const props = { className: 'artifact-link', title: t('files.open', { name: cited ? `${target}:${cited}` : target }), 'data-file-path': target,
+    'data-file-lines': cited, onClick: () => onOpen(target, lines) };
   // Chromium lays out native buttons as atomic boxes even with display: inline.
   // A non-atomic inline lets code around or inside the link paint on every line.
   if (inline) return <span {...props} role="button" tabIndex={0}
@@ -81,7 +81,8 @@ function linkFileText() {
         if (child.type !== 'text') return [child];
         return split<ElementContent>(child.value, findPathReferences(child.value, parent.type === 'element' && parent.tagName === 'code'),
           value => ({ type: 'text', value }),
-          (ref, value) => ({ type: 'element', tagName: 'a', properties: { dataArtifactPath: ref.path }, children: [{ type: 'text', value }] }));
+          (ref, value) => ({ type: 'element', tagName: 'a', properties: { dataArtifactPath: ref.path, dataLineStart: ref.lines?.start, dataLineEnd: ref.lines?.end },
+            children: [{ type: 'text', value }] }));
       }) as typeof parent.children;
     }
     walk(root);
@@ -130,7 +131,9 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({ text, onOpen, i
       },
       a: ({ node, href, children }) => {
         const path = node?.properties.dataArtifactPath ?? (href && artifactPath(href, true));
-        const link = typeof path === 'string' && path ? <FileLink path={path} onOpen={onOpen} prose={!!node?.properties.dataArtifactPath} inline>{children}</FileLink>
+        const start = node?.properties.dataLineStart, end = node?.properties.dataLineEnd;
+        const lines = typeof start === 'number' && typeof end === 'number' ? { start, end } : !node?.properties.dataArtifactPath && href ? citedLines(href) : undefined;
+        const link = typeof path === 'string' && path ? <FileLink path={path} lines={lines} onOpen={onOpen} prose={!!node?.properties.dataArtifactPath} inline>{children}</FileLink>
           : href && /^https?:\/\//i.test(href) ? <a href={href} target="_blank" rel="noreferrer noopener">{children}</a> : <span>{children}</span>;
         if (!inlineImages || !node) return link;
         // 图片本身可放大，包裹图片的 Markdown 链接仍使用自己的目的地址。
@@ -171,13 +174,13 @@ function linkedPrompt(text: string, onOpen: OpenPath) {
   for (const match of text.matchAll(/!?\[[^\]\n]*\]\((?:<([^>\n]+)>|([^()\s]+))\)/g)) {
     plain(match.index);
     end = match.index + match[0].length;
-    const path = artifactPath(match[1] ?? match[2], true);
-    if (path) refs.push({ start: match.index, end, path });
+    const path = artifactPath(match[1] ?? match[2], true), lines = citedLines(match[1] ?? match[2]);
+    if (path) refs.push({ start: match.index, end, path, ...lines && { lines } });
   }
   plain(text.length);
   return split<ReactNode>(text, refs, value => value, (ref, value) => value.startsWith('![')
     ? <WorkspaceImage key={ref.start} path={ref.path} name={value.slice(2, value.indexOf(']')) || pathBasename(ref.path)} fallback={value} onOpen={onOpen} />
-    : <FileLink key={ref.start} path={ref.path} onOpen={onOpen} prose={value === ref.path}>{value}</FileLink>);
+    : <FileLink key={ref.start} path={ref.path} lines={ref.lines} onOpen={onOpen} prose={value === ref.path}>{value}</FileLink>);
 }
 
 export function LinkedToolText({ text, onOpen, input = false }: { text: string; onOpen: OpenPath; input?: boolean }) {
@@ -201,5 +204,5 @@ export function LinkedToolText({ text, onOpen, input = false }: { text: string; 
   }
   plain(text.length);
   return <pre>{split<ReactNode>(text, refs, value => value, (ref, value) =>
-    <Fragment key={ref.start}><FileLink path={ref.path} onOpen={onOpen} prose={!input && value === ref.path}>{value}</FileLink></Fragment>)}</pre>;
+    <Fragment key={ref.start}><FileLink path={ref.path} lines={ref.lines} onOpen={onOpen} prose={!input && value === ref.path}>{value}</FileLink></Fragment>)}</pre>;
 }

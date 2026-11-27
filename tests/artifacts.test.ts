@@ -43,7 +43,9 @@ test('project paths, bytes, directories and unsupported files use the same scope
   await writeFile(join(config, 'hidden.txt'), 'secret'); await symlink('demo.ts', join(cwd, 'link'));
   await symlink(folder, join(cwd, 'dirlink'));
   const listing = await artifacts.list(workspace);
-  assert.deepEqual(new Set(listing.entries.map(entry => entry.name)), new Set([folder, 'demo.ts', 'empty.txt', 'unknown.bin', 'tiny-image', 'file.pdf', 'fake.png']));
+  // A folder lists everything in it, links and dotfiles included.
+  assert.deepEqual(new Set(listing.entries.map(entry => entry.name)), new Set([folder, 'demo.ts', 'empty.txt', 'unknown.bin', 'tiny-image', 'file.pdf', 'fake.png',
+    '.ssh', '.env', 'custom config', 'link', 'dirlink']));
   assert.equal((await artifacts.preview(workspace, './' + folder)).kind, 'directory');
   const markdown = await artifacts.preview(workspace, join(cwd, path));
   assert.deepEqual([markdown.path, markdown.kind, markdown.text], [path, 'markdown', '# 中文\n']);
@@ -53,7 +55,13 @@ test('project paths, bytes, directories and unsupported files use the same scope
   const image = await artifacts.preview(workspace, 'tiny-image');
   assert.equal(image.mime, 'image/png'); assert.deepEqual(Buffer.from(image.data!), png);
   assert.equal((await artifacts.preview(workspace, 'file.pdf')).kind, 'pdf');
-  for (const bad of ['.ssh/xyz', '.ENV', 'custom config/hidden.txt', 'file:///etc/passwd', 'https://host/test', 'test\0x', 'link', 'dirlink/说明.md']) {
+  // Any path opens when asked for: credentials, Claude configuration and links too.
+  for (const [path, text] of [['.env', 'secret'], ['custom config/hidden.txt', 'secret'], ['link', 'export const ok = true;\n'], ['dirlink/说明.md', '# 中文\n']]) {
+    assert.equal((await artifacts.preview(workspace, path)).text, text, path);
+    assert.equal((await artifacts.prepareDownload(workspace, path)).name, path.split('/').at(-1));
+  }
+  assert.equal((await artifacts.preview(workspace, 'dirlink')).kind, 'directory');
+  for (const bad of ['.ssh/xyz', 'file:///etc/passwd', 'https://host/test', 'test\0x']) {
     await assert.rejects(() => artifacts.preview(workspace, bad));
     await assert.rejects(() => artifacts.prepareDownload(workspace, bad));
   }
@@ -79,9 +87,12 @@ test('workspace reference lookup returns only unique readable targets and checks
     'a[*].txt', 'app/sp ace.md', join(cwd, 'app/index.ts'), 'app'];
   assert.deepEqual(await access.resolve(workspace.id, refs), [
     { path: 'src/panel/ProxyPanel.tsx' }, null, { path: 'index.ts' }, 'missing', 'missing', 'missing', null, 'missing',
-    null, { path: join(sibling, 'index.ts') }, null, null, null, { path: 'src/panel/a[*].txt' }, { path: 'app/sp ace.md' }, { path: 'app/index.ts' }, { path: 'app' },
+    { path: 'link-out/index.ts' }, { path: join(sibling, 'index.ts') }, null, { path: '.ssh/only.ts' }, { path: 'custom config/private.ts' }, { path: 'src/panel/a[*].txt' }, { path: 'app/sp ace.md' }, { path: 'app/index.ts' }, { path: 'app' },
   ]);
   assert.deepEqual(calls, []);
+  // A bare name that searches skip (.env, keys) is checked at the root only, never looked for elsewhere.
+  await writeFile(join(cwd, '.env'), 'x');
+  assert.deepEqual(await access.resolve(workspace.id, ['.env', 'id_rsa.pem']), [{ path: '.env' }, null]);
   // Written from a subfolder: a relative path that is not at the root is found below it when unique.
   await mkdir(join(cwd, 'tools/video/build'), { recursive: true });
   await writeFile(join(cwd, 'tools/video/build/clip_v10.mp4'), 'mp4'); await writeFile(join(cwd, 'tools/video/build/clip_v10.srt'), 'srt');
@@ -119,16 +130,17 @@ test("a reply's relative paths are resolved from the directory Claude Code was i
   assert.deepEqual(await access.resolve(workspace.id, at(sub, 'notes.md', './notes.md', '../notes.md', 'deep/x.md', 'x.md', 'unique.md', 'root-only.md',
     '../unique.md', '../absent.md', 'absent.md', '.env', '../../added dir/data.csv')), [
     { path: 'sub/notes.md' }, { path: 'sub/notes.md' }, { path: 'notes.md' }, { path: 'sub/deep/x.md' }, { path: 'sub/deep/x.md' },
-    { path: 'other/unique.md' }, { path: 'root-only.md' }, null, null, 'missing', null, { path: join(outside, 'data.csv') },
+    { path: 'other/unique.md' }, { path: 'root-only.md' }, null, null, 'missing', { path: 'sub/.env' }, { path: join(outside, 'data.csv') },
   ]);
   // Outside the folder (an --add-dir directory): only that path is checked there, nothing is searched.
   assert.deepEqual(await access.resolve(workspace.id, at(outside, 'data.csv', './data.csv', 'notes.md', 'unique.md', 'sub/notes.md')), [
     { path: join(outside, 'data.csv') }, { path: join(outside, 'data.csv') }, null, null, null,
   ]);
   assert.deepEqual(await access.resolve(workspace.id, [...at(outside, 'unique.md'), 'unique.md']), [null, { path: 'other/unique.md' }]);
-  // Protected places stay closed from any directory; a directory that is not absolute is ignored.
+  // Claude's configuration resolves like any directory; a directory that is not absolute is ignored.
+  await writeFile(join(config, 'private.ts'), 'x');
   assert.deepEqual(await access.resolve(workspace.id, [...at(config, 'private.ts'), ...at('sub', 'notes.md'), ...at(base, 'Project with spaces/notes.md')]),
-    [null, null, { path: 'notes.md' }]);
+    [{ path: 'custom config/private.ts' }, null, { path: 'notes.md' }]);
   await assert.rejects(() => access.resolve(workspace.id, [{ path: 'x', cwd: 1 } as never]), /批次/);
 });
 
@@ -196,10 +208,24 @@ test('paged directory browsing reaches all children including a file named more'
 
 test('text and media previews have separate bounds and full downloads preserve arbitrary bytes', posix, async t => {
   const { cwd, base, workspace, artifacts } = await fixture(t);
-  const text = Buffer.from('👍'.repeat(70_000));
+  // Up to 1 MiB a text file opens at once.
+  await writeFile(join(cwd, 'small.log'), '👍'.repeat(200_000));
+  const small = await artifacts.preview(workspace, 'small.log');
+  assert.deepEqual([small.kind, small.truncated, small.large, small.text?.length], ['text', false, undefined, 400_000]);
+  // Larger, only its head is read to tell text from the rest, and the user is asked.
+  const text = Buffer.from('👍'.repeat(300_000));
   await writeFile(join(cwd, 'text.log'), Buffer.concat([Buffer.from('X'), text]));
-  const preview = await artifacts.preview(workspace, 'text.log');
-  assert.equal(preview.truncated, true); assert.equal(preview.kind, 'text'); assert.ok(!preview.text!.includes('\ufffd'));
+  const asked = await artifacts.preview(workspace, 'text.log');
+  assert.deepEqual([asked.kind, asked.large, asked.text, asked.size], ['text', true, undefined, text.length + 1]);
+  const opened = await artifacts.preview(workspace, 'text.log', undefined, true);
+  assert.deepEqual([opened.truncated, opened.large, opened.text?.length], [false, undefined, 600_001]);
+  // Over 16 MiB, opening shows the first 16 MiB, cut on a character boundary.
+  await writeFile(join(cwd, 'huge.log'), Buffer.concat([Buffer.from('X'), Buffer.from('👍'.repeat(4.5 * 1024 * 1024))]));
+  const huge = await artifacts.preview(workspace, 'huge.log', undefined, true);
+  assert.equal(huge.truncated, true); assert.ok(huge.text!.length < 8.5 * 1024 * 1024); assert.ok(!huge.text!.includes('\ufffd'));
+  // A large binary or image is told apart from its head and never offered as text.
+  await writeFile(join(cwd, 'blob.dat'), Buffer.alloc(2 * 1024 * 1024));
+  assert.deepEqual([(await artifacts.preview(workspace, 'blob.dat')).kind, (await artifacts.preview(workspace, 'blob.dat')).large], ['binary', undefined]);
   const file = Buffer.alloc(13 * 1024 * 1024, 0x80);
   file.write('%PDF-1.4'); file[file.length - 1] = 0xff;
   const filename = join(cwd, 'large.pdf'), saved = join(base, 'saved copy.pdf');
@@ -292,7 +318,8 @@ test('outside access requires explicit consent, grants only the selected path, e
   accept = false;
   assert.equal((await access.preview(workspace.id, outside + '/ok.txt')).text, 'ok');
   await assert.rejects(() => access.preview(workspace.id, sibling), /取消/);
-  await assert.rejects(() => access.preview(workspace.id, join(outside, '.ssh/config')), /凭据/);
+  await mkdir(join(outside, '.ssh')); await writeFile(join(outside, '.ssh/config'), 'Host x');
+  assert.equal((await access.preview(workspace.id, join(outside, '.ssh/config'))).text, 'Host x', 'inside the granted folder, credentials open too');
   assert.deepEqual(prompts, [outside, outside, sibling]);
   assert.equal(await access.download(workspace.id, outside + '/ok.txt'), false);
   destination = join(base, 'saved');
@@ -325,7 +352,7 @@ test('download detects an in-place change of the same length', posix, async t =>
   await assert.rejects(() => download.saveTo(join(base, 'save.txt')), /已变更/);
 });
 
-test('native plan, skill and command Markdown can be browsed without exposing private profile files', posix, async t => {
+test('Claude configuration opens like any other folder: CLAUDE.md, settings, skills and sessions', posix, async t => {
   const { cwd, config, workspace, artifacts } = await fixture(t);
   const skill = join(config, 'skills/helper'), command = join(cwd, '.claude/commands/team'), plans = join(config, 'plans');
   for (const dir of [skill, command, plans]) await mkdir(dir, { recursive: true });
@@ -334,15 +361,17 @@ test('native plan, skill and command Markdown can be browsed without exposing pr
   await writeFile(join(command, 'run.md'), '# Run');
   await writeFile(join(plans, 'current.md'), '# Plan');
   await writeFile(join(plans, 'raw.jsonl'), 'private');
-  assert.deepEqual((await artifacts.list(workspace, plans)).entries.map(e => e.name), ['current.md']);
-  assert.deepEqual((await artifacts.list(workspace, skill)).entries.map(e => e.name), ['SKILL.md']);
-  for (const path of [join(skill, 'SKILL.md'), join(command, 'run.md'), join(plans, 'current.md')]) {
+  await writeFile(join(config, 'CLAUDE.md'), '# Rules'); await writeFile(join(config, 'settings.json'), '{}');
+  assert.deepEqual((await artifacts.list(workspace, plans)).entries.map(e => e.name), ['current.md', 'raw.jsonl']);
+  assert.deepEqual((await artifacts.list(workspace, skill)).entries.map(e => e.name), ['raw.jsonl', 'SKILL.md']);
+  for (const path of [join(skill, 'SKILL.md'), join(command, 'run.md'), join(plans, 'current.md'), join(config, 'CLAUDE.md')]) {
     assert.equal((await artifacts.preview(workspace, path)).kind, 'markdown');
   }
-  for (const path of [config, join(config, 'settings.json'), join(config, 'projects/old/history.jsonl'), join(plans, 'raw.jsonl'), join(skill, 'raw.jsonl'), join(skill, '.env')]) {
-    await assert.rejects(() => artifacts.preview(workspace, path));
-    await assert.rejects(() => artifacts.prepareDownload(workspace, path));
-  }
+  assert.equal((await artifacts.preview(workspace, join(config, 'settings.json'))).text, '{}');
+  assert.equal((await artifacts.preview(workspace, join(skill, 'raw.jsonl'))).text, '{"private":true}');
+  assert.equal((await artifacts.preview(workspace, config)).kind, 'directory');
+  // Still kept out of name searches: a bare CLAUDE.md is not looked for inside the configuration.
+  assert.deepEqual(await artifacts.resolveReferences(workspace, ['CLAUDE.md', 'SKILL.md']), ['missing', 'missing']);
 });
 
 // High-entropy raster: neither the original dimensions nor the compressed bytes fit a thumbnail.
@@ -402,7 +431,7 @@ test('workspace thumbnails send only bounded target-encoded frames over the sele
   assert.deepEqual(tags, ['png-host:artifact.workspace', 'png-host:artifact.thumbnail', 'gif-host:artifact.workspace', 'gif-host:artifact.thumbnail']);
 });
 
-test('automatic thumbnails never use outside grants, links, credential paths or original-byte fallbacks', posix, async t => {
+test('automatic thumbnails never use outside grants or original-byte fallbacks', posix, async t => {
   const { base, cwd, workspace, artifacts } = await fixture(t);
   const gif = sampleGif(), outside = join(base, 'outside.gif');
   await writeFile(outside, gif); await symlink(outside, join(cwd, 'link.gif')); await writeFile(join(cwd, 'allowed.gif'), gif);
@@ -411,10 +440,10 @@ test('automatic thumbnails never use outside grants, links, credential paths or 
   let prompts = 0;
   const access = new ArtifactAccess(() => workspace, artifacts, { allowOutside: async () => { prompts++; return true; }, saveAs: async () => undefined });
   assert.equal((await access.preview(workspace.id, outside)).kind, 'image');
-  for (const path of [outside, 'link.gif', '.ssh/private.png', '.claude/skills/hidden.png', 'custom config/private.gif', '.']) {
-    await assert.rejects(() => access.previewInlineImageThumbnail(workspace.id, path));
-  }
+  for (const path of [outside, '.']) await assert.rejects(() => access.previewInlineImageThumbnail(workspace.id, path));
   assert.equal(prompts, 1);
+  // A link in the folder is the folder's file, wherever it points.
+  assert.equal((await access.previewInlineImageThumbnail(workspace.id, 'link.gif')).path, 'link.gif');
   for (const path of ['not.png', 'huge.gif']) {
     const preview = await access.previewInlineImageThumbnail(workspace.id, path);
     assert.equal(preview.kind, 'binary'); assert.equal(preview.data, undefined);

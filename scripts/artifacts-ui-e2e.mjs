@@ -320,6 +320,51 @@ async function verifyFormulas(app, page, row, appendRows, cwd) {
   await page.evaluate(() => getSelection().removeAllRanges());
 }
 
+/** A cited path opens at its lines, Claude's configuration opens like any file, and a large text file asks first. */
+async function verifyLinesAndLargeFiles(app, page, row, appendRows, cwd) {
+  await mkdir(path.join(cwd, '.claude'), { recursive: true });
+  await writeFile(path.join(cwd, 'demo/lines.ts'), Array.from({ length: 400 }, (_, i) => `export const line${i + 1} = ${i + 1};`).join('\n') + '\n');
+  await writeFile(path.join(cwd, '.claude/CLAUDE.md'), '# 项目规则\n\n只用相对路径。\n');
+  const big = Array.from({ length: 70_000 }, (_, i) => `{"entry": ${i + 1}, "ok": true}`).join('\n') + '\n';
+  await writeFile(path.join(cwd, 'demo/big.jsonl'), big);
+  await appendRows([
+    row('user', { role: 'user', content: '在哪里改？' }),
+    row('assistant', { id: randomUUID(), role: 'assistant', content: '改 `demo/lines.ts:262-281`，规则见 `.claude/CLAUDE.md`，日志在 demo/big.jsonl 。', stop_reason: 'end_turn' }),
+  ]);
+  const reply = page.locator('.message-assistant:not([data-leaving])').filter({ hasText: '规则见' });
+  const drawer = page.getByRole('complementary', { name: '文件预览' });
+  const cited = reply.getByRole('button', { name: 'demo/lines.ts:262-281', exact: true });
+  assert.equal(await cited.getAttribute('data-file-lines'), '262-281');
+  await cited.click();
+  await drawer.locator('.code-line[data-focus]').first().waitFor();
+  const focus = await drawer.evaluate(node => {
+    const lines = [...node.querySelectorAll('.code-line[data-focus]')], box = node.querySelector('.artifact-content').getBoundingClientRect();
+    const first = lines[0].getBoundingClientRect();
+    return { count: lines.length, first: lines[0].textContent.trim(), last: lines.at(-1).textContent.trim(), visible: first.top >= box.top && first.bottom <= box.bottom };
+  });
+  assert.deepEqual(focus, { count: 20, first: 'export const line262 = 262;', last: 'export const line281 = 281;', visible: true });
+  await drawer.screenshot({ path: path.join(results, 'desktop-cited-lines.png') });
+  await drawer.getByRole('button', { name: '关闭文件预览' }).click();
+  await reply.getByRole('button', { name: '.claude/CLAUDE.md', exact: true }).click();
+  await drawer.getByRole('heading', { name: '项目规则' }).waitFor();
+  await drawer.getByRole('button', { name: '关闭文件预览' }).click();
+  await reply.getByRole('button', { name: 'demo/big.jsonl', exact: true }).click();
+  const question = drawer.getByRole('group', { name: `文件较大（${(Buffer.byteLength(big) / 1024 / 1024).toFixed(1)} MB），是否打开？` });
+  await question.waitFor();
+  assert.equal(await drawer.locator('.code-line').count(), 0, 'Nothing is shown before the user chooses');
+  await drawer.screenshot({ path: path.join(results, 'desktop-large-file.png') });
+  const saved = path.join(profile, 'saved big.jsonl');
+  await app.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }); }, saved);
+  await question.getByRole('button', { name: '下载到本地' }).click();
+  await drawer.getByText('已保存').waitFor();
+  assert.equal(await readFile(saved, 'utf8'), big);
+  await question.getByRole('button', { name: '仍然打开' }).click();
+  await drawer.locator('.code-line').nth(69_999).waitFor({ state: 'attached' });
+  assert.equal(await drawer.locator('.code-preview').getAttribute('data-highlighted'), null, 'No syntax highlighting over 1 MiB');
+  await drawer.getByRole('button', { name: '关闭文件预览' }).click();
+  await drawer.waitFor({ state: 'detached' });
+}
+
 async function verifyCachedLinks(app, page, workspace, project) {
   const file = 'cached-example.md', marker = '缓存链接示例';
   const [first, second] = [randomUUID(), randomUUID()];
@@ -670,6 +715,7 @@ try {
   await verifyReplyCwd(page, row, appendRows, cwd);
   await verifyWrappedFileLinks(app, page, row, appendRows, cwd);
   await verifyFormulas(app, page, row, appendRows, cwd);
+  await verifyLinesAndLargeFiles(app, page, row, appendRows, cwd);
   // Control response order after the filesystem round trips to make late responses deterministic.
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler('lectern:previewArtifact');

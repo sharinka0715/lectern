@@ -4,7 +4,7 @@ import { FileLink, LinkedToolText } from "./ArtifactLinks";
 import { ShellCode } from "./ShellCode";
 import { t, type MessageKey } from '../shared/i18n';
 
-type OpenPath = (path: string) => void;
+import type { OpenPath } from './artifact-paths';
 type Input = Record<string, unknown>;
 
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value : undefined;

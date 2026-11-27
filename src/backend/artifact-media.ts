@@ -1,6 +1,9 @@
 import { SaxesParser } from 'saxes';
 
 export const TEXT_BYTES = 256 * 1024;
+export { LARGE_TEXT_BYTES, TEXT_OPEN_BYTES } from '../shared/preview-limits';
+/** What a preview reads of a text file over TEXT_OPEN_BYTES before the user opens it: enough to tell text from the rest. */
+export const SNIFF_BYTES = 64 * 1024;
 export const MEDIA_BYTES = 12 * 1024 * 1024;
 export const officeExtensions = new Set(['.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp']);
 export const mediaExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.avif', '.pdf']);

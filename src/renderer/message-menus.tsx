@@ -4,7 +4,7 @@ import { copyWithToast, type MenuEntry } from "./ContextMenu";
 import { t } from '../shared/i18n';
 import { selectionWithFormulas, textWithFormulas } from "./markdown-math";
 
-type OpenPath = (path: string) => void;
+import type { OpenPath } from './artifact-paths';
 const icon = (Icon: typeof Copy) => <Icon size={14} />;
 
 /** Selected text inside this element only; a selection elsewhere is ignored. */

@@ -6,7 +6,7 @@ import { t } from '../shared/i18n';
 import { useArtifactScope } from './ArtifactReferenceScope';
 import { ImageView, extensionLabel, type Source } from './ChatImage';
 import { attachmentEntry } from './attachment-registry';
-import { pathBasename } from './artifact-paths';
+import { pathBasename, type OpenPath } from './artifact-paths';
 import type { ChipToken } from './composer-chips';
 import { tip } from './Tooltip';
 import './attachment-cards.css';
@@ -32,7 +32,6 @@ function CardBody({ name, busy, kind = attachmentKind(name) }: { name: string; b
   </>;
 }
 
-type OpenPath = (path: string) => void;
 type OpenAttachment = (attachment: MessageAttachment) => void;
 interface Shown { attachment?: MessageAttachment; path?: string }
 

@@ -87,6 +87,8 @@
 .code-preview[data-wrap="true"] { white-space: pre-wrap; overflow-wrap: anywhere; }
 .code-preview[data-wrap="true"] code { width: auto; }
 .code-line { display: block; }
+/* Lines a citation names (a.ts:12-20), the number column included. */
+.code-line[data-focus] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .code-preview[data-line-numbers="true"] .code-line { display: grid; grid-template-columns: calc(var(--line-digits, 2) * 1ch + 14px) minmax(0, 1fr); }
 .code-preview[data-line-numbers="true"] .code-line::before {
   counter-increment: line;
@@ -99,6 +101,7 @@
   background: var(--surface);
   user-select: none;
 }
+.code-preview[data-line-numbers="true"] .code-line[data-focus]::before { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 .code-preview[data-line-numbers="true"] { padding-left: 8px; }
 .code-preview .hljs-comment, .code-preview .hljs-quote { color: var(--code-comment); font-style: italic; }
 .code-preview .hljs-keyword, .code-preview .hljs-selector-tag, .code-preview .hljs-literal, .code-preview .hljs-doctag, .code-preview .hljs-section { color: var(--code-keyword); }
@@ -117,6 +120,8 @@
 .artifact-loading, .artifact-unavailable { padding: calc(30 * var(--ui-px)) 20px; display: flex; gap: 8px; align-items: center; color: var(--secondary-text); font-size: var(--text-ui); }
 .artifact-unavailable { flex-direction: column; padding-top: calc(42 * var(--ui-px)); text-align: center; }
 .artifact-unavailable p { margin: 0 0 calc(5 * var(--ui-px)); font-size: var(--text-label); line-height: 1.7; overflow-wrap: anywhere; }
+.artifact-large-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.artifact-large-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .artifact-note, .artifact-error { margin: calc(10 * var(--ui-px)) 14px; font-size: var(--text-label); line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
 .artifact-error { color: var(--danger); }
 .artifact-more { margin: calc(10 * var(--ui-px)) 0; }
