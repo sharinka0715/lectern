@@ -215,6 +215,17 @@ export interface ReplyNotice {
   textOffset?: number;
   toolsBefore?: number;
 }
+/** When a reply's turn ended, from its JSONL records. */
+export interface TurnTiming {
+  /** The turn_duration record's time, or the interruption record's. */
+  at: string;
+  /** Claude Code's own durationMs (summed over the turns in this reply): it leaves out
+   * the time a permission prompt or question waited on the user. Absent when interrupted. */
+  workMs?: number;
+  /** From the prompt's record to `at`, waiting included. Absent without a recorded prompt. */
+  wallMs?: number;
+  stopped?: boolean;
+}
 export interface ChatMessage {
   /** Active-branch, persisted human checkpoint; never a GUI turn index. */
   rewindUuid?: string;
@@ -234,6 +245,7 @@ export interface ChatMessage {
   source: 'jsonl' | 'preview' | 'pending';
   status: 'streaming' | 'complete';
   timestamp?: string;
+  timing?: TurnTiming;
 }
 export type SessionStatus = 'connecting' | 'idle' | 'working' | 'waiting' | 'offline' | 'error';
 export type { ExecutionModeObservation, ContextUsageObservation } from '../core/session-telemetry';

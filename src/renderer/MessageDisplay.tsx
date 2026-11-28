@@ -21,6 +21,7 @@ import { reportActionError } from "./diagnostics";
 import type { ReplyDetail } from "./desktop-state";
 import { formatNumber, t } from '../shared/i18n';
 import { goalDurationText } from './GoalStatus';
+import { TurnTimingLabel } from './TurnTiming';
 
 
 /** Foreground shells still running, keyed by tool_use id (App supplies them). */
@@ -289,7 +290,7 @@ export function MessageDisplay({ message, replyDetail, showThinkingAsText, onOpe
       </div>
       {isUser && onRewind && message.rewindUuid && <button type="button" className="message-rewind" title={t('chat.rewindHereTitle')}
         onClick={() => onRewind(message.rewindUuid!)}><CornerDownLeft size={13}/>{t('chat.rewindHere')}</button>}
-      {!isUser && markdown && (
+      {!isUser && (markdown || message.timing) && (
         <div className="message-footer">
           {message.status === "streaming" && (
             <span className="stream-label">
@@ -297,14 +298,15 @@ export function MessageDisplay({ message, replyDetail, showThinkingAsText, onOpe
               {t('chat.replying')}
             </span>
           )}
-          <button
+          {markdown && <button
             className="icon-button copy-button"
             onClick={copy}
             title={t('chat.copyReply')}
             aria-label={t('chat.copyReply')}
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}
-          </button>
+          </button>}
+          {message.timing && <TurnTimingLabel timing={message.timing} />}
         </div>
       )}
     </article>

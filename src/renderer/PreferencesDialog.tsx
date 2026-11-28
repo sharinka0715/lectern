@@ -286,7 +286,7 @@ export function PreferencesDialog({
               </label>
               <label>
                 {t('prefs.quotaZone')}
-                <select aria-label={t('prefs.quotaZoneLabel')} value={settings.quotaTimeZone} disabled={!settings.showSubscriptionQuota}
+                <select aria-label={t('prefs.quotaZoneLabel')} value={settings.quotaTimeZone}
                   onChange={e => setDesktop({ quotaTimeZone: e.target.value })}>
                   <option value="">{t('prefs.localZone', { offset: zoneOffset() })}</option>
                   {zoneChoices.map(({ zone, offset }) => <option key={zone} value={zone}>{t('prefs.zoneOption', { zone, offset })}</option>)}

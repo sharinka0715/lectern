@@ -59,6 +59,7 @@ import { commandPolicy, goalCommand } from "../shared/native-commands";
 import "./artifacts.css";
 import "./context-menu.css";
 import { ConversationTranscript } from "./ConversationTranscript";
+import { TurnClockProvider } from "./TurnTiming";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { TerminalPanel, type TerminalPanelHandle } from "./TerminalPanel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
@@ -1733,6 +1734,7 @@ function ChatPane({ view, resumes, setResume }: {
         {/* The conversation scrolls the full height; the input area floats over its bottom. */}
         <div className="conversation-stage">
         <LiveShells.Provider value={liveShells}>
+        <TurnClockProvider zone={prefs.quotaTimeZone}>
         <ConversationTranscript key={selectionGeneration} ref={transcript} dock={composerDock} workspace={workspace} sessionId={snapshot?.sessionId}
           replyDetail={prefs.replyDetail} showThinkingAsText={prefs.showThinkingAsText} onFollowLatest={setFollowingLatest}
           tasks={snapshot?.tasks} messages={displayedMessages} historyPage={snapshot?.historyPage} loadEarlier={loadEarlierMessages} openArtifact={openArtifact}
@@ -1804,6 +1806,7 @@ function ChatPane({ view, resumes, setResume }: {
               )}
             </div>
         </ConversationTranscript>
+        </TurnClockProvider>
         </LiveShells.Provider>
 
         <div ref={setComposerDock} onWheel={event => transcript.current?.wheelFromDock(event.nativeEvent)}

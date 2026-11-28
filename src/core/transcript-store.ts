@@ -36,6 +36,8 @@ export interface TranscriptRow {
   peers?: PeerMessage[];
   backgroundAgents?: number;
   backgroundWorkflows?: number;
+  /** A turn_duration record's time for the turn, less the time a dialog waited on the user. */
+  durationMs?: number;
   /** Claude Code's native /goal: a status record, a pause or retry notice, a check-in. */
   goal?: GoalEvent;
   /** The set event comes from the "Goal set: …" echo, which stands in for a set record not read. */
@@ -128,6 +130,7 @@ function normalize(record: JsonRecord, key: string, order: number, parent: strin
       row.kind = 'duration';
       row.backgroundAgents = count(record.pendingBackgroundAgentCount);
       row.backgroundWorkflows = count(record.pendingWorkflowCount);
+      if (typeof record.durationMs === 'number' && Number.isFinite(record.durationMs) && record.durationMs >= 0) row.durationMs = record.durationMs;
     }
   }
   if (record.isCompactSummary) return row;

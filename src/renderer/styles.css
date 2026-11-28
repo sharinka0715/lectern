@@ -586,6 +586,8 @@ code, pre, kbd { font-family: var(--font-mono); }
 .copy-button { color: var(--muted); padding: calc(5 * var(--ui-px)); margin-left: calc(-5 * var(--ui-px)); }
 .stream-label + .copy-button { margin-left: 0; }
 .message-footer .copy-button:hover { background: var(--hover); color: var(--text); }
+/* When the turn ended and how long it took: quiet, after the copy button. */
+.turn-timing { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--text-meta); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; cursor: default; }
 /* "正在回复" and a running command share one quiet pill, flush with the reply's left edge. */
 .stream-label, .tool-live-heading {
   display: inline-flex; align-items: center; gap: 7px; width: fit-content; max-width: 100%; height: calc(24 * var(--ui-px)); padding: 0 11px 0 9px;

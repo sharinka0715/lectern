@@ -1,6 +1,6 @@
 // node scripts/saved-history-ui-e2e.mjs [packaged-executable]
 // Saved conversations only: temporary JSONL histories in one local folder. No Claude process,
-// no remote, no model request. One launch for three parts; each prints "PASS <part>", and a
+// no remote, no model request. One launch for four parts; each prints "PASS <part>", and a
 // failure names its part (formerly task-notice-ui-e2e, archive-ui-e2e and transcript-render-e2e):
 //   notice   a background task notification folds to one line in the command rows' style and
 //            without a grey surface; the keyboard opens its full text and file reference, the mouse
@@ -8,6 +8,8 @@
 //            (screenshot test-results/task-notice-expanded.png)
 //   archive  archiving a conversation from the sidebar leaves its file untouched, survives a reload
 //            and is restored from Settings → 回收站
+//   timing   each reply ends with its end time in the reset time zone and how long it took; an interrupted
+//            one with the time to the interruption (screenshots test-results/turn-timing-{light,dark}.png)
 //   render   switch between folded thinking and reply Markdown, check styles, grouping, motion and copy,
 //            show sed -i edits as diffs, and list only background shells in the activity panel
 // Set LECTERN_THINKING_SCREENSHOTS to save a pair of reply screenshots per theme in that directory.
@@ -56,6 +58,28 @@ const archiveHistory = (sid, prompt) => [
   { type: 'assistant', uuid: `${sid}-a`, parentUuid: `${sid}-u`, message: { id: `${sid}-m`, role: 'assistant', content: [{ type: 'text', text: '好的。' }], stop_reason: 'end_turn' } },
 ].map(r => JSON.stringify({ ...r, cwd, sessionId: sid, timestamp: new Date().toISOString() })).join('\n') + '\n';
 
+// ── timing: replies end with their time in the chosen zone and how long they took ──
+const timing = { sid: randomUUID() };
+function timingHistory() {
+  const now = Date.now(), noon = new Date(now); noon.setDate(noon.getDate() - 1); noon.setHours(12, 0, 0, 0);
+  const yesterday = noon.getTime(), today = now - 60_000;
+  let parentUuid = null;
+  function row(ms, type, content, extra = {}) {
+    const uuid = randomUUID();
+    const r = { type, cwd, sessionId: timing.sid, uuid, parentUuid, timestamp: new Date(ms).toISOString(), version: '2.1.332', ...extra,
+      ...(content !== undefined && { message: { role: type, content, ...(type === 'assistant' && { id: uuid, model: 'claude-opus-5-5', stop_reason: 'end_turn' }) } }) };
+    parentUuid = uuid;
+    return JSON.stringify(r);
+  }
+  const done = (ms, durationMs) => row(ms, 'system', undefined, { subtype: 'turn_duration', durationMs, messageCount: 2, isMeta: false });
+  timing.ends = [yesterday, today, now - 20_000];
+  return [row(yesterday - 45_000, 'user', '整理一下测试清单'), row(yesterday - 1_000, 'assistant', [{ type: 'text', text: '清单已按模块分组。' }]), done(yesterday, 44_600),
+    // 28 s of this one waited on a permission prompt: Claude Code's durationMs leaves it out.
+    row(today - 220_000, 'user', '把失败的用例修好'), row(today - 1_000, 'assistant', [{ type: 'text', text: '两个用例都修好了，全部通过。' }]), done(today, 192_000),
+    row(now - 50_000, 'user', '顺便重构一下解析器'), row(now - 30_000, 'assistant', [{ type: 'text', text: '先看一下现有结构。' }]),
+    row(now - 20_000, 'user', [{ type: 'text', text: '[Request interrupted by user]' }])].join('\n') + '\n';
+}
+
 // ── render: narration and folded thinking, a sed -i edit, a foreground and a background shell ──
 const render = { sid: randomUUID() };
 const narration = '先改样式，再启动开发服务器。';
@@ -102,6 +126,7 @@ try {
   await writeFile(path.join(project, `${archived}.jsonl`), archiveHistory(archived, '归档这条'));
   const archivedBefore = await readFile(path.join(project, `${archived}.jsonl`), 'utf8');
   await writeFile(path.join(project, `${render.sid}.jsonl`), renderHistory());
+  await writeFile(path.join(project, `${timing.sid}.jsonl`), timingHistory());
   const env = { ...privateServer.env, LECTERN_LOCALE: 'zh-CN', LECTERN_USER_DATA: profile, CLAUDE_CONFIG_DIR: config, LECTERN_DIAGNOSTIC_CONTENT: '0' };
   delete env.LECTERN_DEV_URL; delete env.ELECTRON_RUN_AS_NODE;
   const exe = process.argv[2];
@@ -166,6 +191,59 @@ try {
   });
 
   // Last: it switches the reply detail setting to individual rows.
+  await part('timing', async () => {
+    await page.locator(`[data-session-id="${timing.sid}"]`).first().click();
+    const labels = page.locator('.message-assistant .turn-timing');
+    await labels.nth(2).waitFor();
+    const clock = (ms, zone) => {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset' }).formatToParts(ms);
+      const get = type => parts.find(part => part.type === type)?.value ?? '';
+      return { time: `${get('hour')}:${get('minute')}`, offset: /^(?:GMT|UTC)?$/u.test(get('timeZoneName')) ? 'GMT+0' : get('timeZoneName').replace(/^UTC/u, 'GMT') };
+    };
+    const escape = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const [yesterday, today, stopped] = timing.ends.map(ms => clock(ms));
+    const texts = await labels.allInnerTexts();
+    // Only the time on the line; the zone and its offset are on hover.
+    assert.equal(texts[0], `昨天 ${yesterday.time} · 用时 45秒`);
+    assert.match(texts[1], new RegExp(`^(?:昨天 )?${escape(today.time)} · 用时 3分12秒$`));
+    assert.match(texts[2], new RegExp(`^(?:昨天 )?${escape(stopped.time)} · 用时 30秒$`));
+    const titles = await labels.evaluateAll(nodes => nodes.map(node => node.getAttribute('title')));
+    assert.ok(titles[1].includes(`（本机时区，${today.offset}）`), titles[1]);
+    assert.match(titles[1], /^结束于 \d{4}\/\d{1,2}\/\d{1,2} 周.+（本机时区，GMT[^）]*）\n用时取自 Claude Code 的记录，不含等你确认权限或回答问题的时间\n从提问到结束共 3分40秒$/u);
+    assert.match(titles[2], /^中断于 .+\n从提问到中断共 30秒，含等你操作的时间$/u);
+    assert.doesNotMatch(titles[0], /从提问到结束/u, 'no second duration when the two agree');
+    assert.equal(await page.locator('.message-assistant').nth(2).locator('.message-interrupted').innerText(), '已中断');
+    for (const box of await labels.evaluateAll(nodes => nodes.map(node => [node.scrollWidth, node.clientWidth]))) assert.ok(box[0] <= box[1], 'the label is not cut off');
+
+    const settings = page.getByRole('dialog', { name: '设置', exact: true });
+    const openSettings = () => page.getByRole('button', { name: '界面与连接设置' }).click();
+    const closeSettings = () => settings.getByRole('button', { name: '关闭设置' }).click();
+    const shot = async name => {
+      const latest = page.locator('.scroll-latest:not([data-leaving])');
+      if (await latest.isVisible()) await latest.click();
+      await page.waitForTimeout(400);
+      await page.locator('.conversation-stage').screenshot({ path: `test-results/${name}.png` });
+    };
+    await openSettings();
+    await settings.getByLabel('界面主题').selectOption('light');
+    await closeSettings();
+    await shot('turn-timing-light');
+    // The same zone as the 7d reset: another one moves the clock and its offset.
+    await openSettings();
+    await settings.getByLabel('时间显示的时区').selectOption('Asia/Tokyo');
+    await closeSettings();
+    const tokyo = clock(timing.ends[1], 'Asia/Tokyo');
+    await page.waitForFunction(() => document.querySelectorAll('.message-assistant .turn-timing')[1]?.getAttribute('title')?.includes('Asia/Tokyo'));
+    assert.match(await labels.nth(1).innerText(), new RegExp(`^(?:昨天 |\\d+/\\d+ )?${escape(tokyo.time)} · 用时 3分12秒$`));
+    assert.match(await labels.nth(1).getAttribute('title'), /（Asia\/Tokyo，GMT\+9）/u);
+    await openSettings();
+    await settings.getByLabel('时间显示的时区').selectOption('');
+    await settings.getByLabel('界面主题').selectOption('dark');
+    await closeSettings();
+    await shot('turn-timing-dark');
+    console.log('PASS timing: ' + JSON.stringify({ labels: texts, zones: ['local', 'Asia/Tokyo'], screenshots: ['turn-timing-light', 'turn-timing-dark'] }));
+  });
+
   await part('render', async () => {
     const { sid } = render;
     await page.locator(`[data-session-id="${sid}"]`).first().click();

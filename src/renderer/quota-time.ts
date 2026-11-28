@@ -48,11 +48,15 @@ export function zonedReset(resetsAt: number, now: number, zone?: string) {
 /** How recent the figures are, in the zone: the time today, "昨天 14:32", else the date (with
  * the year when it is another one); then the offset, like the refill times beside it. */
 export function zonedAsOf(asOf: number, now: number, zone?: string) {
-  const at = parts(asOf, zone), today = parts(now, zone);
+  return `${zonedPastTime(asOf, now, zone)} ${parts(asOf, zone).offset}`;
+}
+
+/** A past moment in the zone without its offset: "14:32", "昨天 14:32", "11/26 14:32", "2025/11/26 14:32". */
+export function zonedPastTime(seconds: number, now: number, zone?: string) {
+  const at = parts(seconds, zone), today = parts(now, zone);
   const days = Math.round((Date.UTC(today.year, today.month - 1, today.day) - Date.UTC(at.year, at.month - 1, at.day)) / 86400000);
-  const when = days <= 0 ? at.time : days === 1 ? t('telemetry.yesterday', { time: at.time })
+  return days <= 0 ? at.time : days === 1 ? t('telemetry.yesterday', { time: at.time })
     : at.year === today.year ? `${at.month}/${at.day} ${at.time}` : `${at.year}/${at.month}/${at.day} ${at.time}`;
-  return `${when} ${at.offset}`;
 }
 
 /** The full date and time in the zone, for the tooltip. */

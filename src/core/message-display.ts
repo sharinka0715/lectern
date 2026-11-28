@@ -4,7 +4,7 @@ import { goalStatusOf } from './goal-records';
 import { adoptSidechain } from './subagent-records';
 import { ConversationTasks } from './conversation-tasks';
 import type { RewindMenu } from '../shared/turn-controls';
-import type { ChatMessage, GoalObservation, MessageAttachment, SessionStatus, ToolBlock } from '../shared/types';
+import type { ChatMessage, GoalObservation, MessageAttachment, SessionStatus, ToolBlock, TurnTiming } from '../shared/types';
 import type { TranscriptAttachment } from './transcript-attachments';
 import { JsonlDecoder, type JsonRecord } from './jsonl';
 import { isTranscriptTurnStart, recordRow, TranscriptStore, type TranscriptChange, type TranscriptRow } from './transcript-store';
@@ -32,12 +32,26 @@ interface Turn {
   responseComplete?: boolean;
   durationComplete?: boolean;
   durationAt?: string;
+  /** durationMs of each turn_duration record in this reply, by record key (a re-read row replaces itself). */
+  durations?: Map<string, number>;
+  /** When Claude Code recorded the interruption. */
+  stoppedAt?: string;
   backgroundAgents?: number;
   backgroundWorkflows?: number;
   interrupted: boolean;
   /** Claude Code recorded that the user interrupted this turn (Esc, or a refused tool). */
   stopped?: boolean;
   timestamp?: string;
+}
+
+/** The end of a reply that finished (its turn_duration) or was interrupted; nothing while it runs. */
+function timingOf(turn: Turn): { timing?: TurnTiming } {
+  const stopped = !turn.durationComplete && !!turn.stopped;
+  const at = turn.durationComplete ? turn.durationAt : stopped ? turn.stoppedAt : undefined;
+  const end = Date.parse(at ?? ''), start = Date.parse(turn.user?.timestamp ?? '');
+  if (!at || !Number.isFinite(end)) return {};
+  const work = !stopped && turn.durations?.size ? [...turn.durations.values()].reduce((sum, ms) => sum + ms, 0) : undefined;
+  return { timing: { at, ...(work !== undefined && { workMs: work }), ...(Number.isFinite(start) && end >= start && { wallMs: end - start }), ...(stopped && { stopped }) } };
 }
 
 function digestMessage(message: ChatMessage) {
@@ -666,6 +680,7 @@ export class MessageDisplay {
         source: provisional ? 'preview' : 'jsonl',
         status: this.status !== 'error' && !turn.finished && !turn.interrupted && !turn.stopped && isLast && (provisional || this.status === 'working' || this.status === 'waiting') ? 'streaming' : 'complete',
         timestamp: turn.timestamp,
+        ...timingOf(turn),
       });
       if (!isLast) this.settledMessages.set(turn, messages.slice(start));
     }
@@ -794,7 +809,7 @@ export class MessageDisplay {
       return;
     }
     if (row.kind === 'interruption') {
-      if (this.current) this.current.stopped = true;
+      if (this.current) { this.current.stopped = true; this.current.stoppedAt = row.timestamp; }
       return;
     }
     if (row.kind === 'compact') {
@@ -831,6 +846,7 @@ export class MessageDisplay {
       if (this.current) {
         this.current.durationComplete = true;
         this.current.durationAt = row.timestamp;
+        if (row.durationMs !== undefined) (this.current.durations ??= new Map()).set(row.key, row.durationMs);
         this.current.backgroundAgents = row.backgroundAgents;
         this.current.backgroundWorkflows = row.backgroundWorkflows;
         // A timing row may be visible while the final text is still queued.

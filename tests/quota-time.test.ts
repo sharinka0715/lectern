@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadDesktopState } from '../src/renderer/desktop-state';
-import { fullResetTime, quotaCountdown, timeZoneChoices, validTimeZone, zonedAsOf, zonedReset, zoneOffset } from '../src/renderer/quota-time';
+import { fullResetTime, quotaCountdown, timeZoneChoices, validTimeZone, zonedAsOf, zonedPastTime, zonedReset, zoneOffset } from '../src/renderer/quota-time';
 import { setLocale } from '../src/shared/i18n';
 
 // 2026-11-20 (Friday) 12:00 UTC.
@@ -41,6 +41,9 @@ test('how recent the figures are: the time today, yesterday or the date, in the 
   assert.equal(zonedAsOf(noon - 3 * 86400, noon, 'UTC'), '11/17 12:00 GMT+0');
   assert.equal(zonedAsOf(Date.UTC(2025, 11, 31, 23, 30) / 1000, noon, 'UTC'), '2025/12/31 23:30 GMT+0');
   assert.match(zonedAsOf(noon - 60, noon), /\d\d:\d\d GMT[+-]\d+(?::\d\d)?$/, "this computer's zone when none is chosen");
+  // A reply's end time: the same day words in the same zone, without the offset.
+  assert.equal(zonedPastTime(early, noon, 'America/Los_Angeles'), '昨天 19:00');
+  assert.equal(zonedPastTime(noon - 3 * 86400, noon, 'UTC'), '11/17 12:00');
   setLocale('en');
   try {
     assert.equal(zonedAsOf(early, noon, 'America/Los_Angeles'), 'yesterday 19:00 GMT-8');
