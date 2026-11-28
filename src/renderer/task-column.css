@@ -29,7 +29,10 @@
 .task-dot[data-state="completed"] { background: var(--live); }
 .task-dot[data-state="failed"] { background: var(--danger-dot); }
 @media (prefers-reduced-motion: reduce) { .task-dot { animation: none !important; } }
-.task-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
+.task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: calc(1 * var(--ui-px)); }
+.task-name { min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
+/* Claude Code's progress label of a running subagent, under its description. */
+.task-progress { min-width: 0; color: var(--muted); font-size: var(--text-caption); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .task-name, .task-name small { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .task-name small { flex-shrink: 1; color: var(--muted); font-size: var(--text-caption); }
 .task-state { flex: none; color: var(--muted); font-size: var(--text-caption); }
@@ -39,6 +42,9 @@
 .subagent-detail-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: calc(4 * var(--ui-px)) 9px; padding: calc(10 * var(--ui-px)) 16px calc(9 * var(--ui-px)); border-bottom: 1px solid var(--line); }
 .subagent-detail-head strong { flex: 1 1 60%; min-width: 0; font-size: var(--text-ui); font-weight: 620; overflow-wrap: anywhere; }
 .subagent-detail-head small { flex-basis: 100%; color: var(--muted); font-size: var(--text-meta); }
+.subagent-progress { flex-basis: 100%; min-width: 0; margin: 0; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--text-meta); }
+.subagent-progress span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-progress svg { flex: none; color: var(--accent); }
 .subagent-detail-state { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--text-meta); white-space: nowrap; }
 .subagent-detail-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .subagent-detail-state[data-state="running"] { color: var(--accent); }

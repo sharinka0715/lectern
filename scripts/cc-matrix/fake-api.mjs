@@ -13,6 +13,10 @@
 //   fail it instead). A script may also fail its request: { status: 529 } (an error
 //   envelope), { reset: true } (connection dropped), { hangMs } (no answer until the
 //   client gives up) or { refuseMs } (the server stops listening for that long).
+// - A background subagent's progress label (Claude Code asks about every 30 s while its transcript moves
+//   on) is its own kind, 'progress', checked before 'main' and 'agent': the fork of the subagent's
+//   conversation offers its tools, and a script answering it would end or hold the label request. The
+//   '@progress' script answers with the subagent's script name; without one, a fixed label.
 // - The /goal evaluator (a Stop prompt hook: no tools, the system prompt "You are evaluating a
 //   stop-condition hook in Claude Code", a last user message with `Condition: <condition>`) is
 //   its own kind, 'goal', recognised by all three together right after the safety check: it
@@ -67,6 +71,9 @@ function kindOf(body) {
   if (!tools.length && /You are evaluating a stop-condition hook in Claude Code/.test(systemOf(body)) && /^Condition: /m.test(lastText)) return 'goal';
   // The compaction prompt (not a task notification, whose XML also has a <summary> tag).
   if (!/<task-notification>/.test(lastText) && /create a detailed summary of the conversation|summary of the conversation so far|an <analysis> block followed by a <summary> block/i.test(lastText)) return 'compact';
+  // A background subagent's 3-5 word progress label (every 30 s): a fork of its conversation
+  // (its tools, then this prompt) or a request of its own with the label writer's system prompt.
+  if (/progress label for a background agent/.test(systemOf(body)) || /Describe (?:your|the agent's) most recent action in 3-5 words/.test(lastText)) return 'progress';
   // This fork inherits the main loop's tools and appends its own user prompt.
   if (lastText.startsWith('[SUGGESTION MODE: Suggest what the user might naturally type next into Claude Code.]')) return 'suggestion';
   // Subagents cannot start subagents: only the main loop is offered Agent (Task before).
@@ -171,6 +178,8 @@ export async function startFakeApi({ logFile, defaultText = 'OK.' } = {}) {
     // A test can fail the safety check with the '@classifier' script (see failure plans below).
     else if (kind === 'classifier' && scripts.has('@classifier')) plan = await scripts.get('@classifier')({ body, messages, kind, action: gradedAction(messages), answer: () => classifierAnswer(body, messages) });
     else if (kind === 'classifier') plan = { blocks: [{ type: 'text', text: classifierAnswer(body, messages) }] };
+    // '@progress' gets the subagent's script name (the marker in its prompt or notes); else a fixed label.
+    else if (kind === 'progress') plan = scripts.has('@progress') ? await scripts.get('@progress')({ body, messages, name: locate(messages)?.name }) : { text: 'Checking the work' };
     else if (kind === 'suggestion') plan = scripts.has('@suggestion') ? await scripts.get('@suggestion')({ body, messages }) : { blocks: [{ type: 'text', text: '' }] };
     else if (kind === 'side') plan = { blocks: [{ type: 'text', text: sideAnswer(body) }] };
     else plan = { blocks: [{ type: 'text', text: defaultText }] };

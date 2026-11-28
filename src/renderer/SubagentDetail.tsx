@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, CircleAlert, Loader2, Square, Unplug } from 'lucide-react';
+import { Activity, Check, CircleAlert, Loader2, Square, Unplug } from 'lucide-react';
 import { runningMs, type ActivityState } from '../shared/activity';
 import type { ChatView, SubagentFile, SubagentTranscript, Workspace } from '../shared/types';
 import type { ArtifactTarget } from './ArtifactDrawer';
@@ -98,6 +98,8 @@ export function SubagentDetail({ entry, now, workspace, sessionId, view, replyDe
       <strong title={entry.title}>{entry.title}</strong>
       <span className="subagent-detail-state" data-state={entry.status}><StateIcon status={entry.status} />{t(states[entry.status])}</span>
       {facts && <small>{facts}</small>}
+      {item?.progress && entry.status === 'running' && <p className="subagent-progress" data-subagent-progress title={t('activity.progressNow', { label: item.progress })}>
+        <Activity size={12} aria-hidden="true" /><span>{item.progress}</span></p>}
     </div>
     {data?.notice && <p className="subagent-notice" role="status">{data.notice}</p>}
     {reading?.error && data?.messages && <p className="subagent-notice" role="alert">{t('activity.subagentFailed', { error: reading.error })}</p>}

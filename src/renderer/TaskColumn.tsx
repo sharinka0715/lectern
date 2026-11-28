@@ -88,9 +88,12 @@ export function TaskColumn(props: Props) {
           <h3><Icon size={12} aria-hidden="true" /><span className="task-group-label">{t(groupLabels[kind])}</span><Tally items={groups[kind]} /></h3>
           <ul>{groups[kind].map(row => <li key={row.key}>
             <button type="button" aria-current={row.key === entry?.key} data-task-key={row.key} data-kind={kind} data-agent-id={row.agent?.agentId} data-state={row.status}
-              title={row.note ? `${row.title}\n${row.note}` : row.title} onClick={() => props.onSelect(row.key)}>
+              title={[row.title, row.note, row.progress && t('activity.progressNow', { label: row.progress })].filter(Boolean).join('\n')} onClick={() => props.onSelect(row.key)}>
               <span className="task-dot" data-state={row.status} aria-hidden="true" />
-              <span className="task-name">{row.title}{row.note && <small>{row.note}</small>}</span>
+              <span className="task-text">
+                <span className="task-name">{row.title}{row.note && <small>{row.note}</small>}</span>
+                {row.progress && <span className="task-progress" data-task-progress>{row.progress}</span>}
+              </span>
               <span className="task-state">{row.item ? t(states[row.status]) : row.status === 'completed' ? t(states.completed) : t('activity.subagentEarlier')}</span>
             </button>
           </li>)}</ul>

@@ -99,3 +99,19 @@ test('compatibility matrix fake API: the /goal evaluator answers from the condit
     assert.deepEqual(seen, [[0, null, 0], [0, 'step two is missing', 1]]);
   } finally { await api.close(); }
 });
+
+test('compatibility matrix fake API: a subagent\'s progress label request, a fork of its conversation or one of its own', async () => {
+  const api = await startFakeApi();
+  try {
+    const ask = async (body: Record<string, unknown>) => (await fetch(`${api.url}/v1/messages`, { method: 'POST', body: JSON.stringify({ model: 'm', stream: true, ...body }) })).text();
+    const fork = { tools: [{ name: 'Bash' }], messages: [{ role: 'user', content: 'Do the work ccm:helper' }, { role: 'assistant', content: 'On it.' },
+      { role: 'user', content: 'Describe your most recent action in 3-5 words using present tense (-ing). Do not use tools.' }] };
+    const own = { system: 'You write a 3-5 word progress label for a background agent, from short notes about what it is doing.',
+      messages: [{ role: 'user', content: 'Do the work ccm:helper\nDescribe the agent\'s most recent action in 3-5 words using present tense (-ing).' }] };
+    assert.match(await ask(fork), /Checking the work/);
+    api.script('@progress', ({ name }: { name?: string }) => ({ text: `Label for ${name}` }));
+    assert.match(await ask(fork), /Label for helper/);
+    assert.match(await ask(own), /Label for helper/);
+    assert.deepEqual(api.requests.map((r: { kind: string }) => r.kind), ['progress', 'progress', 'progress']);
+  } finally { await api.close(); }
+});

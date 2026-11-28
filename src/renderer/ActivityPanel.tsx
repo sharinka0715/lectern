@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, PanelRight, Radio, Square, Terminal, TextSelect, Unplug } from 'lucide-react';
+import { Activity, Bot, Check, ChevronDown, ChevronsDownUp, CircleAlert, Copy, MessagesSquare, PanelRight, Radio, Square, Terminal, TextSelect, Unplug } from 'lucide-react';
 import { copyWithToast, showContextMenu } from './ContextMenu';
 import { selectionWithin } from './message-menus';
 import { activityTallyParts, runningMs, type SessionActivity } from '../shared/activity';
@@ -48,6 +48,8 @@ export function ActivityCard({ item, now, expand = item.status === 'running', on
       <span className="activity-title"><small>{t(labels[item.kind])}</small><strong>{item.title}</strong></span>
       <ChevronDown size={14} className={'activity-chevron' + (expanded ? ' open' : '')} />
     </button>
+    {item.progress && item.status === 'running' && <p className="activity-progress" data-activity-progress title={t('activity.progressNow', { label: item.progress })}>
+      <Activity size={12} aria-hidden="true" /><span>{item.progress}</span></p>}
     <div className="activity-card-subhead"><span className="activity-state">{statusIcon}{t(states[item.status])}</span><span>{description}</span>
       {onOpen && <button type="button" className="activity-open-conversation" data-open-task={item.id}
         title={t(item.kind === 'agent' ? 'activity.viewConversationTitle' : 'activity.viewDetailsTitle', { title: item.title })} onClick={onOpen}>

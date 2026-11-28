@@ -121,7 +121,20 @@ if (args.includes('--effort')) {
 // every `ms` (default 250; Claude Code itself every second).
 let fixtureState = 'ready', fixtureAgents = false, tickMs = 250;
 const agentsSince = Date.now();
+// <config>/agent-rows.json, when there, lists the subagents' rows instead, as 2.1.332 draws them: its type,
+// its progress label or description, and the time since `startedAt` ([{ type, text, startedAt }]; see
+// src/core/agent-progress.ts). It is read with screen-state and the rows redraw every second.
+const rowsFile = path.join(config, 'agent-rows.json');
+let fixtureRows = '';
+const clock = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; };
+const listedRows = () => {
+  let rows = [];
+  try { rows = JSON.parse(fixtureRows); } catch {}
+  const width = Math.max(0, ...rows.map(row => row.type.length));
+  return ['', '  ● main', ...rows.map(row => `  ◯ ${row.type.padEnd(width)}  ${row.text}`.padEnd(72) + ` ${clock(Date.now() - Date.parse(row.startedAt))} · ↓ 4.2k tokens`)];
+};
 const agentRows = () => {
+  if (fixtureRows) return listedRows();
   if (fixtureAgents === true) return ['', '  ⏺ main', '  ◯ general-purpose  检查归档中的版本信息          3m 8s · ↓ 141.6k tokens'];
   const tick = Math.floor((Date.now() - agentsSince) / tickMs);
   return ['', '  ● main', ...Array.from({ length: Math.min(fixtureAgents, 5) }, (_, i) => `  ◯ general-purpose  第 ${i + 1} 个子代理`.padEnd(60) + `${tick + i}s`),
@@ -587,13 +600,16 @@ const readFixtureState = () => {
   tickMs = listed?.[2] ? Number(listed[2]) : 250;
   return [['ready', 'waiting', 'error', 'suggestion', 'progress', 'compacting'].includes(state) ? state : 'ready', listed ? Number(listed[1]) : agents === 'agents'];
 };
+const readFixtureRows = () => { try { return readFileSync(rowsFile, 'utf8').trim(); } catch { return ''; } };
 [fixtureState, fixtureAgents] = readFixtureState();
-let drawnTick = 0;
+fixtureRows = readFixtureRows();
+let drawnTick = 0, drawnSecond = 0;
 setInterval(() => {
-  const [next, agents] = readFixtureState();
-  const tick = Math.floor((Date.now() - agentsSince) / tickMs);
-  if (next !== fixtureState || agents !== fixtureAgents) { [fixtureState, fixtureAgents] = [next, agents]; draw(); }
+  const [next, agents] = readFixtureState(), rows = readFixtureRows();
+  const tick = Math.floor((Date.now() - agentsSince) / tickMs), second = Math.floor(Date.now() / 1000);
+  if (next !== fixtureState || agents !== fixtureAgents || rows !== fixtureRows) { [fixtureState, fixtureAgents, fixtureRows] = [next, agents, rows]; draw(); }
   else if (typeof fixtureAgents === 'number' && tick !== drawnTick) { drawnTick = tick; draw(); }
+  else if (fixtureAgents && fixtureRows && second !== drawnSecond) { drawnSecond = second; draw(); }
 }, 25);
 draw();
 }

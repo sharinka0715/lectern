@@ -122,6 +122,7 @@ export const activity = {
   subagentFailed: ['读取子代理的对话失败：{error}', 'Reading the subagent conversation failed: {error}'],
   subagentRetry: ['重试', 'Retry'],
   subagentEarlier: ['较早', 'Earlier'],
+  progressNow: ['现在在做：{label}\nClaude Code 约每 30 秒更新一次', 'Doing now: {label}\nClaude Code updates this about every 30 s'],
   taskColumn: ['后台任务', 'Background tasks'],
   taskList: ['这个对话的后台任务', "This conversation's background tasks"],
   closeTaskColumn: ['关闭后台任务栏', 'Close the task column'],

@@ -1830,6 +1830,49 @@ export const SCENARIOS = [
     },
   },
   {
+    id: 'subagent-progress',
+    features: ['subagent-progress'],
+    timeoutMs: 200_000,
+    async run(ctx) {
+      const { ui, page, api, folders, check, note } = ctx;
+      // Claude Code asks for a background subagent's 3-5 word progress label about every 30 s while its
+      // transcript moves on, keeps it in memory only and (2.1.329+) draws it in the task rows below the
+      // input box in place of the description; Lectern reads it off the screen (core/agent-progress.ts).
+      // The fake API answers the label request ('@progress'); the helper runs a 45-second command.
+      await check('subagent-progress', async () => {
+        if (compareVersions(ctx.version, '2.1.329') < 0) return { skip: `Claude Code ${ctx.version} draws no task rows below the input box` };
+        const label = '正在核对 ccm 进度', asked = [];
+        api.script('@progress', ({ name }) => { asked.push(name ?? null); return { text: name === 'pg-helper' ? label : 'Other work' }; });
+        api.script('pg-main', ({ step }) => step === 0
+          ? { blocks: [{ type: 'tool_use', name: 'Agent', input: { description: 'Matrix progress helper', prompt: 'Work a while ccm:pg-helper', subagent_type: 'general-purpose', run_in_background: true } }] }
+          : { text: `Helper step ${step} (ccm-pg-main-${step}).` });
+        const bash = (command, description) => ({ blocks: [{ type: 'tool_use', name: 'Bash', input: { command, description, timeout: 120_000 } }] });
+        api.script('pg-helper', ({ step, body }) => step === 0 ? bash('echo ccm-pg-start', 'Start')
+          : step === 1 ? bash(`node -e "setTimeout(() => console.log('ccm-pg-slept'), 45000)"`, 'Work a while')
+          : (body.tools ?? []).some(tool => tool.name === 'SubagentHandback')
+            ? { blocks: [{ type: 'tool_use', name: 'SubagentHandback', input: { message: 'Progress helper done.' } }] } : { text: 'Progress helper done.' });
+        await startChat(ctx, folders.tasks, 'Launch a working helper ccm:pg-main');
+        await ui.waitReply('ccm-pg-main-1', { timeout: 60_000 });
+        if (!await page.locator('.activity-float').isVisible()) await page.locator(sel.activityPill).click();
+        const section = page.locator('.activity-float-section').filter({ has: page.locator('.activity-float-title', { hasText: '子代理' }) });
+        await section.waitFor({ timeout: 20_000 });
+        if (!await section.locator(sel.openSubagent).count()) await section.locator('.activity-float-toggle').click();
+        await section.locator(sel.openSubagent).first().click();
+        const row = page.locator(`${sel.taskColumn} .task-column-list button[data-kind="agent"][data-state="running"]`);
+        await row.waitFor({ timeout: 20_000 });
+        await row.locator('[data-task-progress]', { hasText: label }).waitFor({ timeout: 80_000 });
+        note('label requests', asked);
+        assert.ok(asked.includes('pg-helper'), `Claude Code asked for the helper's label: ${JSON.stringify(asked)}`);
+        await page.screenshot({ path: path.join(ctx.dir, 'subagent-progress.png') }).catch(() => {});
+        // Ended: no label any more.
+        const agent = await row.getAttribute('data-agent-id');
+        await page.waitForFunction(selector => document.querySelector(selector)?.dataset.state === 'completed', sel.subagentRow(agent), { timeout: 90_000 });
+        assert.equal(await page.locator(`${sel.subagentRow(agent)} [data-task-progress]`).count(), 0, 'an ended subagent shows no label');
+        await page.locator(`${sel.taskColumn} .task-column-bar button`).click();
+      });
+    },
+  },
+  {
     // Lectern sends /goal from the chat box and shows the goal as a capsule above the input box and as
     // event rows in the chat. The fake evaluator answers from the condition's `ccm-goal:` plan
     // (fake-api.mjs); the main scripts answer the first turn and the turn the goal's feedback continues,

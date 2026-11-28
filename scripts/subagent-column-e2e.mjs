@@ -8,6 +8,8 @@
 // until interim notifications (waiting on its own background work) end that run.
 // The list keeps running ones first, then ended ones, then an earlier one known only
 // from its transcript; the one shown stays shown as it moves (screenshot: subagent-column-order.png).
+// The running one's progress label, read off the task rows below the input box, shows in its row, its
+// detail and its card (subagent-progress.png, subagent-progress-card.png).
 // Then Claude Code 2.1.310+: twelve more subagents whose launch is on a page not loaded; opened
 // again, all fifteen are listed with the states of their meta files (subagent-column-listed.png),
 // meta changes end and resume them, and once the conversation is closed none of them runs
@@ -133,6 +135,39 @@ try {
   await collapseCard();
   await page.waitForTimeout(500); // messages fade in
   await page.screenshot({ path: path.join(results, 'subagent-column-running.png') });
+
+  // Claude Code's progress label (core/agent-progress.ts): the task rows below the input box show the
+  // running one's description, then a label in its place; the row, the detail and the card show the
+  // label; a row back to the description takes it away (mock-claude.mjs draws agent-rows.json).
+  const config = await app.evaluate(() => process.env.CLAUDE_CONFIG_DIR);
+  const taskRows = text => writeFile(path.join(config, 'agent-rows.json'), JSON.stringify([{ type: 'Explore', text, startedAt: at(2) }]));
+  const progressOf = () => column.locator(`.task-column-list button[data-agent-id="${live}"] [data-task-progress]`);
+  await writeFile(path.join(config, 'screen-state'), 'ready agents');
+  await taskRows('检查构建脚本');
+  await page.waitForTimeout(1500);
+  assert.equal(await progressOf().count(), 0, 'the description is no label');
+  await taskRows('正在读取 build.sh 并核对依赖');
+  await progressOf().filter({ hasText: '正在读取 build.sh 并核对依赖' }).waitFor({ timeout: 15_000 });
+  assert.equal(await detail.locator('[data-subagent-progress]').innerText(), '正在读取 build.sh 并核对依赖');
+  assert.match(await column.locator(`.task-column-list button[data-agent-id="${live}"]`).getAttribute('title'), /现在在做：正在读取 build\.sh 并核对依赖/);
+  assert.equal(await column.locator(`.task-column-list button[data-agent-id="${done}"] [data-task-progress]`).count(), 0, 'an ended one has none');
+  if (!await card.isVisible()) await page.locator('.activity-float-pill').click();
+  await liveCard.locator('[data-activity-progress]', { hasText: '正在读取 build.sh 并核对依赖' }).waitFor();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(results, 'subagent-progress-card.png') });
+  await collapseCard();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(results, 'subagent-progress.png') });
+  // Gone from the screen (a dialog, or past "↓ N more"): kept; the description again: cleared.
+  await writeFile(path.join(config, 'screen-state'), 'ready');
+  await page.waitForTimeout(1500);
+  assert.equal(await progressOf().innerText(), '正在读取 build.sh 并核对依赖');
+  await writeFile(path.join(config, 'screen-state'), 'ready agents');
+  await taskRows('检查构建脚本');
+  await page.waitForFunction(id => !document.querySelector(`.task-column-list button[data-agent-id="${id}"] [data-task-progress]`), live, { timeout: 15_000 });
+  assert.equal(await detail.locator('[data-subagent-progress]').count(), 0);
+  await rm(path.join(config, 'agent-rows.json'));
+  await writeFile(path.join(config, 'screen-state'), 'ready');
 
   // The finished one: folded thinking, the tool with its result and the report.
   await column.locator(`.task-column-list button[data-agent-id="${done}"]`).click();

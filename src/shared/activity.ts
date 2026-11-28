@@ -34,6 +34,9 @@ export interface SessionActivity {
   tokens?: number;
   output?: string;
   summary?: string;
+  /** A running subagent: Claude Code's progress label ("正在编辑 hp.py"), read off the task rows
+   * below the input box, where it updates about every 30 s (core/agent-progress.ts). */
+  progress?: string;
   events: { key: string; text: string; at?: string }[];
 }
 

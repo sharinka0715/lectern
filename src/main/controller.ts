@@ -25,6 +25,7 @@ import type { ChatMessage, ChatView, SessionStatus } from '../shared/types';
 import { classifySessionScreen } from '../core/screen';
 import { focusedSettingCommandHistory, isIdleEmptyComposer, observeUltracode } from '../core/settings-screen';
 import { parseExecutionMode } from '../core/session-telemetry';
+import { agentTaskRows, observeProgressLabels, withProgressLabels, type ProgressLabels } from '../core/agent-progress';
 import { CompactSamples, parseTurnProgress, showsCompactCompletion } from '../core/turn-progress';
 import { parseQuestionScreen } from '../core/question-screen';
 import { readHookQuestion } from '../core/question-hook';
@@ -78,6 +79,8 @@ type Watch = { id: string; polls: number; workspace: Workspace; sessionId: strin
   /** Whether the latest read found the process that runs the session, and when that process started:
    * from a Lectern pane (`paneLive`), else from the native record of a process elsewhere. */
   live?: SessionLiveness; nativeStartedAt?: number; paneLive?: boolean;
+  /** Running subagents' progress labels as the task rows below the input box last showed them (core/agent-progress.ts). */
+  progressLabels?: ProgressLabels;
   rewindInstance?: string;
   /** A previous sighting while the prefix is unknown, or a result waiting to be published. */
   goalProbe?: { previous?: GoalObservation; settled?: boolean };
@@ -102,11 +105,14 @@ export function workingDirectory(current: string | undefined, folder: readonly s
 /** The conversation's activity for its snapshot. Claude Code 2.1.310+ (`listed`): every
  * subagent of the session's folder, each with the state its meta file and the process give
  * (core/subagent-status.ts); otherwise what the loaded transcript says. */
-function activityOf(watch: Watch, cliVersion: string | undefined) {
+function activityOf(watch: Watch, cliVersion: string | undefined, viewport?: string) {
   const live = watch.live ?? 'unknown', base = watch.display.activity.snapshot(live === 'alive');
   const files = watch.subagents?.files ?? [];
   const listed = listsSubagents(cliVersion, files);
-  return { activity: listed ? mergeSubagents(base, files, { live, since: watch.nativeStartedAt }) : base, listed };
+  const activity = listed ? mergeSubagents(base, files, { live, since: watch.nativeStartedAt }) : base;
+  // A fresh viewport of the live process: the task rows' labels; otherwise the last ones.
+  if (viewport !== undefined) watch.progressLabels = observeProgressLabels(watch.progressLabels ?? new Map(), activity, agentTaskRows(viewport), Date.now());
+  return { activity: withProgressLabels(activity, watch.progressLabels), listed };
 }
 /** The poll lists the subagent folder (at most once a second) unless the session's version predates meta states. */
 const listsFolder = (watch: Watch, now: number) =>
@@ -1000,7 +1006,7 @@ export class Controller extends EventEmitter {
       // The machine answered: read its model list once (cached until the app quits).
       this.catalogs.warm(watch.workspace, this.settingsFile(watch));
       const cliVersion = statusLine?.version ?? watch.display.cliVersion ?? watch.snapshot.cliVersion;
-      const { activity, listed } = activityOf(watch, cliVersion);
+      const { activity, listed } = activityOf(watch, cliVersion, result.active && !result.hasMore ? result.viewport : undefined);
       const pendingBackground = watch.display.pendingBackground;
       // Background subagents or workflows of this process keep Claude Code busy
       // after its reply; an earlier process's records do not.

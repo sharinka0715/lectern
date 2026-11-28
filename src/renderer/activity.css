@@ -12,6 +12,10 @@
 .activity-chevron { flex:none; color:var(--muted); transform:rotate(-90deg); }
 .activity-chevron.open { transform:none; }
 .activity-card-subhead { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:calc(9 * var(--ui-px)); }
+/* A running subagent's progress label from Claude Code (core/agent-progress.ts). */
+.activity-progress { display:flex; align-items:center; gap:6px; min-width:0; margin:calc(5 * var(--ui-px)) 0 0; color:var(--muted); font-size:var(--text-meta); }
+.activity-progress span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.activity-progress svg { flex:none; color:var(--accent); }
 .activity-state { display:inline-flex; align-items:center; gap:4px; font-size:var(--text-meta); color:var(--muted); }
 .activity-state i { width:6px; height:6px; border-radius:50%; background:currentColor; }
 [data-activity-state=running] .activity-state { color:var(--accent); }

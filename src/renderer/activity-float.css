@@ -62,7 +62,7 @@
 .activity-float-body .activity-title strong { font-size: var(--text-meta); }
 .activity-float-body .activity-card-subhead { margin-top: calc(5 * var(--ui-px)); gap: 7px; }
 /* Details stay smaller than the task's title. */
-.activity-float-body :is(.activity-card-subhead, .activity-state, .activity-facts, .activity-events time, .activity-output h4) { font-size: var(--text-caption); }
+.activity-float-body :is(.activity-card-subhead, .activity-progress, .activity-state, .activity-facts, .activity-events time, .activity-output h4) { font-size: var(--text-caption); }
 .activity-float-body .activity-detail { margin-top: calc(8 * var(--ui-px)); padding-top: calc(8 * var(--ui-px)); font-size: var(--text-caption); line-height: 1.5; }
 .activity-float-body .activity-detail pre { font: .625rem/1.5 var(--font-mono); padding: calc(6 * var(--ui-px)) 8px; max-height: 120px; }
 .activity-float-body .activity-facts { gap: calc(2 * var(--ui-px)) 8px; margin-top: calc(7 * var(--ui-px)); }
