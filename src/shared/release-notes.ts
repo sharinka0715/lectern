@@ -36,6 +36,24 @@ export function isLaterVersion(a: string, b: string): boolean {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: '0.2.8',
+    features: [
+      ['每轮回复末尾显示这一轮的结束时间和用时，时区与订阅额度的刷新时间一致；悬停可看完整日期和用时的算法。',
+        'Each reply ends with when its turn ended and how long it took, in the same time zone as the usage resets; hover for the full date and how the time was measured.'],
+      ['点开回复里带行号的路径（如 a.ts:262-281）会跳到对应的行并高亮。',
+        'Opening a path with line numbers from a reply, such as a.ts:262-281, scrolls to those lines and highlights them.'],
+      ['打开超过 1 MB 的文本文件前先显示大小，可以选择仍然打开或下载到本地。',
+        'A text file over 1 MB shows its size first, with a choice to open it anyway or download it.'],
+    ],
+    changes: [
+      ['回复里点名的任何路径都能打开预览，包括凭据文件、Claude 配置目录和符号链接；名称搜索和 @ 补全仍不进入这些目录。',
+        'Any path a reply names opens in the preview, including credential files, the Claude configuration folder and symbolic links; name searches and @ completion still stay out of them.'],
+      ['时区设置改名为「时间显示的时区」，隐藏订阅额度时也能修改。',
+        'The time zone setting is now called Time zone for times shown, and can be changed with subscription usage hidden.'],
+    ],
+    fixes: [],
+  },
+  {
     version: '0.2.7',
     features: [
       ['回复和 Markdown 预览会排版显示 LaTeX 数学公式（行内和独立公式），复制时得到公式原文，美元金额和 shell 变量仍按原文显示。',
